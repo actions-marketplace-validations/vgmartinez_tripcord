@@ -67,6 +67,9 @@ type Options struct {
 	// RepoRoot holds .tripcord/policy.yaml and .tripcord/policy.local.yaml.
 	// Both are optional.
 	RepoRoot string
+	// RepoPolicy replaces RepoFile when set. It is used by the scan CLI's
+	// --policy flag; its adjacent local policy is not loaded.
+	RepoPolicy string
 	// ManagedPolicy is the managed org policy file. Empty means
 	// ManagedPolicyPath(runtime.GOOS). It is optional: when the file
 	// does not exist there is no managed layer. When it exists, Load
@@ -132,11 +135,18 @@ func LoadLayers(opts Options) ([]Layer, error) {
 		}
 	}
 
-	repo := filepath.Join(opts.RepoRoot, filepath.FromSlash(RepoFile))
-	if err := l.root(repo, LayerRepo, false); err != nil {
+	repo := opts.RepoPolicy
+	explicitRepo := opts.RepoPolicy != ""
+	if repo == "" {
+		repo = filepath.Join(opts.RepoRoot, filepath.FromSlash(RepoFile))
+	}
+	if err := l.root(repo, LayerRepo, explicitRepo); err != nil {
 		return nil, err
 	}
 
+	if opts.RepoPolicy != "" {
+		return l.layers, nil
+	}
 	local := filepath.Join(opts.RepoRoot, filepath.FromSlash(LocalFile))
 	f, err := readFile(local)
 	switch {
@@ -175,7 +185,7 @@ func (l *loader) root(source string, kind LayerKind, required bool) error {
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		if required {
-			return &Error{Source: source, Err: errors.New("org policy does not exist")}
+			return &Error{Source: source, Err: fmt.Errorf("%s does not exist", requiredPolicyKind(kind))}
 		}
 		return nil
 	case err != nil:
@@ -192,6 +202,19 @@ func (l *loader) root(source string, kind LayerKind, required bool) error {
 	}
 	l.layers = append(l.layers, Layer{Kind: kind, Source: source, File: f})
 	return nil
+}
+
+// requiredPolicyKind names a required but missing policy file layer for
+// the error message root returns.
+func requiredPolicyKind(kind LayerKind) string {
+	switch kind {
+	case LayerOrg:
+		return "org policy"
+	case LayerRepo:
+		return "--policy file"
+	default:
+		return "policy"
+	}
 }
 
 func (l *loader) onChain(target string) bool {

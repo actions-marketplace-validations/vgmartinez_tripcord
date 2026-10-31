@@ -1,0 +1,414 @@
+package main
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/vgmartinez/tripcord/internal/exitcode"
+)
+
+func TestSinceDoesNotExecuteRepoGitConfig(t *testing.T) {
+	repo := gitRepo(t)
+	canary := filepath.Join(t.TempDir(), "canary")
+	script := filepath.Join(t.TempDir(), "evil.sh")
+	body := "#!/bin/sh\necho ran >> " + shellQuote(canary) + "\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "config", "core.fsmonitor", "touch "+shellQuote(canary)+"; false")
+	runGit(t, repo, "config", "diff.evil.command", script)
+	runGit(t, repo, "config", "diff.evil.textconv", script)
+	if err := os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte("* diff=evil\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("two\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", ".gitattributes", "a.txt")
+	runGit(t, repo, "commit", "-m", "change")
+	if err := os.RemoveAll(canary); err != nil {
+		t.Fatal(err)
+	}
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(t.TempDir(), "git.args")
+	bin := t.TempDir()
+	shim := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + shellQuote(logPath) + "\nexec " + shellQuote(realGit) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "not-a-repository"))
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"scan", repo, "--since", "HEAD~1"}, &stdout, &stderr); code != int(exitcode.OK) {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if _, err := os.Stat(canary); !os.IsNotExist(err) {
+		t.Fatal("repository git config executed a command")
+	}
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"core.fsmonitor=false", "core.hooksPath=/dev/null",
+		"protocol.allow=never", "protocol.ext.allow=never", "protocol.file.allow=never",
+		"--no-textconv", "--no-ext-diff", "--no-renames", "-z", "--end-of-options", "HEAD~1",
+	} {
+		if !strings.Contains(string(logged), want) {
+			t.Fatalf("git invocation missing %s: %q", want, logged)
+		}
+	}
+}
+
+// TestSinceDoesNotLazyFetchFromPromisorRemote checks that --since does not
+// contact a partial clone's promisor remote. Without --no-renames, "git
+// diff --name-only" performs rename detection, which needs blob content
+// and triggers a lazy fetch in a "--filter=blob:none" clone; a malicious
+// remote.origin.url (here an "ext::" transport) could then run arbitrary
+// code even though protocol.allow=never is set, because the repository's
+// own protocol.ext.allow=always config takes precedence for that command.
+func TestSinceDoesNotLazyFetchFromPromisorRemote(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	src := t.TempDir()
+	runGit(t, src, "init")
+	runGit(t, src, "config", "user.email", "tripcord@example.com")
+	runGit(t, src, "config", "user.name", "tripcord")
+	runGit(t, src, "config", "uploadpack.allowfilter", "true")
+	if err := os.WriteFile(filepath.Join(src, "old-name.txt"), []byte(strings.Repeat("line\n", 50)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, src, "add", "old-name.txt")
+	runGit(t, src, "commit", "-m", "init")
+	if err := os.Rename(filepath.Join(src, "old-name.txt"), filepath.Join(src, "new-name.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "new-name.txt"), []byte(strings.Repeat("line\n", 50)+"tail\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, src, "add", "-A")
+	runGit(t, src, "commit", "-m", "rename")
+
+	clone := filepath.Join(t.TempDir(), "clone")
+	cloneCmd := exec.Command("git", "clone", "-q", "--no-local", "--filter=blob:none", "file://"+src, clone)
+	if out, err := cloneCmd.CombinedOutput(); err != nil {
+		t.Skipf("partial clone is not supported: %v\n%s", err, out)
+	}
+
+	canary := filepath.Join(t.TempDir(), "canary")
+	script := filepath.Join(t.TempDir(), "evil.sh")
+	body := "#!/bin/sh\ntouch " + shellQuote(canary) + "\nexit 1\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, clone, "config", "remote.origin.url", "ext::"+script)
+	runGit(t, clone, "config", "protocol.ext.allow", "always")
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"scan", clone, "--since", "HEAD~1"}, &stdout, &stderr); code != int(exitcode.OK) {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if _, err := os.Stat(canary); !os.IsNotExist(err) {
+		t.Fatal("partial clone contacted the promisor remote")
+	}
+}
+
+func TestSinceRejectsOptionInjection(t *testing.T) {
+	repo := gitRepo(t)
+	probe := filepath.Join(t.TempDir(), "probe")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"scan", repo, "--since=--output=" + probe}, &stdout, &stderr)
+	if code != int(exitcode.Config) {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if _, err := os.Stat(probe); !os.IsNotExist(err) {
+		t.Fatalf("git created %s: %v", probe, err)
+	}
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "start with '-'") {
+		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+}
+
+// TestArgsAfterDashDashAreNotReparsedAsFlags checks that a positional
+// argument after "--" is never treated as a flag. normalizeScanArgs must
+// keep the "--" terminator in the argument list it hands to flag.Parse,
+// or everything after a literal "--" is re-parsed as flags.
+func TestArgsAfterDashDashAreNotReparsedAsFlags(t *testing.T) {
+	t.Parallel()
+	probe := filepath.Join(t.TempDir(), "probe")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"scan", "--", "--output=" + probe}, &stdout, &stderr)
+	if code != int(exitcode.Config) {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(probe); !os.IsNotExist(err) {
+		t.Fatalf("argument after -- was parsed as --output: %v", err)
+	}
+}
+
+// TestDashPrefixedPathRequiresDashDash checks that a path starting with
+// "-" is rejected as an unknown flag unless it follows "--", matching
+// ordinary flag-parsing conventions. It changes the process's working
+// directory, so unlike its neighbors it does not run in parallel: other
+// tests in this package read relative paths (e.g. testdata/ for golden
+// files) and run only once every non-parallel test, including this one
+// and its deferred os.Chdir cleanup, has finished.
+func TestDashPrefixedPathRequiresDashDash(t *testing.T) {
+	parent := t.TempDir()
+	weird := filepath.Join(parent, "-weird")
+	if err := os.Mkdir(weird, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.Chdir(parent); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"scan", "-weird"}, &stdout, &stderr); code != int(exitcode.Config) {
+		t.Fatalf("without --: exit code = %d, stderr = %q", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"scan", "--", "-weird"}, &stdout, &stderr); code != int(exitcode.OK) {
+		t.Fatalf("with --: exit code = %d, stderr = %q", code, stderr.String())
+	}
+}
+
+func TestSinceKeepsNonASCIIAndSkipsUntracked(t *testing.T) {
+	repo := gitRepo(t)
+	name := "caf\u00e9.txt"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", name)
+	runGit(t, repo, "commit", "-m", "unicode")
+	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("dirty\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := changedFiles(repo, "HEAD~1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed[name] {
+		t.Fatalf("changed = %#v", changed)
+	}
+	if changed["untracked.txt"] || changed["a.txt"] {
+		t.Fatalf("untracked or uncommitted path included: %#v", changed)
+	}
+}
+
+// TestSinceErrorKeepsGitStderr checks that a --since failure keeps git's
+// own diagnostic (e.g. "bad revision") in the error message, instead of
+// only the generic wrapper text, so the user can tell why the ref did
+// not resolve.
+func TestSinceErrorKeepsGitStderr(t *testing.T) {
+	t.Parallel()
+	repo := gitRepo(t)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"scan", repo, "--since", "nonexistent-ref-xyz"}, &stdout, &stderr)
+	if code != int(exitcode.Config) {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "bad revision") {
+		t.Fatalf("stderr = %q, want git's own diagnostic", stderr.String())
+	}
+}
+
+// TestReplaceHomePrefix checks that a home directory is rewritten to "~"
+// only as a complete path prefix: an empty home and "/" are left alone,
+// and a shorter home does not rewrite a longer name.
+func TestReplaceHomePrefix(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		home string
+		in   string
+		want string
+	}{
+		{name: "empty home", home: "", in: "/home/vic/x", want: "/home/vic/x"},
+		{name: "root", home: "/", in: "/home/vic/x", want: "/home/vic/x"},
+		{name: "prefix of another user", home: "/home/vic", in: "/home/victor", want: "/home/victor"},
+		{name: "directory under home", home: "/home/vic", in: "/home/vic/x", want: "~/x"},
+		{name: "bare home", home: "/home/vic", in: "/home/vic", want: "~"},
+		{name: "non-path boundary", home: "/home/vic", in: "/home/vic: denied", want: "~: denied"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := replaceHomePrefix(tc.in, tc.home); got != tc.want {
+				t.Fatalf("replaceHomePrefix(%q, %q) = %q, want %q", tc.in, tc.home, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSanitizeGitStderrReplacesHome checks that sanitizeGitStderr hides
+// the local home directory while keeping the rest of git's message.
+func TestSanitizeGitStderrReplacesHome(t *testing.T) {
+	t.Parallel()
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("no home directory to redact")
+	}
+	raw := "fatal: not a git repository: " + home + "/repo/.git\nsome more detail\n"
+	got := sanitizeGitStderr([]byte(raw))
+	if strings.Contains(got, home) {
+		t.Fatalf("sanitizeGitStderr(%q) = %q, still contains home directory", raw, got)
+	}
+	if !strings.Contains(got, "fatal: not a git repository: ~/repo/.git") || !strings.Contains(got, "some more detail") {
+		t.Fatalf("sanitizeGitStderr(%q) = %q", raw, got)
+	}
+}
+
+func TestSinceMissingGit(t *testing.T) {
+	repo := gitRepo(t)
+	t.Setenv("PATH", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"scan", "--since", "HEAD", repo}, &stdout, &stderr); code != int(exitcode.Internal) {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "git") {
+		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+}
+
+func TestScanOutsideGit(t *testing.T) {
+	dir := outsideGit(t)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"scan", dir}, &stdout, &stderr); code != int(exitcode.OK) {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if code := run([]string{"scan", dir, "--since", "HEAD"}, &stdout, &stderr); code != int(exitcode.Config) {
+		t.Fatalf("--since exit code = %d, stderr = %q", code, stderr.String())
+	}
+}
+
+// TestOutputPathErrorsAreConfigErrors checks that an invalid --output
+// destination is a configuration error (exit 3), diagnosed before any
+// finding is written, rather than an internal error (exit 4).
+func TestOutputPathErrorsAreConfigErrors(t *testing.T) {
+	t.Parallel()
+	t.Run("symlink", func(t *testing.T) {
+		t.Parallel()
+		dir := outsideGit(t)
+		target := filepath.Join(t.TempDir(), "target")
+		if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(t.TempDir(), "link")
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"scan", "--output", link, dir}, &stdout, &stderr)
+		if code != int(exitcode.Config) {
+			t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+		}
+	})
+	t.Run("missing directory", func(t *testing.T) {
+		t.Parallel()
+		dir := outsideGit(t)
+		missingDir := filepath.Join(t.TempDir(), "no-such-dir", "out.txt")
+		var stdout, stderr bytes.Buffer
+		code := run([]string{"scan", "--output", missingDir, dir}, &stdout, &stderr)
+		if code != int(exitcode.Config) {
+			t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+		}
+	})
+}
+
+// TestMissingPolicyFileIsConfigError checks that an explicit --policy
+// path that does not exist is a configuration error, not silently
+// ignored. Unlike the default .tripcord/policy.yaml, an explicit path is
+// mandatory.
+func TestMissingPolicyFileIsConfigError(t *testing.T) {
+	t.Parallel()
+	dir := outsideGit(t)
+	missing := filepath.Join(t.TempDir(), "missing-policy.yaml")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"scan", "--policy", missing, dir}, &stdout, &stderr)
+	if code != int(exitcode.Config) {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "does not exist") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestFailOnCannotLoosenLock(t *testing.T) {
+	dir := outsideGit(t)
+	org := filepath.Join(t.TempDir(), "org.yaml")
+	policy := "version: 1\nmode: enforce\nfail-on: medium\nlocked:\n  mode: true\n"
+	if err := os.WriteFile(org, []byte(policy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"scan", "--org-policy", org, "--fail-on", "critical", dir}, &stdout, &stderr)
+	if code != int(exitcode.Config) || !strings.Contains(stderr.String(), "ceiling") {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"scan", "--org-policy", org, "--fail-on", "low", dir}, &stdout, &stderr); code != int(exitcode.OK) {
+		t.Fatalf("tightening exit code = %d, stderr = %q", code, stderr.String())
+	}
+}
+
+func gitRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "tripcord@example.com")
+	runGit(t, repo, "config", "user.name", "tripcord")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "a.txt")
+	runGit(t, repo, "commit", "-m", "init")
+	return repo
+}
+
+func runGit(t *testing.T, repo string, args ...string) {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	out, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+}
+
+func shellQuote(path string) string {
+	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
+}
+
+func TestParseFlagsAfterPath(t *testing.T) {
+	t.Parallel()
+	opts, err := parseScanFlags([]string{".", "--since", "HEAD~1", "--format", "gha"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.path != "." || opts.since != "HEAD~1" || opts.format != "gha" {
+		t.Fatalf("opts = %+v", opts)
+	}
+}

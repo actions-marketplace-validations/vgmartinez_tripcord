@@ -13,3 +13,11 @@ import "os"
 func checkManagedPolicyOwner(path string, info os.FileInfo) error {
 	return nil
 }
+
+func checkManagedPolicyParent(path string, info os.FileInfo) error {
+	return nil
+}
+
+func checkManagedPolicyAncestor(path string, info os.FileInfo) error {
+	return nil
+}

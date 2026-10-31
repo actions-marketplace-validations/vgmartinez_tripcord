@@ -91,7 +91,12 @@ as driver `version` `dev` (or the given text) and `semanticVersion`
 Attacker-controlled text appears only inside code spans or fenced code
 blocks. `@` is followed by U+200B so it does not become a mention.
 
-Summary-table cells double every backslash. A GitHub-flavored table
-cell treats `\\` as an escaped backslash before it looks for `|`, so a
-single backslash would not keep a `|` inside the cell. The detail
-sections under the table show backslashes literally.
+Summary-table cells keep backslashes as written, so a Windows path
+appears once (`C:\dir`). A literal `|` is escaped as `\|` so it cannot
+end the cell. Detail sections show the same backslashes.
+
+A literal backslash is doubled only when what follows would otherwise
+read as one of this tool's own control-character escapes: `\xNN`,
+`\uXXXX`, or `\UXXXXXXXX`. For example, literal text `\x1b` renders as
+`\\x1b`, distinct from an actual ESC byte, which renders as `\x1b`. An
+ordinary path fragment such as `\new` or `\temp` is unaffected.

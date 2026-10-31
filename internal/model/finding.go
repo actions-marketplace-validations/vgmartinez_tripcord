@@ -14,6 +14,11 @@ import (
 // it later would be a breaking schema change.
 var fingerprintPattern = regexp.MustCompile(`^tcf_[0-9a-f]{16}$`)
 
+// ruleIDPattern mirrors the append-only rules/REGISTRY format without
+// importing internal/rules (which depends on model). It accepts core ids such
+// as TC-CFG-001 and namespaced policy ids such as ACME-001.
+var ruleIDPattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*(-[A-Z][A-Z0-9]*)*-[0-9]{3,}$`)
+
 // ConfigRef cites one config file and, optionally, one stable entry
 // inside it. ID is a ConfigItem.ID (harness:scope:path). Key is a
 // content-derived sub-identifier, never a positional index: an MCP
@@ -76,7 +81,11 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 }
 
 // Validate checks closed vocabularies, location paths, config ids, and
-// the stored fingerprint. Every fingerprint input is on the finding:
+// the stored fingerprint. It is stricter than the frozen
+// tripcord.finding/v1 schema: the schema accepts any non-empty rule
+// string, while Validate also requires the rules/REGISTRY id shape,
+// such as TC-CFG-001. That extra check does not change the schema.
+// Every fingerprint input is on the finding:
 // the rule, the location (harness, session, scope, path), and each
 // evidence excerpt and config id/key. Line and event id are on the
 // document too, and Fingerprint ignores them, so they do not have to be
@@ -93,6 +102,9 @@ func (f Finding) Validate() error {
 	}
 	if f.Rule == "" || f.Title == "" || f.Fix == "" {
 		return fmt.Errorf("finding: rule, title, and fix are required")
+	}
+	if len(f.Rule) > 64 || !ruleIDPattern.MatchString(f.Rule) {
+		return fmt.Errorf("finding: rule %q is not a rule id", f.Rule)
 	}
 	if !f.Severity.Valid() {
 		return fmt.Errorf("finding: severity %q: unknown", f.Severity)

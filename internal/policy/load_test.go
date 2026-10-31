@@ -46,6 +46,31 @@ func TestLoadNoFiles(t *testing.T) {
 	}
 }
 
+func TestLoadRepoPolicyMustExist(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.yaml")
+	_, err := Load(Options{RepoRoot: t.TempDir(), RepoPolicy: missing, ManagedPolicy: noManaged(t), Surface: SurfaceScan, Env: testEnv(t)})
+	if err == nil {
+		t.Fatal("missing --policy file was accepted")
+	}
+	var polErr *Error
+	if !errors.As(err, &polErr) || polErr.ExitCode() != exitcode.Config {
+		t.Fatalf("err = %v, want a config Error", err)
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadDefaultRepoPolicyIsOptional(t *testing.T) {
+	e, err := Load(Options{RepoRoot: t.TempDir(), ManagedPolicy: noManaged(t), Surface: SurfaceScan, Env: testEnv(t)})
+	if err != nil {
+		t.Fatalf("missing default repo policy: %v", err)
+	}
+	if e.Mode != ModeEnforce {
+		t.Fatalf("effective %+v", e)
+	}
+}
+
 func TestManagedPolicyPath(t *testing.T) {
 	t.Setenv("ProgramData", `D:\Data`)
 	for goos, want := range map[string]string{
@@ -284,6 +309,53 @@ func TestManagedPolicyPermissions(t *testing.T) {
 	_, err = Load(Options{RepoRoot: t.TempDir(), ManagedPolicy: managed, Surface: SurfaceScan, Env: testEnv(t), Catalog: catalog})
 	wantErr(t, err, "world-writable")
 	assertExit(t, err, exitcode.Config)
+
+	if err := os.Chmod(managed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(managed), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Load(Options{RepoRoot: t.TempDir(), ManagedPolicy: managed, Surface: SurfaceScan, Env: testEnv(t), Catalog: catalog})
+	wantErr(t, err, "parent for")
+	wantErr(t, err, "world-writable")
+	assertExit(t, err, exitcode.Config)
+
+	if err := os.Chmod(filepath.Dir(managed), 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(Options{RepoRoot: t.TempDir(), ManagedPolicy: managed, Surface: SurfaceScan, Env: testEnv(t), Catalog: catalog}); err != nil {
+		t.Fatalf("group-writable parent owned by the current user was rejected: %v", err)
+	}
+}
+
+func TestManagedPolicyParentStatIsNotIgnored(t *testing.T) {
+	err := checkManagedPolicyParentPath(filepath.Join(t.TempDir(), "missing", "policy.yaml"))
+	if err == nil {
+		t.Fatal("missing parent directory was ignored")
+	}
+}
+
+func TestApplyFailOnRespectsLockedCeiling(t *testing.T) {
+	root := t.TempDir()
+	org := filepath.Join(root, "org.yaml")
+	write(t, org, "version: 1\nmode: enforce\nfail-on: medium\nlocked:\n  mode: true\n")
+	e, err := Load(Options{RepoRoot: t.TempDir(), ManagedPolicy: noManaged(t), OrgPolicy: []string{org}, Surface: SurfaceScan, Env: testEnv(t), Catalog: catalog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.ApplyFailOn(model.SeverityCritical); err == nil || !strings.Contains(err.Error(), "ceiling") {
+		t.Fatalf("loosening error = %v", err)
+	}
+	if e.FailOn != model.SeverityMedium {
+		t.Fatalf("fail-on changed to %s", e.FailOn)
+	}
+	if err := e.ApplyFailOn(model.SeverityLow); err != nil {
+		t.Fatal(err)
+	}
+	if e.FailOn != model.SeverityLow {
+		t.Fatalf("fail-on = %s", e.FailOn)
+	}
 }
 
 func assertExit(t *testing.T, err error, want exitcode.Code) {

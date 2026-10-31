@@ -29,6 +29,12 @@ A policy layer that sets `mode` or `fail-on` replaces the surface
 default. A layer that omits one of them leaves that one at the default,
 so a repo can change the mode and keep fail-on `high`.
 
+For `tripcord scan`, `--fail-on` is an invocation-level threshold applied
+after the policy is loaded. It uses the same ceiling as a policy layer.
+When mode is locked, the flag may only tighten fail-on (`high` to
+`medium`). Loosening it (`medium` to `critical`) is rejected with exit
+3. Policy mode still decides whether findings can fail the command.
+
 ```yaml
 version: 1
 mode: audit

