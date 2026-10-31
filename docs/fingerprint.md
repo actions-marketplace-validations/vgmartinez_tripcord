@@ -58,7 +58,38 @@ Two things that do look like metadata, but **are** hashed:
   "Repeated occurrences" below for why this does not reintroduce
   reimport instability.
 
-Credential values, secret values, and network URLs are never inputs.
+  The adapters under `internal/adapters/kit` (and the Claude adapter)
+  enforce the "two matching entries get distinct fingerprints" half of
+  that promise by construction: `kit.Source.Add` always appends a short
+  digest of the entry's full sanitized payload to the key
+  (`kit.PayloadDigest`), in addition to whatever human-readable fields
+  the adapter already put there (a step's `uses`, a hook's first action
+  field, ...). Without it, two entries that matched on those few fields
+  but differed elsewhere — a second `uses: actions/github-script@v7`
+  step with a different `with.script`, say — would collide on the same
+  key and so the same fingerprint, and a tool that merges findings by
+  fingerprint (GitHub's SARIF alert de-duplication, for example) could
+  let a benign entry hide a hostile one. The digest is computed before a
+  file-level, scan-dependent fact such as Codex's `project_trust` is
+  folded into the payload, so it never makes a repository fingerprint
+  depend on which scopes this scan happened to read.
+
+  The digest is over the sanitized payload, so two entries that differ
+  only in a value redaction replaced with `[REDACTED]` (a `--token` in a
+  hook's `powershell` field, an `API_TOKEN` env value, ...) would share
+  it. Every sanitizer in `kit` therefore records the raw text it removes
+  while an entry is built, walking maps in sorted key order, and
+  `kit.Source.Add` appends `sig:` plus `kit.KeyDiscriminator` of that
+  whole sequence (8 hex characters of SHA-256). The Claude adapter,
+  which keeps some values raw in its payloads, uses
+  `kit.Source.EntrySignature`: the digest of its payload as kit
+  sanitizes it, and the same discriminator over its own removals and
+  kit's. The discriminator is a truncated hash of removed text, never
+  the text itself; it is home-normalized in user scope, so it does not
+  depend on the scanning machine.
+
+Credential values, secret values, and network URLs are never inputs,
+other than through the truncated-hash discriminator described above.
 Evidence excerpts must already be redacted; this package does not search
 them for secrets.
 

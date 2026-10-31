@@ -370,6 +370,55 @@ func TestScanErrorsRedactHomeDirectory(t *testing.T) {
 	}
 }
 
+// TestHomeOverrideOutsideHomeFailsScan checks that CODEX_HOME and
+// COPILOT_HOME, like Claude's CLAUDE_CONFIG_DIR, make `tripcord scan`
+// exit non-zero when they point outside the home directory, even though
+// the redirected configuration is still read and reported.
+func TestHomeOverrideOutsideHomeFailsScan(t *testing.T) {
+	cases := []struct {
+		harness string
+		envName string
+		setup   func(dir string)
+	}{
+		{"codex", "CODEX_HOME", func(dir string) {
+			if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("approval_policy = \"never\"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"copilot", "COPILOT_HOME", func(dir string) {
+			if err := os.MkdirAll(filepath.Join(dir, "hooks"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "hooks", "a.json"), []byte(`{"version":1,"hooks":{"sessionStart":[{"bash":"x"}]}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.harness, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Mkdir(filepath.Join(root, ".git"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			home := t.TempDir()
+			outside := t.TempDir()
+			tc.setup(outside)
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			t.Setenv(tc.envName, outside)
+
+			var stdout, stderr bytes.Buffer
+			code := run([]string{"scan", "--scope", "user", "--harness", tc.harness, "--format", "text", root}, &stdout, &stderr)
+			if code != int(exitcode.Config) {
+				t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "outside the home directory") || !strings.Contains(stderr.String(), "incomplete") {
+				t.Fatalf("stderr = %q", stderr.String())
+			}
+		})
+	}
+}
+
 func TestLegacyNoteDoesNotFailScan(t *testing.T) {
 	legacy := t.TempDir()
 	restore := claude.SetLegacyManagedDirForTest(legacy)
@@ -406,6 +455,35 @@ func TestPartitionDiagnostics(t *testing.T) {
 	}
 }
 
+// TestScanDedupesEscapingSymlinkAcrossAdapters is Follow-up 6
+// end-to-end: Claude's plugin-root discovery and Codex's own .codex
+// matcher both flag an escaping symlink at .codex/skills (Claude cannot
+// know a plugin root's name without following the symlink, which it
+// does not do), but the scan must report it once, naming the adapter
+// that actually owns the location, not twice.
+func TestScanDedupesEscapingSymlinkAcrossAdapters(t *testing.T) {
+	root := outsideGit(t)
+	if err := os.MkdirAll(filepath.Join(root, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, ".codex", "skills")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"scan", "--scope", "repo", root}, &stdout, &stderr)
+	if code != int(exitcode.Config) {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	msg := stderr.String()
+	if n := strings.Count(msg, "symlink resolves outside"); n != 1 {
+		t.Fatalf("stderr contains %d escaping-symlink reports, want 1: %q", n, msg)
+	}
+	if !strings.Contains(msg, "codex: .codex/skills") {
+		t.Fatalf("stderr = %q, want the kept report to name codex, the actual owner of .codex/skills", msg)
+	}
+}
+
 func outsideGit(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "tripcord-scan-")
@@ -430,5 +508,48 @@ func assertGolden(t *testing.T, name, got string) {
 	}
 	if got != string(want) {
 		t.Fatalf("%s mismatch\n--- got ---\n%s--- want ---\n%s", name, got, want)
+	}
+}
+
+func TestScanNewAdaptersAndImpliedOwners(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		".codex/config.toml":            "sandbox_mode = \"danger-full-access\"\n",
+		".cursor/hooks.json":            `{"version":1,"hooks":{"stop":[{"command":"x"}]}}`,
+		".github/hooks/guard.json":      `{"version":1,"hooks":{"preToolUse":[{"bash":"x"}]}}`,
+		".github/copilot/settings.json": `{`,
+		"AGENTS.md":                     "x\n",
+	}
+	for rel, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"scan", "--harness", "cursor", root}, &stdout, &stderr); code != int(exitcode.OK) {
+		t.Fatalf("cursor exit %d stderr %q", code, stderr.String())
+	}
+	for _, want := range []string{"claude: also scanned", "generic: also scanned"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+		}
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"scan", "--harness", "copilot", root}, &stdout, &stderr); code != int(exitcode.Config) || !strings.Contains(stderr.String(), "copilot: .github/copilot/settings.json: invalid JSON") {
+		t.Fatalf("copilot exit %d stderr %q", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"scan", root}, &stdout, &stderr); code != int(exitcode.Config) || strings.Contains(stderr.String(), "also scanned") {
+		t.Fatalf("autodetect exit %d stderr %q", code, stderr.String())
 	}
 }

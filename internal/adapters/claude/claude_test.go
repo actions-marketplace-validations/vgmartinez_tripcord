@@ -284,6 +284,75 @@ func TestSymlinkedSkillDirectory(t *testing.T) {
 	}
 }
 
+// TestSymlinkEscapeInSharedSkillRootNotReported is Follow-up 6's Claude
+// half: .agents/skills and .github/skills are shared skill roots the
+// generic adapter reads (see sharedSkillRoots), not an arbitrarily-named
+// Claude plugin root, so an escaping symlink there is not Claude's
+// diagnostic to report, even though "skills" alone would otherwise match
+// configSegments for an unknown plugin root.
+func TestSymlinkEscapeInSharedSkillRootNotReported(t *testing.T) {
+	t.Parallel()
+	for _, root := range [][]string{{".agents", "skills"}, {".github", "skills"}} {
+		t.Run(strings.Join(root, "/"), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			outside := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, root[0]), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(dir, root[0], root[1])); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			got := discover(t, New(Options{}), dir)
+			if len(got.Diagnostics) != 0 {
+				t.Fatalf("diagnostics = %q, want none: %s is generic's shared skill root, not Claude's", got.Diagnostics, strings.Join(root, "/"))
+			}
+		})
+	}
+}
+
+// TestSymlinkEscapeInBareRulesDirNotReported is Follow-up 6's other
+// Claude half: classify's roleRule only ever matches the exact
+// .claude/rules sequence (there is no plugin-root form for rules, unlike
+// skills, agents, commands, and hooks), so a bare "rules" directory
+// elsewhere, such as another harness's own rules/ location, must not be
+// reported as if it might hide Claude configuration.
+func TestSymlinkEscapeInBareRulesDirNotReported(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, ".codex", "rules")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	got := discover(t, New(Options{}), dir)
+	if len(got.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %q, want none: .codex/rules has nothing to do with .claude/rules", got.Diagnostics)
+	}
+}
+
+// TestSymlinkEscapeInClaudeRulesDirStillReported guards the narrowing
+// above against over-correction: Claude's own .claude/rules/*.md files
+// are real configuration (roleRule), so an escaping symlink there must
+// still be reported.
+func TestSymlinkEscapeInClaudeRulesDirStillReported(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, ".claude", "rules")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	got := discover(t, New(Options{}), dir)
+	if !containsDiag(got, ".claude/rules: symlink resolves outside the repository") {
+		t.Fatalf("diagnostics = %q, want a report for .claude/rules", got.Diagnostics)
+	}
+}
+
 // B4: every executable or network-reaching setting is emitted, and hooks
 // keep their full shape.
 func TestExecutableSettings(t *testing.T) {
@@ -341,13 +410,23 @@ func TestHookKeysIncludeEvent(t *testing.T) {
 	group := `[{"matcher":"Bash","hooks":[{"type":"command","command":"x"}]}]`
 	writeFile(t, filepath.Join(root, ".claude", "settings.json"), `{"hooks":{"PreToolUse":`+group+`,"PostToolUse":`+group+`}}`)
 	got := discover(t, New(Options{}), root)
-	keys := map[string]bool{}
+	var keys []string
 	for _, item := range got.Items {
 		var p map[string]any
 		_ = json.Unmarshal(item.Payload, &p)
-		keys[p["key"].(string)] = true
+		keys = append(keys, p["key"].(string))
 	}
-	if !keys[`["hook","PreToolUse","Bash","command","x"]`] || !keys[`["hook","PostToolUse","Bash","command","x"]`] {
+	hasPrefix := func(prefix string) bool {
+		for _, k := range keys {
+			if strings.HasPrefix(k, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+	// The key always carries a trailing content-digest discriminator
+	// (see kit.PayloadDigest), so match on everything before it.
+	if !hasPrefix(`["hook","PreToolUse","Bash","command","x","sig:`) || !hasPrefix(`["hook","PostToolUse","Bash","command","x","sig:`) {
 		t.Fatalf("keys = %v", keys)
 	}
 }
@@ -391,6 +470,9 @@ func TestPerFileErrorsDoNotAbort(t *testing.T) {
 		t.Fatalf("diagnostics = %q", got.Diagnostics)
 	}
 }
+
+// The bearer-token-split-across-two-array-elements case is covered by
+// TestMCPArgsBearerAsTwoElementsIsRedacted in secrets_test.go.
 
 func TestRepoLimits(t *testing.T) {
 	t.Parallel()
@@ -841,6 +923,39 @@ func copyTree(t *testing.T, from string) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+func TestNormalizeSkillRewritesHomeOnlyInUserScope(t *testing.T) {
+	t.Parallel()
+	home := "/home/alice"
+	raw := []byte("---\nname: deploy\n---\nRun `" + home + "/bin/deploy`.\n")
+	paths := map[model.Scope]string{model.ScopeUser: "~/.agents/skills/deploy/SKILL.md", model.ScopeRepo: ".agents/skills/deploy/SKILL.md"}
+	payloadOf := func(scope model.Scope) map[string]any {
+		t.Helper()
+		items, diags := NormalizeSkill(model.SurfaceGeneric, scope, paths[scope], home, raw)
+		if len(diags) != 0 {
+			t.Fatalf("diagnostics = %+v", diags)
+		}
+		if len(items) != 1 {
+			t.Fatalf("items = %+v", items)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(items[0].Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload
+	}
+	userContent, _ := payloadOf(model.ScopeUser)["content"].(string)
+	if strings.Contains(userContent, home) {
+		t.Errorf("user-scope content leaks the home directory: %q", userContent)
+	}
+	if !strings.Contains(userContent, "~/bin/deploy") {
+		t.Errorf("user-scope content = %q, want it rewritten to ~/bin/deploy", userContent)
+	}
+	repoContent, _ := payloadOf(model.ScopeRepo)["content"].(string)
+	if !strings.Contains(repoContent, home) {
+		t.Errorf("repo-scope content = %q, want the home path left as-is", repoContent)
+	}
 }
 
 func snapshot(t *testing.T, root string) string {
