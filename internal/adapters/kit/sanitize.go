@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/vgmartinez/tripcord/internal/model"
@@ -18,11 +19,13 @@ import (
 const Redacted = "[REDACTED]"
 
 var (
-	commandSecretFlag = regexp.MustCompile(`(?i)(` + output.SecretFlagAlternation() + `)(?:=|\s+)('[^']*'|"[^"]*"|\S+)`)
-	secretFlagName    = regexp.MustCompile(`(?i)^(?:` + output.SecretFlagAlternation() + `)$`)
-	bearerToken       = regexp.MustCompile(`(?i)\b(bearer)\s+([^\s'"]+)`)
-	bearerSchemeWord  = regexp.MustCompile(`(?i)^bearer$`)
-	userFlagName      = regexp.MustCompile(`(?i)^(?:` + output.UserFlagAlternation + `)$`)
+	secretFlagName = regexp.MustCompile(`(?i)^(?:` + output.SecretFlagAlternation() + `)$`)
+	bearerToken    = regexp.MustCompile(`(?i)\b(bearer)\s+([^\s'"]+)`)
+	// bearerSchemeWord matches an array element ending in the word
+	// "Bearer": "Bearer", "Authorization: Bearer", or
+	// "--header=Authorization: Bearer", whose token is the next element.
+	bearerSchemeWord = regexp.MustCompile(`(?i)(?:^|:)\s*bearer\s*$`)
+	userFlagName     = regexp.MustCompile(`(?i)^(?:` + output.UserFlagAlternation + `)$`)
 	// embeddedURL finds an absolute URL inside a larger string, such as a
 	// curl command. It stops at whitespace and quotes so a trailing shell
 	// quote or the rest of a pipeline is not swallowed.
@@ -41,8 +44,27 @@ type Sanitized struct {
 // value, redacts secret CLI flag values and bearer tokens, rewrites the
 // home directory as "~" (user scope only), and finally redacts any
 // credential shape output.DefaultRedactor recognizes. What it removes is
-// also recorded for the next Add's key discriminator.
+// also recorded for the next Add's key discriminator. The result depends
+// only on value and the source's scope and home, so it is memoized per
+// source: an entry's signature re-sanitizes strings that earlier entries
+// or its own key already did.
 func (s *Source) Sanitize(value string) Sanitized {
+	if s.presanitized != nil && s.presanitized(value) {
+		return Sanitized{Value: value}
+	}
+	r, ok := s.sanitized[value]
+	if !ok {
+		r = s.sanitizeUncached(value)
+		if s.sanitized == nil {
+			s.sanitized = map[string]Sanitized{}
+		}
+		s.sanitized[value] = r
+	}
+	s.recordRemoved(r.Removed...)
+	return Sanitized{Value: r.Value, Removed: slices.Clone(r.Removed)}
+}
+
+func (s *Source) sanitizeUncached(value string) Sanitized {
 	value, removed := stripEmbeddedURLSecrets(value)
 	value, flags := redactCommandSecrets(value)
 	removed = append(removed, flags...)
@@ -51,7 +73,6 @@ func (s *Source) Sanitize(value string) Sanitized {
 		removed = append(removed, value)
 		value = redacted
 	}
-	s.recordRemoved(removed...)
 	return Sanitized{Value: value, Removed: removed}
 }
 
@@ -155,6 +176,31 @@ func (s *Source) SafeValue(key string, value any) any {
 	}
 }
 
+// SafeToolArgv applies output.RedactToolArgv to list, an argv whose
+// string elements are separate words (a Codex prefix_rule pattern such
+// as ["redis-cli", "--pass", "X"] or ["mysql", "-pX"]), records what it
+// removed for the key discriminator, and returns a redacted copy. A
+// non-string element (a nested list of alternatives) is kept as is and
+// counts as an empty word. Run SafeValue on the result as usual.
+func (s *Source) SafeToolArgv(list []any) []any {
+	argv := make([]string, len(list))
+	for i, item := range list {
+		argv[i], _ = item.(string)
+	}
+	redacted, removed := output.RedactToolArgv(argv)
+	out := append([]any(nil), list...)
+	if len(removed) == 0 {
+		return out
+	}
+	s.recordRemoved(removed...)
+	for i, item := range list {
+		if _, isString := item.(string); isString {
+			out[i] = redacted[i]
+		}
+	}
+	return out
+}
+
 // isArraySecretMarker reports whether name is an array element that
 // marks the next element as a credential: a bare secret CLI flag
 // ("--token") or the bare HTTP auth scheme word "Bearer".
@@ -225,8 +271,14 @@ func (s *Source) redactString(value string) string {
 // value is always redacted.
 var secretKeyFragments = []string{"token", "key", "secret", "password", "authorization", "cookie"}
 
-// SecretKey reports whether name looks like it holds a credential.
+// SecretKey reports whether name looks like it holds a credential: it
+// contains one of secretKeyFragments, or it is an env-style credential
+// name such as DB_PASS or DB_PWD (output.CredentialName), the same rule
+// command-string assignments use.
 func SecretKey(name string) bool {
+	if output.CredentialName(name) {
+		return true
+	}
 	n := strings.ToLower(name)
 	for _, fragment := range secretKeyFragments {
 		if strings.Contains(n, fragment) {
@@ -243,19 +295,18 @@ func namesEnvVar(name string) bool {
 	return strings.HasSuffix(strings.ToLower(name), "_env_var")
 }
 
+// redactCommandSecrets redacts "Bearer <token>" and then everything
+// output.RedactCommand covers, the same table the output-side
+// DefaultRedactor and the Claude Code adapter use.
 func redactCommandSecrets(value string) (string, []string) {
 	var removed []string
-	value = commandSecretFlag.ReplaceAllStringFunc(value, func(m string) string {
-		g := commandSecretFlag.FindStringSubmatch(m)
-		removed = append(removed, g[2])
-		return g[1] + " " + Redacted
-	})
 	value = bearerToken.ReplaceAllStringFunc(value, func(m string) string {
 		g := bearerToken.FindStringSubmatch(m)
 		removed = append(removed, g[2])
 		return g[1] + " " + Redacted
 	})
-	return value, removed
+	value, commandRemoved := output.RedactCommand(value)
+	return value, append(removed, commandRemoved...)
 }
 
 func stripEmbeddedURLSecrets(value string) (string, []string) {

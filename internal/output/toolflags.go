@@ -23,11 +23,19 @@ type toolFlag struct {
 	glued bool
 	// separated allows "-f value" and "-f=value".
 	separated bool
-	pattern   *regexp.Regexp
+	// valuePrefix, when set, must start the value and is kept visible;
+	// only the rest is the secret (openssl -passin pass:X, but not
+	// -passin env:VAR or file:path).
+	valuePrefix string
+	pattern     *regexp.Regexp
 }
 
 var toolSecretFlags = compileToolFlags([]toolFlag{
 	{tool: "openssl", flag: "-k", separated: true},
+	{tool: "openssl", flag: "-K", separated: true},
+	{tool: "openssl", flag: "-pass", separated: true, valuePrefix: "pass:"},
+	{tool: "openssl", flag: "-passin", separated: true, valuePrefix: "pass:"},
+	{tool: "openssl", flag: "-passout", separated: true, valuePrefix: "pass:"},
 	{tool: "vercel", flag: "-t", separated: true},
 	{tool: "vc", flag: "-t", separated: true},
 	{tool: "codecov", flag: "-t", separated: true},
@@ -35,8 +43,9 @@ var toolSecretFlags = compileToolFlags([]toolFlag{
 	{tool: "influx", flag: "-t", separated: true},
 	{tool: "flyctl", flag: "-t", separated: true},
 	{tool: "fly", flag: "-t", separated: true},
-	{tool: "sshpass", flag: "-p", separated: true},
+	{tool: "sshpass", flag: "-p", glued: true, separated: true},
 	{tool: "redis-cli", flag: "-a", separated: true},
+	{tool: "redis-cli", flag: "--pass", separated: true},
 	{tool: "mysql", flag: "-p", glued: true},
 	{tool: "docker", subcommand: "login", flag: "-p", separated: true},
 })
@@ -53,13 +62,33 @@ func toolNameSet(flags []toolFlag) map[string]bool {
 
 func compileToolFlags(flags []toolFlag) []toolFlag {
 	for i := range flags {
-		separator := `(=|\s+)`
-		if flags[i].glued {
+		var separator string
+		switch {
+		case flags[i].glued && flags[i].separated:
+			separator = `(=|\s+|)`
+		case flags[i].glued:
 			separator = `()`
+		default:
+			separator = `(=|\s+)`
 		}
-		flags[i].pattern = regexp.MustCompile(`(^|\s)(` + regexp.QuoteMeta(flags[i].flag) + `)` + separator + `('[^']*'|"[^"]*"|[^\s'";&|]+)`)
+		flags[i].pattern = regexp.MustCompile(`(^|\s)(` + regexp.QuoteMeta(flags[i].flag) + `)` + separator + `('[^']*'|"[^"]*"|` + unquotedCommandValue + `+)`)
 	}
 	return flags
+}
+
+// secretPart splits a tool flag's raw value (possibly quoted) into the
+// visible prefix and the secret, or reports false when the value is not
+// a secret for flag: it lacks flag.valuePrefix or is a placeholder.
+func (flag toolFlag) secretPart(value string) (prefix, secret string, ok bool) {
+	inner := unquote(value)
+	if !strings.HasPrefix(inner, flag.valuePrefix) {
+		return "", "", false
+	}
+	secret = inner[len(flag.valuePrefix):]
+	if placeholderSecret(secret) {
+		return "", "", false
+	}
+	return flag.valuePrefix, secret, true
 }
 
 // word is one whitespace-separated token of a command string, with its
@@ -94,16 +123,19 @@ func isCommandSpace(b byte) bool {
 
 // normalizeToolWord reduces a raw command word to the form a tool's name
 // would take: strip a surrounding quote, leading shell punctuation such
-// as "$(", "`", "(", or "{" (so a subshell like "$(openssl ...)" or
-// "`vercel ...`" still exposes the tool name), a path, a case difference,
+// as "$(", "`", "(", or "{", and anything before the last "(" or "`" (so
+// a subshell like "$(openssl ...)", "x=$(openssl ...)", or "`vercel ...`"
+// still exposes the tool name), a path, a case difference,
 // a trailing ".exe", and an npm-style "@version" suffix (so "vercel",
 // "/usr/local/bin/vercel", "Vercel.EXE", and "vercel@latest" all
 // normalize to "vercel"). It returns "" for a word that is only
 // punctuation, such as a bare "(" or ")".
 func normalizeToolWord(raw string) string {
-	w := strings.Trim(raw, `"'`)
-	w = strings.TrimLeft(w, "$(){`")
-	w = strings.TrimRight(w, ")}`;")
+	w := strings.TrimRight(strings.Trim(raw, `"'`), ")}`;")
+	if i := strings.LastIndexAny(w, "(`"); i >= 0 {
+		w = w[i+1:]
+	}
+	w = strings.TrimLeft(w, "$(){`\"'")
 	if w == "" {
 		return ""
 	}
@@ -116,14 +148,49 @@ func normalizeToolWord(raw string) string {
 	return name
 }
 
+// toolWordName is normalizeToolWord for a word that can name the command
+// being run, or "" for one that cannot. A flag ("-C=/opt/fly") never
+// names a command. A path right after a flag is usually that flag's
+// argument (make -C /opt/fly -t all), so it names a command only when it
+// looks like an executable: its parent directory is bin, sbin, or .bin,
+// or it ends in ".exe" (sudo -E /usr/local/bin/fly -t X). A bare name
+// after a flag still counts (npx --yes vercel), since wrappers take
+// boolean flags before the command.
+func toolWordName(prev, raw string) string {
+	w := strings.TrimLeft(strings.Trim(raw, `"'`), "$(){`")
+	if i := strings.LastIndexAny(w, "(`"); i >= 0 {
+		w = strings.TrimLeft(w[i+1:], `"'`)
+	}
+	if strings.HasPrefix(w, "-") {
+		return ""
+	}
+	if strings.ContainsAny(w, `/\`) && strings.HasPrefix(strings.Trim(prev, `"'`), "-") && !executablePath(w) {
+		return ""
+	}
+	return normalizeToolWord(raw)
+}
+
+func executablePath(w string) bool {
+	w = strings.ToLower(strings.TrimRight(strings.ReplaceAll(w, `\`, "/"), ")}`;"))
+	switch path.Base(path.Dir(w)) {
+	case "bin", "sbin", ".bin":
+		return true
+	}
+	return strings.HasSuffix(w, ".exe")
+}
+
 // toolActivations maps each tool name found in words to the byte offset
 // right after its first occurrence: a secret flag for that tool is only
 // recognized from that point on, so an unrelated command earlier in the
 // same segment cannot be mistaken for the tool invocation.
 func toolActivations(words []word) map[string]int {
 	activations := map[string]int{}
-	for _, w := range words {
-		name := normalizeToolWord(w.text)
+	for i, w := range words {
+		prev := ""
+		if i > 0 {
+			prev = words[i-1].text
+		}
+		name := toolWordName(prev, w.text)
 		if name == "" || !knownTools[name] {
 			continue
 		}
@@ -150,7 +217,29 @@ func wordAfter(words []word, offset int, target string) bool {
 	return false
 }
 
-var shellSeparator = regexp.MustCompile(`\|\||&&|[;|\n]`)
+// shellSeparators returns the spans of the shell separators ||, &&, ;,
+// |, and newline in command, left to right; a lone "&" is not one.
+func shellSeparators(command string) [][]int {
+	var out [][]int
+	for i := 0; i < len(command); {
+		j := strings.IndexAny(command[i:], ";|&\n")
+		if j < 0 {
+			break
+		}
+		i += j
+		switch {
+		case strings.HasPrefix(command[i:], "||"), strings.HasPrefix(command[i:], "&&"):
+			out = append(out, []int{i, i + 2})
+			i += 2
+		case command[i] == '&':
+			i++
+		default:
+			out = append(out, []int{i, i + 1})
+			i++
+		}
+	}
+	return out
+}
 
 // RedactToolFlags redacts tool-specific secret flags (see toolSecretFlags)
 // in a shell command string. Within each pipeline segment, any word whose
@@ -163,7 +252,7 @@ func RedactToolFlags(command string) (string, []string) {
 	var b strings.Builder
 	var removed []string
 	start := 0
-	locs := append(shellSeparator.FindAllStringIndex(command, -1), []int{len(command), len(command)})
+	locs := append(shellSeparators(command), []int{len(command), len(command)})
 	for _, loc := range locs {
 		segment := command[start:loc[0]]
 		segment, segRemoved := redactToolFlagsInSegment(segment)
@@ -193,11 +282,12 @@ func redactToolFlagsInSegment(segment string) (string, []string) {
 		suffix := flag.pattern.ReplaceAllStringFunc(segment[offset:], func(match string) string {
 			g := flag.pattern.FindStringSubmatch(match)
 			value := g[4]
-			if placeholderSecret(value) {
+			prefix, secret, ok := flag.secretPart(value)
+			if !ok {
 				return match
 			}
-			removed = append(removed, strings.Trim(value, `"'`))
-			return g[1] + g[2] + g[3] + quoteLike(value, redactedMarker)
+			removed = append(removed, secret)
+			return g[1] + g[2] + g[3] + quoteLike(value, prefix+redactedMarker)
 		})
 		segment = segment[:offset] + suffix
 	}
@@ -223,8 +313,12 @@ func RedactToolArgv(argv []string) ([]string, []string) {
 		}
 	}
 	activations := map[string]int{}
-	for _, w := range words {
-		name := normalizeToolWord(w.text)
+	for i, w := range words {
+		prev := ""
+		if i > 0 {
+			prev = words[i-1].text
+		}
+		name := toolWordName(prev, w.text)
 		if name == "" || !knownTools[name] {
 			continue
 		}
@@ -257,20 +351,20 @@ func RedactToolArgv(argv []string) ([]string, []string) {
 			elem := out[i]
 			switch {
 			case flag.separated && elem == flag.flag && i+1 < len(out):
-				if !placeholderSecret(out[i+1]) {
-					removed = append(removed, out[i+1])
-					out[i+1] = redactedMarker
+				if prefix, secret, ok := flag.secretPart(out[i+1]); ok {
+					removed = append(removed, secret)
+					out[i+1] = prefix + redactedMarker
 				}
 				i++
 			case flag.separated && strings.HasPrefix(elem, flag.flag+"="):
-				if value := elem[len(flag.flag)+1:]; !placeholderSecret(value) {
-					removed = append(removed, value)
-					out[i] = flag.flag + "=" + redactedMarker
+				if prefix, secret, ok := flag.secretPart(elem[len(flag.flag)+1:]); ok {
+					removed = append(removed, secret)
+					out[i] = flag.flag + "=" + prefix + redactedMarker
 				}
 			case flag.glued && strings.HasPrefix(elem, flag.flag) && len(elem) > len(flag.flag):
-				if value := elem[len(flag.flag):]; !placeholderSecret(value) {
-					removed = append(removed, value)
-					out[i] = flag.flag + redactedMarker
+				if prefix, secret, ok := flag.secretPart(elem[len(flag.flag):]); ok {
+					removed = append(removed, secret)
+					out[i] = flag.flag + prefix + redactedMarker
 				}
 			}
 		}

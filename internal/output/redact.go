@@ -18,24 +18,53 @@ const redactedMarker = "[REDACTED]"
 // first; this list is a second line of defense, not a secret scanner.
 // Distinctive prefixes match without a word boundary, because "_" is a word
 // character and ids such as "evt_AKIA..." would otherwise slip through.
-var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)`),
-	regexp.MustCompile(`(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}`),
-	regexp.MustCompile(`(?i)aws_?secret_?access_?key["'\s]*[:=]\s*["']?[A-Za-z0-9/+=]{40}`),
-	regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{36,255}`),
-	regexp.MustCompile(`github_pat_[A-Za-z0-9_]{22,255}`),
-	regexp.MustCompile(`glpat-[A-Za-z0-9_-]{20,}`),
-	regexp.MustCompile(`(?:\b|_)sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}`),
-	regexp.MustCompile(`[sr]k_live_[0-9A-Za-z]{20,}`),
-	regexp.MustCompile(`xox[abprs]-[A-Za-z0-9-]{10,}`),
-	regexp.MustCompile(`xapp-[0-9]+-[A-Za-z0-9-]{8,}`),
-	regexp.MustCompile(`npm_[A-Za-z0-9]{20,}`),
-	regexp.MustCompile(`hf_[A-Za-z0-9]{20,}`),
-	regexp.MustCompile(`ya29\.[A-Za-z0-9._-]{20,}`),
-	regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`),
-	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`),
-	regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}=*`),
-	regexp.MustCompile(`https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]+`),
+//
+// Each pattern lists literals one of which every match contains, so a
+// value without any skips the regexp, which otherwise steps every byte.
+// A fold pattern's literals are lowercase and compared with an
+// ASCII-lowercased value; they avoid "k" and "s", the only ASCII
+// letters (?i) also matches as a non-ASCII rune (the Kelvin sign, long s).
+var secretPatterns = []shapePattern{
+	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)`), []string{"-----BEGIN "}, false},
+	{regexp.MustCompile(`(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}`), []string{"AKIA", "ASIA", "ABIA", "ACCA"}, false},
+	{regexp.MustCompile(`(?i)aws_?secret_?access_?key["'\s]*[:=]\s*["']?[A-Za-z0-9/+=]{40}`), []string{"acce"}, true},
+	{regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{36,255}`), []string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_"}, false},
+	{regexp.MustCompile(`github_pat_[A-Za-z0-9_]{22,255}`), []string{"github_pat_"}, false},
+	{regexp.MustCompile(`glpat-[A-Za-z0-9_-]{20,}`), []string{"glpat-"}, false},
+	{regexp.MustCompile(`(?:\b|_)sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}`), []string{"sk-"}, false},
+	{regexp.MustCompile(`[sr]k_live_[0-9A-Za-z]{20,}`), []string{"k_live_"}, false},
+	{regexp.MustCompile(`xox[abprs]-[A-Za-z0-9-]{10,}`), []string{"xox"}, false},
+	{regexp.MustCompile(`xapp-[0-9]+-[A-Za-z0-9-]{8,}`), []string{"xapp-"}, false},
+	{regexp.MustCompile(`npm_[A-Za-z0-9]{20,}`), []string{"npm_"}, false},
+	{regexp.MustCompile(`hf_[A-Za-z0-9]{20,}`), []string{"hf_"}, false},
+	{regexp.MustCompile(`ya29\.[A-Za-z0-9._-]{20,}`), []string{"ya29."}, false},
+	{regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`), []string{"AIza"}, false},
+	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`), []string{"eyJ"}, false},
+	{regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}=*`), []string{"bearer"}, true},
+	{regexp.MustCompile(`https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]+`), []string{"https://hooks.slack.com/"}, false},
+}
+
+// shapePattern is a secretPatterns entry: the regexp, the literals one of
+// which every match contains, and whether they compare case-folded.
+type shapePattern struct {
+	re    *regexp.Regexp
+	anyOf []string
+	fold  bool
+}
+
+// mayMatch reports whether value, or lower (its asciiLower) for a fold
+// pattern, contains one of p.anyOf.
+func (p shapePattern) mayMatch(value, lower string) bool {
+	text := value
+	if p.fold {
+		text = lower
+	}
+	for _, literal := range p.anyOf {
+		if strings.Contains(text, literal) {
+			return true
+		}
+	}
+	return false
 }
 
 // urlUserinfoPattern matches a URL's userinfo ("user:pass" before the
@@ -50,6 +79,14 @@ var secretPatterns = []*regexp.Regexp{
 // net/url splits userinfo, so "https://user:p@ss@host" does not leak "ss".
 var urlUserinfoPattern = regexp.MustCompile(`(://)([^/\s:@]+:[^/?#\s]*)(@)`)
 
+// urlUserinfoSlashPattern is urlUserinfoPattern for a password that
+// contains "/" ("https://user:pa/ss@host"), which net/url cannot parse
+// and urlUserinfoPattern stops short of. The password runs to the first
+// "@". RedactURLUserinfo skips a match whose text before the first "/"
+// is all digits: that is a port and a path ("https://host:8080/x@y"),
+// not a password.
+var urlUserinfoSlashPattern = regexp.MustCompile(`(://)([^/\s:@]+:([^\s@?#]*/[^\s@?#]*))(@)`)
+
 // quotedOrBareValue is one assignment value: a double-quoted string that
 // correctly skips an escaped quote (\"), so {"password":"a\"b"} redacts
 // the whole "a\"b" instead of stopping at the \" and leaking the b that
@@ -59,22 +96,221 @@ var urlUserinfoPattern = regexp.MustCompile(`(://)([^/\s:@]+:[^/?#\s]*)(@)`)
 // differently.
 const quotedValue = `"(?:[^"\\\n]|\\.)*"|'[^'\n]*'`
 
-// assignmentPatternEquals matches a shell-style KEY=value credential
-// assignment. The key may carry a prefix, as in GITHUB_TOKEN or
-// OPENAI_API_KEY. An unquoted value stops at the first whitespace or any
-// of ;&|"' so a trailing shell command (e.g. "TOKEN=x curl evil|sh")
-// stays visible as evidence instead of being swallowed into the
-// redaction: a shell would treat that first space the same way. Only the
-// value is replaced.
-var assignmentPatternEquals = regexp.MustCompile(`(?i)((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]*[_-])*(?:password|passwd|pgpassword|api[_-]?key|auth[_-]?token|token|secret)\b["']?\s*=\s*)(` + quotedValue + `|[^\s;&|"'\n]*)`)
+// A shell-style KEY=value assignment is redacted when its key is a
+// credential name (see CredentialName), as in GITHUB_TOKEN,
+// OPENAI_API_KEY, SECRET_KEY, or docker run -e AWS_SECRET_ACCESS_KEY=....
+// assignmentEqualsValue reads the value, anchored after the "=": an
+// unquoted value stops at the first whitespace or any of ;&|"' so a
+// trailing shell command (e.g. "TOKEN=x curl evil|sh") stays visible as
+// evidence instead of being swallowed into the redaction: a shell would
+// treat that first space the same way. Only the value is replaced, and a
+// rejected key such as TOKEN_TTL=30 cannot hide a credential later in
+// its value.
+var assignmentEqualsValue = regexp.MustCompile(`^(?:` + quotedValue + `|` + unquotedCommandValue + `*)`)
 
-// assignmentPatternColon matches a "key: value" credential line, as
-// opposed to shell-style KEY=value: a line such as "token: abc def" is
-// not shell syntax, so, unlike the "=" form, there is no shell word
-// boundary to preserve and an unquoted value runs to the end of the
-// line (or to one of ;&|"', in case the line is itself embedded in a
-// larger shell command).
-var assignmentPatternColon = regexp.MustCompile(`(?i)((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]*[_-])*(?:password|passwd|pgpassword|api[_-]?key|auth[_-]?token|token|secret)\b["']?\s*:\s*)(` + quotedValue + `|[^;&|"'\n]*)`)
+// assignmentHead is a candidate "name=" or "name:" found by
+// nextAssignmentHead: the name holds a credential stem, may be quoted,
+// and is followed by optional whitespace, the separator, and optional
+// whitespace.
+type assignmentHead struct {
+	start                 int // the name, or the quote right before it
+	nameEnd               int
+	name                  string
+	openQuote, closeQuote string
+	sep                   string // the separator with its whitespace
+	valStart              int
+}
+
+// stemScanner finds credentialStems in an ASCII-lowercased copy of a
+// value with strings.Index, remembering each stem's next occurrence, so
+// a scan whose position only moves forward is linear. It replaces a
+// case-insensitive name regexp, which cannot skip ahead to a literal and
+// steps every byte.
+type stemScanner struct {
+	lower string
+	next  []int // per stem: next occurrence, -1 for none left, -2 unknown
+}
+
+func newStemScanner(value string) *stemScanner {
+	s := &stemScanner{lower: asciiLower(value), next: make([]int, len(credentialStems))}
+	for i := range s.next {
+		s.next[i] = -2
+	}
+	return s
+}
+
+// find returns the first stem occurrence at or after pos, or -1.
+func (s *stemScanner) find(pos int) int {
+	best := -1
+	for i, stem := range credentialStems {
+		if s.next[i] == -1 {
+			continue
+		}
+		if s.next[i] < pos {
+			j := strings.Index(s.lower[pos:], stem)
+			if j < 0 {
+				s.next[i] = -1
+				continue
+			}
+			s.next[i] = pos + j
+		}
+		if best < 0 || s.next[i] < best {
+			best = s.next[i]
+		}
+	}
+	return best
+}
+
+func asciiLower(value string) string {
+	b := []byte(value)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+func isNameByte(c byte) bool { return isAlnum(c) || c == '_' || c == '-' }
+
+// isRegexpSpace is RE2's \s.
+func isRegexpSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r'
+}
+
+// nextAssignmentHead returns the first head at or after pos whose
+// separator is sep ('=' or ':'). The name is the whole run of
+// [A-Za-z0-9_-] around a stem, bounded below by pos, as is a quote
+// before it.
+func nextAssignmentHead(value string, scan *stemScanner, pos int, sep byte) (assignmentHead, bool) {
+	for {
+		floor := pos
+		hit := scan.find(pos)
+		if hit < 0 {
+			return assignmentHead{}, false
+		}
+		nameStart, nameEnd := hit, hit
+		for nameStart > floor && isNameByte(value[nameStart-1]) {
+			nameStart--
+		}
+		for nameEnd < len(value) && isNameByte(value[nameEnd]) {
+			nameEnd++
+		}
+		pos = nameEnd
+		h := assignmentHead{start: nameStart, nameEnd: nameEnd, name: value[nameStart:nameEnd]}
+		if nameStart > floor && (value[nameStart-1] == '"' || value[nameStart-1] == '\'') {
+			h.start, h.openQuote = nameStart-1, value[nameStart-1:nameStart]
+		}
+		j := nameEnd
+		if j < len(value) && (value[j] == '"' || value[j] == '\'') {
+			h.closeQuote = value[j : j+1]
+			j++
+		}
+		sepStart := j
+		for j < len(value) && isRegexpSpace(value[j]) {
+			j++
+		}
+		if j == len(value) || value[j] != sep {
+			continue
+		}
+		j++
+		for j < len(value) && isRegexpSpace(value[j]) {
+			j++
+		}
+		h.sep, h.valStart = value[sepStart:j], j
+		return h, true
+	}
+}
+
+// credentialWords are the name segments (split on "_" and "-") that mark
+// a credential, also as a segment suffix (PGPASSWORD, _authToken) and
+// before a glued "key" (SECRETKEY).
+var credentialWords = []string{"secret", "secrets", "token", "tokens", "password", "passwords", "passwd", "apikey", "accesskey", "privatekey", "credential", "credentials"}
+
+// keyQualifiers are the segments that, before a "key" segment, make it a
+// credential: API_KEY, ACCESS_KEY, PRIVATE_KEY.
+var keyQualifiers = map[string]bool{"api": true, "access": true, "private": true}
+
+// metadataSuffixes are final name segments that describe a credential
+// rather than hold it: SECRET_KEY_FILE=/run/secrets/k names a file,
+// TOKEN_TTL=30 a lifetime, GITHUB_TOKEN_ENV_VAR=GH_TOKEN a variable.
+// Their values are configuration a reviewer needs to see, and a file or
+// variable that does hold the secret is not in the text being redacted.
+var metadataSuffixes = map[string]bool{
+	"file": true, "files": true, "path": true, "dir": true, "var": true,
+	"ttl": true, "expiry": true, "expires": true, "expiration": true, "timeout": true,
+	"type": true, "url": true, "uri": true, "endpoint": true, "header": true,
+	"length": true, "len": true, "size": true, "name": true, "enabled": true,
+}
+
+// booleanFlags are flags whose name contains a credential word but that
+// take no value: gh auth login --with-token reads the token from stdin,
+// so "--with-token=true" or the word after it is not a secret.
+var booleanFlags = map[string]bool{"--with-token": true}
+
+// CredentialName reports whether an assignment key such as SECRET_KEY,
+// AWS_SECRET_ACCESS_KEY, PRIVATE_KEY, GITHUB_TOKEN, DB_PASS, DB_PWD, or
+// X-Api-Key names a credential, case-insensitively. A segment matches
+// when it is or ends in one of credentialWords, optionally followed by
+// a glued "key"; a "key" segment matches after api, access, or private;
+// "pass" and "pwd" match only as a whole segment after another one, so
+// BYPASS, PASS_THROUGH, and the shell's PWD and OLDPWD do not. A name
+// whose last segment is a metadataSuffixes word (SECRET_KEY_FILE,
+// TOKEN_TTL) does not match, nor does a word that merely starts with a
+// credential word (TOKENIZER, SECRETARY), nor a booleanFlags flag.
+func CredentialName(name string) bool {
+	lower := strings.ToLower(name)
+	if booleanFlags[lower] {
+		return false
+	}
+	segments := strings.FieldsFunc(lower, func(r rune) bool { return r == '_' || r == '-' })
+	if len(segments) == 0 || metadataSuffixes[segments[len(segments)-1]] {
+		return false
+	}
+	for i, segment := range segments {
+		switch {
+		case credentialSegment(segment), credentialSegment(strings.TrimSuffix(segment, "key")):
+			return true
+		case (segment == "pwd" || segment == "pass") && i > 0,
+			segment == "key" && i > 0 && keyQualifiers[segments[i-1]]:
+			return true
+		}
+	}
+	return false
+}
+
+// credentialStems are lowercase substrings every CredentialName name
+// contains; stemScanner looks for them.
+var credentialStems = []string{"secret", "token", "pass", "pwd", "key", "credential"}
+
+func credentialSegment(segment string) bool {
+	for _, word := range credentialWords {
+		if strings.HasSuffix(segment, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// unquotedCommandValue is one byte of an unquoted shell value. Besides
+// whitespace, quotes, and ;&|, it stops at ")" and "`", so a value
+// inside a "$(...)", "(...)", or backtick substitution does not swallow
+// the closing ")" or "`".
+const unquotedCommandValue = "[^\\s;&|\"'\\n)`]"
+
+// A "key: value" credential, as opposed to shell-style KEY=value: a
+// line such as "token: abc def" is not shell syntax, so, unlike the "="
+// form, there is no shell word boundary to preserve and an unquoted
+// value runs to the end of the line (or to one of ;&|"', in case the
+// line is itself embedded in a larger shell command); trailing
+// whitespace is not part of it. A head counts anywhere except inside the
+// argument of a literalTextFlags flag, so git commit -m 'fix token:
+// handling' is left alone (see redactColonAssignments).
+// assignmentQuotedValue reads a quoted value, anchored.
+var assignmentQuotedValue = regexp.MustCompile(`^(?:` + quotedValue + `)`)
+
+// colonValueEnd lists the bytes that end an unquoted "key: value" value.
+const colonValueEnd = ";&|\"'\n)}"
 
 // authorizationPattern matches an Authorization header or JSON field with a
 // Bearer, Basic, or token scheme, in both header ("Authorization: Bearer x")
@@ -96,6 +332,7 @@ var SecretFlags = []string{
 	"token", "secret", "password", "api-key", "apikey", "api_key",
 	"client-secret", "client_secret", "access-token", "access_token",
 	"auth-token", "auth_token", "http-password",
+	"secret-access-key", "secret_access_key",
 }
 
 // secretFlagWordAlternation is SecretFlags as a regexp alternation of
@@ -121,7 +358,7 @@ func SecretFlagAlternation() string {
 // it accepts. The longer spellings come first: with leftmost-first
 // alternation, "-u" listed first would match the start of "-user" and
 // read "ser" as a glued value, leaking "-user alice:s3cret".
-const UserFlagAlternation = `--user|-user|-u`
+const UserFlagAlternation = `--proxy-user|--user|-user|-u`
 
 // LooksLikeUserPass reports whether value has curl's "user:pass" shape:
 // a non-empty name, a literal ":", and a (possibly empty) password. It
@@ -139,22 +376,119 @@ func LooksLikeUserPass(value string) bool {
 	return i > 0
 }
 
-// secretFlagPattern matches a SecretFlags flag and its value, requiring
-// a word boundary on both sides of the flag name: whitespace or the
-// start of text before it, and "=" or whitespace after it, never glued
-// onto the value. Without this, "find . -type f", "--user-agent x", or
-// "--tokenizer gpt2" would read part of an unrelated word as a value.
-// Group 1 is the boundary, flag, and separator, kept as-is; group 2 is
-// the value, using the quotedValue grammar so a whole quoted phrase such
-// as `--password "correct horse battery"` is redacted as one value. An
-// unquoted value never starts with "-", so "--token --verbose" does not
-// eat the next flag.
-var secretFlagPattern = regexp.MustCompile(`(?i)((?:^|\s)(?:` + SecretFlagAlternation() + `)(?:=|\s+))(` + quotedValue + `|(?:[^-\s;&|"'\n][^\s;&|"'\n]*)?)`)
+// secretFlagHead matches a SecretFlags flag and the "=" or whitespace
+// after it, never glued onto the value, so "--user-agent x" or
+// "--tokenizer gpt2" is not read as a flag. The flag may itself be
+// quoted ("--token" abc). Groups: open quote, flag, close quote,
+// separator. RedactSecretFlags checks the left word boundary itself.
+//
+// RedactSecretFlags tries secretFlagHead, anchored, only where a word
+// can start with a flag: a "-" at a word boundary, or the quote right
+// before it. The head's optional leading quote gives the regexp no
+// literal prefix to skip to, so searching with it would step every byte.
+//
+// The value after the separator is read with secretFlagEqualValue or
+// secretFlagSpaceValue, anchored, so a rejected candidate costs only its
+// head and redaction stays linear in the input. Both use the quotedValue
+// grammar, so a whole quoted phrase such as
+// `--password "correct horse battery"` is redacted as one value. An
+// unquoted space-separated value never starts with "-", so
+// "--token --verbose" does not eat the next flag; an "=" value may
+// ("--token=-abc"), since "=" unambiguously ends the flag name.
+var (
+	secretFlagHead       = regexp.MustCompile(`(?i)^(["']?)(` + SecretFlagAlternation() + `)(["']?)(=|\s+)`)
+	secretFlagEqualValue = regexp.MustCompile(`^(?:` + quotedValue + `|` + unquotedCommandValue + `*)`)
+	secretFlagSpaceValue = regexp.MustCompile(`^(?:` + quotedValue + `|[^-\s;&|"'\n)` + "`" + `]` + unquotedCommandValue + `*)`)
+)
 
-// userFlagPattern matches curl's -u/--user/-user flag and its value:
-// "-u value", "-u=value", or glued ("-uuser:pass", curl's documented
-// short form). Groups: boundary, flag, separator, value.
-var userFlagPattern = regexp.MustCompile(`(?i)(^|\s)(` + UserFlagAlternation + `)(=|\s+|)(` + quotedValue + `|[^\s;&|"'\n]*)`)
+// RedactSecretFlags replaces the value of every SecretFlags flag in
+// value ("--token X", "--token=X", "--token 'X'") with [REDACTED], kept
+// in the value's own quotes, and returns the raw values it removed, with
+// those quotes stripped. An empty or placeholder value ("--token=",
+// "--token $TOKEN") is left alone, as is a flag name inside the argument
+// of a literalTextFlags flag (grep -e --token file).
+func RedactSecretFlags(value string) (string, []string) {
+	var removed []string
+	var b strings.Builder
+	var spans literalSpans
+	spansFound := false
+	pos, written := 0, 0
+	for pos < len(value) {
+		dash := strings.IndexByte(value[pos:], '-')
+		if dash < 0 {
+			break
+		}
+		start := pos + dash
+		if start > pos && (value[start-1] == '"' || value[start-1] == '\'') {
+			start--
+		}
+		var m []int
+		if wordBoundaryBefore(value, start) {
+			m = secretFlagHead.FindStringSubmatchIndex(value[start:])
+		}
+		if m == nil {
+			pos += dash + 1
+			continue
+		}
+		for i := range m {
+			m[i] += start
+		}
+		sepEnd := m[1]
+		openQuote, closeQuote := value[m[2]:m[3]], value[m[6]:m[7]]
+		valuePattern := secretFlagSpaceValue
+		if value[m[8]] == '=' {
+			valuePattern = secretFlagEqualValue
+		}
+		var body string
+		var loc []int
+		if !spansFound {
+			spans, spansFound = findLiteralSpans(value), true
+		}
+		if (closeQuote == "" || closeQuote == openQuote) && !spans.contains(start) {
+			loc = valuePattern.FindStringIndex(value[sepEnd:])
+		}
+		if loc != nil {
+			body = value[sepEnd : sepEnd+loc[1]]
+		}
+		pos = sepEnd
+		if loc == nil || placeholderSecret(body) {
+			continue
+		}
+		removed = append(removed, unquote(body))
+		b.WriteString(value[written:sepEnd])
+		b.WriteString(quoteLike(body, redactedMarker))
+		pos += len(body)
+		written = pos
+	}
+	b.WriteString(value[written:])
+	return b.String(), removed
+}
+
+// wordBoundaryBefore reports whether offset starts a shell word: the
+// start of text or right after whitespace. Without it, the optional
+// single dash of SecretFlagAlternation would match the "-password"
+// inside a compound word such as "find-generic-password".
+func wordBoundaryBefore(value string, offset int) bool {
+	return offset == 0 || isCommandSpace(value[offset-1])
+}
+
+// unquote strips one layer of matching single or double quotes.
+func unquote(value string) string {
+	if len(value) >= 2 {
+		quote := value[0]
+		if (quote == '"' || quote == '\'') && value[len(value)-1] == quote {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
+}
+
+// userFlagPattern matches curl's -u/--user/-user flag and its value,
+// anchored at the flag: "-u value", "-u=value", or glued ("-uuser:pass",
+// curl's documented short form). Groups: flag, separator, value.
+// RedactUserFlags tries it only at a "-" that starts the text or follows
+// whitespace.
+var userFlagPattern = regexp.MustCompile(`(?i)^(` + UserFlagAlternation + `)(=|\s+|)(` + quotedValue + `|` + unquotedCommandValue + `*)`)
 
 // RedactUserFlags replaces the value of a curl-style -u/--user/-user flag
 // with [REDACTED] when it has "user:pass" shape, and returns the raw
@@ -165,9 +499,25 @@ var userFlagPattern = regexp.MustCompile(`(?i)(^|\s)(` + UserFlagAlternation + `
 // adapter's source-side redaction, so both phases agree.
 func RedactUserFlags(value string) (string, []string) {
 	var removed []string
-	out := userFlagPattern.ReplaceAllStringFunc(value, func(match string) string {
-		g := userFlagPattern.FindStringSubmatch(match)
-		boundary, flag, separator, body := g[1], g[2], g[3], g[4]
+	var b strings.Builder
+	pos, written := 0, 0
+	for pos < len(value) {
+		dash := strings.IndexByte(value[pos:], '-')
+		if dash < 0 {
+			break
+		}
+		start := pos + dash
+		var g []int
+		if start == 0 || (start > pos && isRegexpSpace(value[start-1])) {
+			g = userFlagPattern.FindStringSubmatchIndex(value[start:])
+		}
+		if g == nil {
+			pos += dash + 1
+			continue
+		}
+		end := start + g[1]
+		pos = end
+		flag, separator, body := value[start+g[2]:start+g[3]], value[start+g[4]:start+g[5]], value[start+g[6]:end]
 		if separator == "" {
 			switch strings.ToLower(flag) {
 			case "-u":
@@ -175,31 +525,81 @@ func RedactUserFlags(value string) (string, []string) {
 				body = flag[2:] + body
 				flag = flag[:2]
 			default:
-				return match
+				continue
 			}
 		}
 		if !LooksLikeUserPass(body) || placeholderSecret(body) {
-			return match
+			continue
 		}
 		removed = append(removed, strings.Trim(body, `"'`))
-		return boundary + flag + separator + quoteLike(body, redactedMarker)
-	})
-	return out, removed
+		b.WriteString(value[written:start])
+		b.WriteString(flag + separator + quoteLike(body, redactedMarker))
+		written = end
+	}
+	b.WriteString(value[written:])
+	return b.String(), removed
 }
 
 // DefaultRedactor replaces well-known credential shapes with [REDACTED].
 // Already-redacted text, such as "sk-***REDACTED***abcd", is unchanged.
 func DefaultRedactor(value string) string {
-	value = authorizationPattern.ReplaceAllString(value, "${1}"+redactedMarker)
-	value = secretFlagPattern.ReplaceAllStringFunc(value, redactAssignment(secretFlagPattern, new([]string)))
+	if strings.Contains(asciiLower(value), "authorization") {
+		value = authorizationPattern.ReplaceAllString(value, "${1}"+redactedMarker)
+	}
+	value, _ = RedactSecretFlags(value)
 	value, _ = RedactUserFlags(value)
 	value, _ = RedactToolFlags(value)
-	value = urlUserinfoPattern.ReplaceAllString(value, "${1}"+redactedMarker+"${3}")
+	value, _ = RedactURLUserinfo(value)
+	lower := asciiLower(value)
 	for _, pattern := range secretPatterns {
-		value = pattern.ReplaceAllString(value, redactedMarker)
+		if !pattern.mayMatch(value, lower) {
+			continue
+		}
+		if out := pattern.re.ReplaceAllString(value, redactedMarker); out != value {
+			value, lower = out, asciiLower(out)
+		}
 	}
 	value, _ = RedactAssignments(value)
 	return value
+}
+
+// RedactCommand applies the command-line rules DefaultRedactor shares
+// with the adapters' source-side sanitizers: secret flags
+// (RedactSecretFlags), curl user flags (RedactUserFlags), tool-specific
+// flags (RedactToolFlags), URL userinfo (RedactURLUserinfo), and
+// credential assignments (RedactAssignments). It returns the redacted
+// text and the raw values it removed, so a source-side key
+// discriminator hashes exactly what the output side hides.
+func RedactCommand(value string) (string, []string) {
+	value, removed := RedactSecretFlags(value)
+	value, user := RedactUserFlags(value)
+	value, tool := RedactToolFlags(value)
+	value, userinfo := RedactURLUserinfo(value)
+	value, assign := RedactAssignments(value)
+	removed = append(removed, user...)
+	removed = append(removed, tool...)
+	removed = append(removed, userinfo...)
+	return value, append(removed, assign...)
+}
+
+// RedactURLUserinfo replaces the "user:pass" userinfo of every URL in
+// value with [REDACTED] and returns the raw userinfo it removed.
+func RedactURLUserinfo(value string) (string, []string) {
+	var removed []string
+	value = urlUserinfoPattern.ReplaceAllStringFunc(value, func(match string) string {
+		g := urlUserinfoPattern.FindStringSubmatch(match)
+		removed = append(removed, g[2])
+		return g[1] + redactedMarker + g[3]
+	})
+	value = urlUserinfoSlashPattern.ReplaceAllStringFunc(value, func(match string) string {
+		g := urlUserinfoSlashPattern.FindStringSubmatch(match)
+		if port := g[3][:strings.IndexByte(g[3], '/')]; port != "" && strings.Trim(port, "0123456789") == "" {
+			return match
+		}
+		removed = append(removed, g[2])
+		return g[1] + redactedMarker + g[4]
+	})
+	return value, removed
 }
 
 // RedactAssignments redacts a credential-named "key=value" or "key: value"
@@ -208,27 +608,198 @@ func DefaultRedactor(value string) string {
 // does. It returns the redacted text and the raw values it removed.
 func RedactAssignments(value string) (string, []string) {
 	var removed []string
-	value = assignmentPatternEquals.ReplaceAllStringFunc(value, redactAssignment(assignmentPatternEquals, &removed))
-	value = assignmentPatternColon.ReplaceAllStringFunc(value, redactAssignment(assignmentPatternColon, &removed))
+	value = redactEqualsAssignments(value, &removed)
+	value = redactColonAssignments(value, &removed)
 	return value, removed
 }
 
-func redactAssignment(pattern *regexp.Regexp, removed *[]string) func(string) string {
-	return func(match string) string {
-		parts := pattern.FindStringSubmatch(match)
-		if len(parts) != 3 || placeholderSecret(parts[2]) {
-			return match
+// redactColonAssignments redacts each credential-named "key:" head
+// (nextAssignmentHead) anywhere in value, except inside the argument of
+// a literalTextFlags flag (git commit -m 'fix token: handling'). Free
+// text such as echo secret: foo is redacted too: over-redacting a
+// scanner's output is safe, leaking a secret is not. A rejected head is
+// skipped whole: a candidate starting inside it would follow a key byte.
+func redactColonAssignments(value string, removed *[]string) string {
+	scan := newStemScanner(value)
+	var b strings.Builder
+	var spans literalSpans
+	spansFound := false
+	imageRefs := findContainerImageSpans(value)
+	pos := 0
+	for {
+		h, found := nextAssignmentHead(value, scan, pos, ':')
+		if !found {
+			break
 		}
-		value := parts[2]
-		*removed = append(*removed, strings.Trim(value, `"'`))
-		if len(value) >= 2 {
-			quote := value[0]
-			if (quote == '"' || quote == '\'') && value[len(value)-1] == quote {
-				return parts[1] + string(quote) + redactedMarker + string(quote)
+		body := ""
+		ok := (h.start == 0 || !isAlnum(value[h.start-1])) && CredentialName(h.name) &&
+			!imageRefs.contains(h.start)
+		if ok && !spansFound {
+			spans, spansFound = findLiteralSpans(value), true
+		}
+		if ok = ok && !spans.contains(h.start); ok {
+			body = colonValue(value[h.valStart:], colonValueStop(value, h.start, h.openQuote, h.closeQuote, h.sep))
+		}
+		b.WriteString(value[pos:h.valStart])
+		pos = h.valStart
+		if !ok || placeholderSecret(body) {
+			continue
+		}
+		*removed = append(*removed, strings.Trim(body, `"'`))
+		b.WriteString(quoteLike(body, redactedMarker))
+		pos += len(body)
+	}
+	b.WriteString(value[pos:])
+	return b.String()
+}
+
+// findContainerImageSpans returns tag-shaped image arguments in the only
+// container command positions that are exempt from colon assignments. It
+// scans each command segment once; calling splitWords from every assignment
+// candidate would turn a long path-heavy command quadratic.
+func findContainerImageSpans(value string) literalSpans {
+	var refs literalSpans
+	for start := 0; start < len(value); {
+		end := commandSegmentEnd(value, start)
+		words := splitWords(value[start:end])
+		if len(words) >= 3 {
+			tool := normalizeToolWord(words[0].text)
+			if tool == "docker" || tool == "podman" || tool == "nerdctl" {
+				subcommand := strings.Trim(words[1].text, `"'`)
+				for i, word := range words {
+					imagePosition := (subcommand == "run" || subcommand == "pull" || subcommand == "push" || subcommand == "create") && i == 2 ||
+						subcommand == "build" && i == 3 && (words[2].text == "-t" || words[2].text == "--tag") ||
+						subcommand == "tag" && (i == 2 || i == 3)
+					if !imagePosition {
+						continue
+					}
+					if colon := strings.LastIndexByte(word.text, ':'); colon > 0 && !strings.Contains(word.text, "=") && imageTag(word.text[colon+1:]) {
+						refs = append(refs, [2]int{start + word.start, start + word.end})
+					}
+				}
 			}
 		}
-		return parts[1] + redactedMarker
+		start = end + 1
 	}
+	return refs
+}
+
+// commandSegmentEnd finds an unquoted shell command separator. A semicolon
+// inside an argument such as echo 'x; docker run password:S y' cannot start
+// a container command.
+func commandSegmentEnd(value string, start int) int {
+	for i := start; i < len(value); i++ {
+		switch value[i] {
+		case '\'':
+			if end := strings.IndexByte(value[i+1:], '\''); end >= 0 {
+				i += end + 1
+			}
+		case '"':
+			i++
+			for i < len(value) && value[i] != '"' {
+				if value[i] == '\\' {
+					i++
+				}
+				i++
+			}
+		case ';', '&', '|', '\n':
+			return i
+		}
+	}
+	return len(value)
+}
+
+func imageTag(value string) bool {
+	if len(value) == 0 || len(value) > 128 || value[0] == '-' {
+		return false
+	}
+	for _, c := range value {
+		if c == '_' || c == '.' || c == '-' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// colonValue returns the "key: value" value at the start of rest: a
+// quoted string, or the unquoted run up to a colonValueEnd or stop
+// byte, without trailing whitespace.
+func colonValue(rest, stop string) string {
+	if loc := assignmentQuotedValue.FindStringIndex(rest); loc != nil {
+		return rest[:loc[1]]
+	}
+	if i := strings.IndexAny(rest, colonValueEnd+stop); i >= 0 {
+		rest = rest[:i]
+	}
+	return strings.TrimRight(rest, " \t\r")
+}
+
+// colonValueStop returns the bytes that end an unquoted "key: value"
+// value starting at offset, beyond colonValueEnd: "," and "}" in a
+// mapping (a quoted key, or a key right after "{" or ","), whitespace in
+// a glued Name:value word that does not start a line (an httpie or
+// curl header), and nothing extra otherwise, so a YAML or env line, an
+// echo argument, or a free-text value runs to the end of its line or
+// quote. It looks back only across blanks, so checking every candidate
+// stays linear.
+func colonValueStop(value string, offset int, openQuote, closeQuote, sep string) string {
+	i := skipBlanksBack(value, offset)
+	switch {
+	case openQuote != "" && openQuote == closeQuote,
+		i > 0 && (value[i-1] == '{' || value[i-1] == ','):
+		return ",}"
+	case i == 0 || value[i-1] == '\n':
+		return ""
+	case sep == ":":
+		return " \t"
+	}
+	return ""
+}
+
+// skipBlanksBack returns the offset before the run of spaces, tabs, and
+// carriage returns that ends at offset.
+func skipBlanksBack(value string, offset int) int {
+	for offset > 0 && (value[offset-1] == ' ' || value[offset-1] == '\t' || value[offset-1] == '\r') {
+		offset--
+	}
+	return offset
+}
+
+func isAlnum(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// redactEqualsAssignments redacts each "KEY=" head (nextAssignmentHead)
+// whose key is a CredentialName. A value starting with "-" after
+// whitespace ("token = -x") is the next flag, not the value.
+func redactEqualsAssignments(value string, removed *[]string) string {
+	scan := newStemScanner(value)
+	var b strings.Builder
+	pos := 0
+	for {
+		h, found := nextAssignmentHead(value, scan, pos, '=')
+		if !found {
+			break
+		}
+		body := ""
+		ok := CredentialName(h.name)
+		if ok {
+			loc := assignmentEqualsValue.FindStringIndex(value[h.valStart:])
+			body = value[h.valStart : h.valStart+loc[1]]
+			ok = !placeholderSecret(body) && (!strings.HasPrefix(body, "-") || !isCommandSpace(value[h.valStart-1]))
+		}
+		b.WriteString(value[pos:h.valStart])
+		pos = h.valStart
+		if !ok {
+			continue
+		}
+		*removed = append(*removed, unquote(body))
+		b.WriteString(quoteLike(body, redactedMarker))
+		pos += len(body)
+	}
+	b.WriteString(value[pos:])
+	return b.String()
 }
 
 func placeholderSecret(value string) bool {

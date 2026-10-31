@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -84,6 +85,16 @@ type src struct {
 	scope model.Scope
 	path  string
 	sha   string
+	// sanitized memoizes sanitizeString, which is pure: an entry's key
+	// re-sanitizes strings its payload already did, such as a command.
+	sanitized map[string]sanitizeResult
+	// outputs is every string sanitizeString returned. kit's
+	// sanitization is the same pipeline, so signer trusts them rather
+	// than redacting each one a second time.
+	outputs map[string]bool
+	// signer computes every entry's kit.Source.EntrySignature, one
+	// source per file so its Sanitize memo spans the file's entries.
+	signer *kit.Source
 }
 
 func newSrc(c *collector, scope model.Scope, path string, raw []byte) *src {
@@ -110,9 +121,12 @@ func (s *src) warnAll(warnings []string) {
 // (and therefore never share a fingerprint): see kit.Source.Add, which
 // this mirrors.
 func (s *src) add(kind model.ConfigKind, key []string, payload map[string]any, removed []string) {
-	c := kit.NewCollector(s.c.harness, "Claude Code")
-	c.SetHome(s.c.home)
-	sig := c.SourceSHA(s.scope, s.path, s.sha).EntrySignature(payload, removed)
+	if s.signer == nil {
+		c := kit.NewCollector(s.c.harness, "Claude Code")
+		c.SetHome(s.c.home)
+		s.signer = c.SourceSHA(s.scope, s.path, s.sha).TrustSanitized(func(v string) bool { return s.outputs[v] })
+	}
+	sig := s.signer.EntrySignature(payload, removed)
 	payload["key"] = evidenceKey(append(s.safeKey(key), sig...))
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -146,21 +160,7 @@ func (s *src) safeKey(parts []string) []string {
 var secretFlagNamePattern = output.SecretFlagAlternation()
 
 var (
-	// commandSecretFlag matches a secretFlagNamePattern flag and its
-	// value within a larger command string. The leading (^|\s), kept in
-	// group 1 and restored by redactCommandSecrets, is a left word
-	// boundary: without it, SecretFlagAlternation's optional single
-	// dash would also match a hyphen buried inside an unrelated
-	// compound word, such as the "-password" inside "find-generic-
-	// password -w" (not a flag at all, but a literal binary name),
-	// wrongly treating the "-w" that happens to follow it as the
-	// flag's value. An unquoted SPACE-separated value never starts with
-	// "-", so "--token --verbose" does not eat the next flag; an "="
-	// value has no such restriction, since a token can itself start
-	// with "-" (base64url, for example), and "--token=" unambiguously
-	// ends the flag name regardless of what follows.
-	commandSecretFlag = regexp.MustCompile(`(?i)(^|\s)(` + secretFlagNamePattern + `)(?:=('[^']*'|"[^"]*"|\S*)|\s+('[^']*'|"[^"]*"|[^-\s]\S*))`)
-	secretFlagName    = regexp.MustCompile(`(?i)^(?:` + secretFlagNamePattern + `)$`)
+	secretFlagName = regexp.MustCompile(`(?i)^(?:` + secretFlagNamePattern + `)$`)
 	// userFlagName matches a bare curl user/password flag name
 	// (output.UserFlagAlternation), used the same way secretFlagName is:
 	// to recognize the flag in its own MCP "args" array element, so the
@@ -173,12 +173,14 @@ var (
 	// shell quote (as \S+ would) when the whole string is itself quoted,
 	// for example a command embedding "'Authorization: Bearer x'".
 	bearerToken = regexp.MustCompile(`(?i)\b(bearer)\s+([^\s'"]+)`)
-	// bearerWord matches "Bearer" as a whole array element on its own,
-	// used the same way secretFlagName is: to recognize an MCP "args"
-	// element such as ["Bearer", "X"] (two separate array elements,
-	// rather than one "Bearer X" string bearerToken above matches) so
-	// the next element is redacted unconditionally.
-	bearerWord = regexp.MustCompile(`(?i)^bearer$`)
+	// bearerWord matches an array element that is the word "Bearer" or
+	// ends in ": Bearer", used the same way secretFlagName is: to
+	// recognize an MCP "args" element such as ["Bearer", "X"],
+	// ["--header", "Authorization: Bearer", "X"], or
+	// ["--header=Authorization: Bearer", "X"] (the token in a separate
+	// element, rather than one "Bearer X" string bearerToken above
+	// matches) so the next element is redacted unconditionally.
+	bearerWord = regexp.MustCompile(`(?i)(?:^|:)\s*bearer\s*$`)
 	// embeddedURL finds an absolute URL anywhere inside a larger string,
 	// such as the command of "curl 'https://host/x?sig=y' | sh". It stops
 	// at whitespace and quotes so the match does not swallow a trailing
@@ -186,41 +188,21 @@ var (
 	embeddedURL = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s'"<>]+`)
 )
 
-// redactCommandSecrets redacts CLI secret flags ("--token X", "--token=X"),
-// "Bearer <token>", curl-style "-u user:pass" (output.RedactUserFlags),
-// tool-specific short flags such as "openssl -k X" or "vercel -t X"
-// (output.RedactToolFlags), and credential-named assignments such as
-// PGPASSWORD=X or npm's :_authToken=X (output.RedactAssignments) inside
-// value. It returns the redacted text and the raw secret substrings it
-// removed, for kit.KeyDiscriminator.
+// redactCommandSecrets redacts "Bearer <token>" and then everything
+// output.RedactCommand covers (secret flags, curl user flags,
+// tool-specific flags, URL userinfo, credential assignments) inside
+// value, using the same table as the output-side DefaultRedactor. It
+// returns the redacted text and the raw secret substrings it removed,
+// for kit.KeyDiscriminator.
 func redactCommandSecrets(value string) (string, []string) {
 	var removed []string
-	value = commandSecretFlag.ReplaceAllStringFunc(value, func(m string) string {
-		g := commandSecretFlag.FindStringSubmatch(m)
-		// g[3] is the "=" form's value, g[4] the space form's. Which
-		// branch matched is read from the separator that actually
-		// follows the flag name in m, not from whether g[3] is empty:
-		// an "=" with an empty value ("--token=") is itself a valid,
-		// if degenerate, match of the "=" branch. "--password=X" keeps
-		// its "=" on redaction; the space form keeps its single space.
-		if m[len(g[1])+len(g[2])] == '=' {
-			removed = append(removed, g[3])
-			return g[1] + g[2] + "=" + redacted
-		}
-		removed = append(removed, g[4])
-		return g[1] + g[2] + " " + redacted
-	})
 	value = bearerToken.ReplaceAllStringFunc(value, func(m string) string {
 		g := bearerToken.FindStringSubmatch(m)
 		removed = append(removed, g[2])
 		return g[1] + " " + redacted
 	})
-	value, userRemoved := output.RedactUserFlags(value)
-	value, toolRemoved := output.RedactToolFlags(value)
-	value, assignRemoved := output.RedactAssignments(value)
-	removed = append(removed, userRemoved...)
-	removed = append(removed, toolRemoved...)
-	return value, append(removed, assignRemoved...)
+	value, commandRemoved := output.RedactCommand(value)
+	return value, append(removed, commandRemoved...)
 }
 
 // stripEmbeddedURLSecrets applies stripURLSecrets to every URL found
@@ -253,15 +235,36 @@ type sanitizeResult struct {
 
 // sanitizeString strips URL secrets and CLI/header credentials from value,
 // then rewrites a home-directory prefix to "~" (user scope only; see
-// tildeHome). Unlike the old implementation, it never blanket-converts
-// backslashes to slashes: only the home-directory prefix it actually
-// matches is rewritten, so two commands that differ only by `\` vs `/`
-// outside that prefix stay distinct.
+// tildeHome), and finally redacts any credential shape
+// output.DefaultRedactor recognizes (a ghp_ token in an apiKeyHelper
+// command, for example), recording the whole value as removed, as
+// kit.Source.Sanitize does. Unlike the old implementation, it never
+// blanket-converts backslashes to slashes: only the home-directory
+// prefix it actually matches is rewritten, so two commands that differ
+// only by `\` vs `/` outside that prefix stay distinct.
 func (s *src) sanitizeString(value string) sanitizeResult {
-	value, removedURLs := stripEmbeddedURLSecrets(value)
+	if r, ok := s.sanitized[value]; ok {
+		return sanitizeResult{value: r.value, removed: slices.Clone(r.removed)}
+	}
+	r := s.sanitizeUncached(value)
+	if s.sanitized == nil {
+		s.sanitized, s.outputs = map[string]sanitizeResult{}, map[string]bool{}
+	}
+	s.sanitized[value] = sanitizeResult{value: r.value, removed: slices.Clone(r.removed)}
+	s.outputs[r.value] = true
+	return r
+}
+
+func (s *src) sanitizeUncached(value string) sanitizeResult {
+	value, removed := stripEmbeddedURLSecrets(value)
 	value, removedFlags := redactCommandSecrets(value)
+	removed = append(removed, removedFlags...)
 	value = s.tildeHome(value)
-	return sanitizeResult{value: value, removed: append(removedURLs, removedFlags...)}
+	if out := output.DefaultRedactor(value); out != value {
+		removed = append(removed, value)
+		value = out
+	}
+	return sanitizeResult{value: value, removed: removed}
 }
 
 // tildeHome rewrites every path-segment-bounded occurrence of the home
@@ -423,7 +426,12 @@ func (s *src) hook(event, matcher string, hook map[string]any) {
 	payload["event"] = event
 	payload["matcher"] = matcher
 	hookType, _ := hook["type"].(string)
-	_, action := hookAction(payload)
+	field, action := hookAction(payload)
+	// safeKey sanitizes the key: given the raw command it reuses the
+	// payload's memoized result instead of redacting it a second time.
+	if raw, ok := hook[field].(string); ok && raw != "" {
+		action = raw
+	}
 	s.add(model.ConfigKindHook, []string{"hook", event, matcher, hookType, action}, payload, removed)
 }
 
@@ -670,7 +678,13 @@ func (s *src) markdown(kind model.ConfigKind, role string, raw []byte) {
 // standalone key KEY; it does not match BASE_URL.
 var secretKeyFragments = []string{"token", "key", "secret", "password", "authorization", "cookie"}
 
+// secretKey also accepts an env-style credential name such as DB_PASS
+// or DB_PWD (output.CredentialName), the rule command-string
+// assignments use.
 func secretKey(name string) bool {
+	if output.CredentialName(name) {
+		return true
+	}
 	n := strings.ToLower(name)
 	for _, fragment := range secretKeyFragments {
 		if strings.Contains(n, fragment) {
