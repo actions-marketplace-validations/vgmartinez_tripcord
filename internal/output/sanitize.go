@@ -39,9 +39,9 @@ func TerminalLine(value string) string {
 
 // escapeControlsKeepBackslash is escapeControls for contexts that show text
 // literally, such as markdown code, where doubling "\" would misquote it.
-// A literal backslash is still doubled when it would otherwise read as one
-// of this function's own escapes for a real control character (\xNN,
-// \uXXXX, \UXXXXXXXX); see isHexEscapeBody.
+// A run of literal backslashes is still doubled, every backslash in it,
+// when it precedes text that reads as an escape body (see isEscapeBody) or
+// a rune this function will itself escape (see willBeEscaped).
 func escapeControlsKeepBackslash(value string) string {
 	return escapeLine(value, false)
 }
@@ -55,12 +55,27 @@ func escapeLine(value string, escapeBackslash bool) string {
 			fmt.Fprintf(&b, `\x%02x`, value[i])
 		case r == '\\' && escapeBackslash:
 			b.WriteString(`\\`)
-		case r == '\\' && isHexEscapeBody(value[i+size:]):
-			// A literal backslash in text that keeps backslashes (paths,
-			// code) would otherwise read exactly like \xNN, \uXXXX, or
-			// \UXXXXXXXX, our own escape for a real control character.
-			// Double it so the two stay visually distinct.
-			b.WriteString(`\\`)
+		case r == '\\':
+			// Literal backslashes must stay distinct from the escapes
+			// this function emits. A run of n backslashes followed by an
+			// escape body or a rune that will be escaped is written as
+			// 2n backslashes, so the emitted escape's own backslash
+			// makes the count odd: literal "\\x1b" gives four
+			// backslashes, "\" plus a real ESC gives three, and literal
+			// "\n" gives "\\n" while a real LF gives "\n". Doubling only
+			// the last backslash of the run would make the first two
+			// collide.
+			run := i
+			for run < len(value) && value[run] == '\\' {
+				run++
+			}
+			n := run - i
+			if rest := value[run:]; isEscapeBody(rest) || willBeEscaped(rest) {
+				n *= 2
+			}
+			b.WriteString(strings.Repeat(`\`, n))
+			i = run
+			continue
 		case r == '\n':
 			b.WriteString(`\n`)
 		case r == '\r':
@@ -189,23 +204,55 @@ func nextToken(value string, i int) int {
 	return n
 }
 
-// isHexEscapeBody reports whether s, the text right after a backslash, is
-// the body of one of this package's hex-digit control escapes: xXX,
-// uXXXX, or UXXXXXXXX. It deliberately excludes the single-letter bodies
-// n, r, and t: those are common in ordinary Windows path fragments (e.g.
-// "\new", "\temp"), and escaping every one of them would defeat keeping
-// backslashes unescaped in text that shows paths literally.
-func isHexEscapeBody(s string) bool {
+// isEscapeBody reports whether s, the text right after a backslash, is
+// the body of one of this package's control escapes: n, r, t, xXX, uXXXX,
+// or UXXXXXXXX. This includes Windows path fragments such as "\new" or
+// "\temp", which therefore display as "\\new" and "\\temp": otherwise
+// they would be indistinguishable from a real LF or tab.
+func isEscapeBody(s string) bool {
 	if s == "" {
 		return false
 	}
 	switch s[0] {
+	case 'n', 'r', 't':
+		return true
 	case 'x':
 		return len(s) >= 3 && isHex(s[1]) && isHex(s[2])
 	case 'u':
 		return len(s) >= 5 && isHexString(s[1:5])
 	case 'U':
 		return len(s) >= 9 && isHexString(s[1:9])
+	default:
+		return false
+	}
+}
+
+// willBeEscaped reports whether the rune at the start of s, decoded the
+// same way escapeLine's own loop decodes it, would itself be escaped by
+// one of escapeLine's branches below rather than written as a literal
+// rune. It is checked, in keep-backslash mode, alongside
+// isHexEscapeBody: a literal backslash immediately followed by such a
+// rune must be doubled too, or the two would collide byte-for-byte with
+// the already-escaped form of that rune (see escapeLine). It never
+// special-cases escapeBackslash: that branch of escapeLine only doubles
+// a backslash that IS one, and willBeEscaped is only ever consulted
+// when the current rune already is one, so the next rune being another
+// backslash is covered the same way any other to-be-escaped rune is,
+// through the control-byte and isUnsafeRune cases below.
+func willBeEscaped(s string) bool {
+	if s == "" {
+		return false
+	}
+	r, size := utf8.DecodeRuneInString(s)
+	switch {
+	case r == utf8.RuneError && size == 1:
+		return true
+	case r == '\n', r == '\r', r == '\t':
+		return true
+	case r < 0x20 || r == 0x7f:
+		return true
+	case isUnsafeRune(r):
+		return true
 	default:
 		return false
 	}

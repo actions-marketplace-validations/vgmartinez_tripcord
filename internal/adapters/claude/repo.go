@@ -446,14 +446,15 @@ func (s *src) marketplace(raw []byte, base string) []string {
 			continue
 		}
 		name, _ := entry["name"].(string)
-		payload := map[string]any{"setting": "marketplace", "value": s.safePayloadValue("marketplace", entry)}
+		sanitizedEntry, removed := s.safePayloadValue("marketplace", entry)
+		payload := map[string]any{"setting": "marketplace", "value": sanitizedEntry}
 		if source, ok := entry["source"].(string); ok {
 			if root, ok := s.joinRef(pluginBase, source); ok {
 				roots = append(roots, root)
 				payload["plugin_root"] = root
 			}
 		}
-		s.add(model.ConfigKindPlugin, []string{"plugin", name}, payload)
+		s.add(model.ConfigKindPlugin, withDiscriminator([]string{"plugin", name}, removed), payload)
 		if hooks, ok := entry["hooks"].(map[string]any); ok {
 			s.hooks(hooks)
 		}
@@ -480,7 +481,8 @@ func (s *src) pluginManifest(raw []byte) []fileRef {
 	}
 	root := pluginRootOf(s.path)
 	name, _ := obj["name"].(string)
-	s.add(model.ConfigKindPlugin, []string{"plugin", name}, map[string]any{"setting": "plugin", "value": s.safePayloadValue("plugin", obj), "plugin_root": root})
+	sanitizedObj, removed := s.safePayloadValue("plugin", obj)
+	s.add(model.ConfigKindPlugin, withDiscriminator([]string{"plugin", name}, removed), map[string]any{"setting": "plugin", "value": sanitizedObj, "plugin_root": root})
 	var refs []fileRef
 	collect := func(value any, role fileRole, inline func(any)) {
 		switch v := value.(type) {

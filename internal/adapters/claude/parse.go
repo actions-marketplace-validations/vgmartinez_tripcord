@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -133,9 +134,39 @@ func (s *src) safeKey(parts []string) []string {
 var secretFlagNamePattern = output.SecretFlagAlternation()
 
 var (
-	commandSecretFlag = regexp.MustCompile(`(?i)(` + secretFlagNamePattern + `)(?:=|\s+)('[^']*'|"[^"]*"|\S+)`)
+	// commandSecretFlag matches a secretFlagNamePattern flag and its
+	// value within a larger command string. The leading (^|\s), kept in
+	// group 1 and restored by redactCommandSecrets, is a left word
+	// boundary: without it, SecretFlagAlternation's optional single
+	// dash would also match a hyphen buried inside an unrelated
+	// compound word, such as the "-password" inside "find-generic-
+	// password -w" (not a flag at all, but a literal binary name),
+	// wrongly treating the "-w" that happens to follow it as the
+	// flag's value. An unquoted SPACE-separated value never starts with
+	// "-", so "--token --verbose" does not eat the next flag; an "="
+	// value has no such restriction, since a token can itself start
+	// with "-" (base64url, for example), and "--token=" unambiguously
+	// ends the flag name regardless of what follows.
+	commandSecretFlag = regexp.MustCompile(`(?i)(^|\s)(` + secretFlagNamePattern + `)(?:=('[^']*'|"[^"]*"|\S*)|\s+('[^']*'|"[^"]*"|[^-\s]\S*))`)
 	secretFlagName    = regexp.MustCompile(`(?i)^(?:` + secretFlagNamePattern + `)$`)
-	bearerToken       = regexp.MustCompile(`(?i)\b(bearer)\s+(\S+)`)
+	// userFlagName matches a bare curl user/password flag name
+	// (output.UserFlagAlternation), used the same way secretFlagName is:
+	// to recognize the flag in its own MCP "args" array element, so the
+	// next element can be checked and, if it has "user:pass" shape,
+	// redacted (see safePayloadValue).
+	userFlagName = regexp.MustCompile(`(?i)^(?:` + output.UserFlagAlternation + `)$`)
+	// bearerToken matches "Bearer <token>" in a single string, such as
+	// an "Authorization: Bearer x" header value. The token stops at a
+	// quote as well as whitespace, so it does not swallow a trailing
+	// shell quote (as \S+ would) when the whole string is itself quoted,
+	// for example a command embedding "'Authorization: Bearer x'".
+	bearerToken = regexp.MustCompile(`(?i)\b(bearer)\s+([^\s'"]+)`)
+	// bearerWord matches "Bearer" as a whole array element on its own,
+	// used the same way secretFlagName is: to recognize an MCP "args"
+	// element such as ["Bearer", "X"] (two separate array elements,
+	// rather than one "Bearer X" string bearerToken above matches) so
+	// the next element is redacted unconditionally.
+	bearerWord = regexp.MustCompile(`(?i)^bearer$`)
 	// embeddedURL finds an absolute URL anywhere inside a larger string,
 	// such as the command of "curl 'https://host/x?sig=y' | sh". It stops
 	// at whitespace and quotes so the match does not swallow a trailing
@@ -143,22 +174,41 @@ var (
 	embeddedURL = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s'"<>]+`)
 )
 
-// redactCommandSecrets redacts CLI secret flags ("--token X", "--token=X")
-// and "Bearer <token>" occurrences inside value. It returns the redacted
-// text and the raw secret substrings it removed, for keyDiscriminator.
+// redactCommandSecrets redacts CLI secret flags ("--token X", "--token=X"),
+// "Bearer <token>", curl-style "-u user:pass" (output.RedactUserFlags),
+// tool-specific short flags such as "openssl -k X" or "vercel -t X"
+// (output.RedactToolFlags), and credential-named assignments such as
+// PGPASSWORD=X or npm's :_authToken=X (output.RedactAssignments) inside
+// value. It returns the redacted text and the raw secret substrings it
+// removed, for keyDiscriminator.
 func redactCommandSecrets(value string) (string, []string) {
 	var removed []string
 	value = commandSecretFlag.ReplaceAllStringFunc(value, func(m string) string {
 		g := commandSecretFlag.FindStringSubmatch(m)
-		removed = append(removed, g[2])
-		return g[1] + " " + redacted
+		// g[3] is the "=" form's value, g[4] the space form's. Which
+		// branch matched is read from the separator that actually
+		// follows the flag name in m, not from whether g[3] is empty:
+		// an "=" with an empty value ("--token=") is itself a valid,
+		// if degenerate, match of the "=" branch. "--password=X" keeps
+		// its "=" on redaction; the space form keeps its single space.
+		if m[len(g[1])+len(g[2])] == '=' {
+			removed = append(removed, g[3])
+			return g[1] + g[2] + "=" + redacted
+		}
+		removed = append(removed, g[4])
+		return g[1] + g[2] + " " + redacted
 	})
 	value = bearerToken.ReplaceAllStringFunc(value, func(m string) string {
 		g := bearerToken.FindStringSubmatch(m)
 		removed = append(removed, g[2])
 		return g[1] + " " + redacted
 	})
-	return value, removed
+	value, userRemoved := output.RedactUserFlags(value)
+	value, toolRemoved := output.RedactToolFlags(value)
+	value, assignRemoved := output.RedactAssignments(value)
+	removed = append(removed, userRemoved...)
+	removed = append(removed, toolRemoved...)
+	return value, append(removed, assignRemoved...)
 }
 
 // stripEmbeddedURLSecrets applies stripURLSecrets to every URL found
@@ -238,6 +288,15 @@ func keyDiscriminator(removed []string) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
+// withDiscriminator appends "sig:<keyDiscriminator(removed)>" to key when
+// sanitizing the entry removed any secret.
+func withDiscriminator(key, removed []string) []string {
+	if len(removed) == 0 {
+		return key
+	}
+	return append(key, "sig:"+keyDiscriminator(removed))
+}
+
 // evidenceKey encodes parts as a compact JSON array, so no choice of
 // separator inside a matcher or command can make two keys collide.
 func evidenceKey(parts []string) string {
@@ -274,6 +333,7 @@ func (s *src) settingsObject(obj map[string]any) {
 		}
 		value := obj[name]
 		payload := map[string]any{"setting": name}
+		var removed []string
 		switch name {
 		case "env":
 			envObj, ok := value.(map[string]any)
@@ -289,13 +349,21 @@ func (s *src) settingsObject(obj map[string]any) {
 			// --token flag in awsAuthRefresh, a marketplace URL with
 			// userinfo in extraKnownMarketplaces, ...). Sanitize it
 			// the same way a hook's fields are sanitized.
-			value = s.safePayloadValue(name, value)
+			value, removed = s.safePayloadValue(name, value)
 		}
 		payload["value"] = value
 		if command := commandOf(value); command != "" {
 			payload["command"] = s.safeString(command)
 		}
-		s.add(kind, []string{"setting", name}, payload)
+		key := []string{"setting", name}
+		// See keyDiscriminator: without this, two settings entries that
+		// differ only in a secret value removed above (a --token in
+		// awsAuthRefresh, userinfo in a marketplace URL, ...) would
+		// collide on the same key and fingerprint once redacted.
+		if len(removed) > 0 {
+			key = append(key, "sig:"+keyDiscriminator(removed))
+		}
+		s.add(kind, key, payload)
 	}
 }
 
@@ -362,7 +430,10 @@ func (s *src) hooks(value any) {
 func (s *src) hook(event, matcher string, hook map[string]any) {
 	payload := map[string]any{}
 	for k, v := range hook {
-		payload[k] = s.safePayloadValue(k, v)
+		// The discriminator for a hook already comes independently from
+		// the raw selected field via hookAction below, so the removed
+		// secrets safePayloadValue reports here are not also needed.
+		payload[k], _ = s.safePayloadValue(k, v)
 	}
 	if headers, ok := hook["headers"].(map[string]any); ok {
 		payload["headers"] = redactValues(headers)
@@ -388,38 +459,74 @@ func (s *src) hook(event, matcher string, hook map[string]any) {
 	s.add(model.ConfigKindHook, key, payload)
 }
 
-// secretFlagName matches a bare CLI flag whose value is a credential, used
-// when the flag and its value are two separate elements of an array (an
-// MCP server's "args", for example ["--token", "X"]), so neither element
-// alone carries both the flag and its value for commandSecretFlag to
-// match.
-func (s *src) safePayloadValue(key string, value any) any {
+// safePayloadValue sanitizes value and returns the raw secret substrings
+// it removed, for keyDiscriminator. For an array (an MCP server's
+// "args", for example), three two-element shapes are recognized, since
+// neither element alone carries both the flag and its value for
+// commandSecretFlag or bearerToken to match on a single string:
+//   - ["--token", "X"]: a bare secret flag name (secretFlagName)
+//     unconditionally redacts the next element.
+//   - ["-u", "user:pass"] or ["--user", "user:pass"]: a bare user flag
+//     name (userFlagName) redacts the next element only when it has
+//     "user:pass" shape (output.LooksLikeUserPass), so ["-u", "root"]
+//     (no colon, as in "sudo -u root") is left alone.
+//   - ["Bearer", "X"]: the literal word "Bearer" on its own
+//     unconditionally redacts the next element, the array equivalent of
+//     bearerToken matching "Bearer X" within one string.
+func (s *src) safePayloadValue(key string, value any) (any, []string) {
 	switch v := value.(type) {
 	case string:
-		return s.safeString(v)
+		result := s.sanitizeString(v)
+		return result.value, result.removed
 	case []any:
 		out := make([]any, len(v))
+		var removed []string
 		redactNext := false
+		gateUserPass := false
 		for i, item := range v {
 			if redactNext {
-				out[i] = redacted
+				name, isString := item.(string)
+				if gateUserPass && (!isString || !output.LooksLikeUserPass(name)) {
+					sanitized, itemRemoved := s.safePayloadValue(key, item)
+					out[i] = sanitized
+					removed = append(removed, itemRemoved...)
+				} else {
+					out[i] = redacted
+					if isString {
+						removed = append(removed, name)
+					}
+				}
 				redactNext = false
+				gateUserPass = false
 				continue
 			}
-			out[i] = s.safePayloadValue(key, item)
-			if name, ok := item.(string); ok && secretFlagName.MatchString(name) {
-				redactNext = true
+			sanitized, itemRemoved := s.safePayloadValue(key, item)
+			out[i] = sanitized
+			removed = append(removed, itemRemoved...)
+			if name, ok := item.(string); ok {
+				switch {
+				case secretFlagName.MatchString(name), bearerWord.MatchString(name):
+					redactNext = true
+				case userFlagName.MatchString(name):
+					redactNext = true
+					gateUserPass = true
+				}
 			}
 		}
-		return out
+		return out, removed
 	case map[string]any:
 		out := make(map[string]any, len(v))
-		for name, item := range v {
-			out[name] = s.safePayloadValue(name, item)
+		var removed []string
+		// Sorted so removed, and therefore keyDiscriminator, is the same
+		// on every run despite Go's randomized map iteration order.
+		for _, name := range sortedKeys(v) {
+			sanitized, itemRemoved := s.safePayloadValue(name, v[name])
+			out[name] = sanitized
+			removed = append(removed, itemRemoved...)
 		}
-		return out
+		return out, removed
 	default:
-		return value
+		return value, nil
 	}
 }
 
@@ -484,9 +591,13 @@ func (s *src) mcpServers(value any, project string) {
 			continue
 		}
 		payload := map[string]any{}
-		for k, v := range server {
-			payload[k] = s.safePayloadValue(k, v)
+		var removed []string
+		for _, k := range sortedKeys(server) {
+			sanitized, itemRemoved := s.safePayloadValue(k, server[k])
+			payload[k] = sanitized
+			removed = append(removed, itemRemoved...)
 		}
+		removed = append(removed, redactToolArgs(payload)...)
 		if env, ok := server["env"].(map[string]any); ok {
 			payload["env"] = redactValues(env)
 			payload["env_keys"] = sortedKeys(env)
@@ -501,8 +612,47 @@ func (s *src) mcpServers(value any, project string) {
 			payload["project"] = project
 			key = []string{"mcp", project, name}
 		}
+		// See keyDiscriminator: without this, two MCP servers that
+		// differ only in a secret value removed above (a --token
+		// argument, userinfo in a connection URL, ...) would collide on
+		// the same key and fingerprint once redacted.
+		if len(removed) > 0 {
+			key = append(key, "sig:"+keyDiscriminator(removed))
+		}
 		s.add(model.ConfigKindMCPServer, key, payload)
 	}
+}
+
+// redactToolArgs applies output.RedactToolArgv to an MCP server's command
+// and args, where a tool-specific flag and its value are separate array
+// elements (["deploy", "-t", "X"] for command "vercel"). It rewrites
+// payload["args"] in place and returns the raw values it removed.
+func redactToolArgs(payload map[string]any) []string {
+	command, ok := payload["command"].(string)
+	if !ok {
+		return nil
+	}
+	args, _ := payload["args"].([]any)
+	argv := make([]string, 0, len(args)+1)
+	argv = append(argv, command)
+	for _, arg := range args {
+		text, _ := arg.(string)
+		argv = append(argv, text)
+	}
+	redactedArgv, removed := output.RedactToolArgv(argv)
+	if len(removed) == 0 {
+		return nil
+	}
+	out := make([]any, len(args))
+	for i, arg := range args {
+		if _, isString := arg.(string); isString {
+			out[i] = redactedArgv[i+1]
+		} else {
+			out[i] = arg
+		}
+	}
+	payload["args"] = out
+	return removed
 }
 
 // markdown normalizes an instruction, rule, agent, command, or skill file.
@@ -657,11 +807,18 @@ func sortedKeys(m map[string]any) []string {
 	return keys
 }
 
-// tildePath rewrites an absolute path under home as "~/...".
+// tildePath rewrites an absolute path under home as "~/...". home is
+// cleaned with the "path" package (always "/"-separated, regardless of
+// the OS tripcord itself runs on, since home and p are both normalized
+// to "/" just above) after the backslash-to-slash conversion, so a home
+// such as "/x/victor/." is treated the same as "/x/victor" instead of
+// being left with a trailing "/." that would then never match a "p"
+// that does not also happen to carry that exact literal suffix.
 func tildePath(home, p string) string {
-	home = strings.TrimSuffix(strings.ReplaceAll(home, `\`, "/"), "/")
+	home = strings.ReplaceAll(home, `\`, "/")
+	home = strings.TrimSuffix(path.Clean(home), "/")
 	p = strings.ReplaceAll(p, `\`, "/")
-	if home != "" && (p == home || strings.HasPrefix(p, home+"/")) {
+	if home != "" && home != "." && (p == home || strings.HasPrefix(p, home+"/")) {
 		return "~" + strings.TrimPrefix(p, home)
 	}
 	return p
