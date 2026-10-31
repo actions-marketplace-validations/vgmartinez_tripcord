@@ -1,0 +1,13 @@
+# Dummy rule modeled on the spec's TC-CFG-002 sample.
+id: TEST-CFG-001
+pack: fixture/demo
+title: "VS Code task that runs when the folder opens"
+severity: high
+harness: [vscode, cursor, windsurf]
+files: [".vscode/tasks.json"]
+when: >-
+  has(task.runOptions) && has(task.runOptions.runOn) &&
+    task.runOptions.runOn == "folderOpen"
+fix: "Remove runOn: folderOpen or move the task to an explicit script"
+refs:
+  - https://code.visualstudio.com/docs/debugtest/tasks

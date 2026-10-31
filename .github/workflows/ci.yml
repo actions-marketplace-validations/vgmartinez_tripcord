@@ -59,6 +59,143 @@ jobs:
           install-mode: binary
           args: --timeout=5m
 
+  fuzz:
+    name: fuzz parsers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Fuzz rule YAML parser
+        run: go test ./internal/rules -run '^$' -fuzz '^FuzzParseSpec$' -fuzztime 30s
+
+      - name: Fuzz policy parser
+        run: go test ./internal/policy -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s
+
+  licenses:
+    name: dependency licenses (${{ matrix.goos }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # Build-tagged files pull in different dependencies per OS.
+        goos: [linux, darwin, windows]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # v2.0.1. Pinned by commit so a moved tag cannot change the checker.
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses/v2@3e084b0caf710f7bfead967567539214f598c0a2
+
+      # Allowlist: anything else, including AGPL, GPL, SSPL, and unknown
+      # licenses, fails. GOROOT is set so go-licenses recognizes the
+      # standard library under the go.mod toolchain.
+      - name: Check licenses
+        env:
+          GOOS: ${{ matrix.goos }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOROOT="$(go env GOROOT)" "$(go env GOPATH)/bin/go-licenses" check ./... \
+            --include_tests \
+            --allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC
+
+      - name: Reject TruffleHog
+        shell: bash
+        run: |
+          set -euo pipefail
+          if go list -m all | grep -i trufflehog; then
+            echo "::error::TruffleHog is AGPL-3.0 and must never be linked. See CONTRIBUTING.md."
+            exit 1
+          fi
+
+  rule-registry:
+    name: rule id registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # The base must be readable: a missing base fails instead of
+      # comparing with an empty registry. A push with no previous commit
+      # (an all-zeros before) compares with the merge-base of the
+      # default branch. A base that predates rules/REGISTRY compares with
+      # an empty registry.
+      - name: Registry is append-only
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          zero=0000000000000000000000000000000000000000
+          case "$EVENT_NAME" in
+            pull_request)
+              base="$PR_BASE_SHA"
+              if [ -z "$base" ]; then
+                echo "::error::pull request event has no base SHA"
+                exit 1
+              fi
+              ;;
+            push)
+              base="$PUSH_BEFORE_SHA"
+              if [ -z "$base" ] || [ "$base" = "$zero" ]; then
+                if ! base=$(git merge-base HEAD "origin/${DEFAULT_BRANCH}"); then
+                  echo "::error::no previous commit and no merge-base with origin/${DEFAULT_BRANCH}"
+                  exit 1
+                fi
+                echo "No previous commit; comparing with merge-base ${base} of origin/${DEFAULT_BRANCH}."
+              fi
+              ;;
+            *)
+              echo "::error::unsupported event ${EVENT_NAME}"
+              exit 1
+              ;;
+          esac
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "::error::base commit ${base} is not readable; cannot check the registry"
+            exit 1
+          fi
+          old="$RUNNER_TEMP/REGISTRY.base"
+          : > "$old"
+          if git cat-file -e "${base}:rules/REGISTRY" 2>/dev/null; then
+            git show "${base}:rules/REGISTRY" > "$old"
+          else
+            echo "Base ${base} has no rules/REGISTRY; comparing with an empty registry."
+          fi
+          go run ./internal/tools/registrycheck "$old" rules/REGISTRY
+
   zizmor:
     name: zizmor
     runs-on: ubuntu-latest
