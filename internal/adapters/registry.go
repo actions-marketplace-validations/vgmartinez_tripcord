@@ -10,13 +10,26 @@ import (
 	"github.com/vgmartinez/tripcord/internal/model"
 )
 
-// Adapter discovers normalized configuration items for one harness. It must
-// only read files below RepoRoot; implementations must never execute config,
-// invoke hooks, or start a harness.
+// Adapter discovers normalized configuration items for one harness.
+// Repository reads must go through SafeReader. Implementations must never
+// execute config, invoke hooks, start a harness, or run git or any other
+// external binary.
+//
+// Discover returns a *DiagnosticError alongside the items it could still
+// produce when some inputs could not be read or parsed. Any other error is
+// fatal and its items are discarded.
 type Adapter interface {
 	Harness() model.Harness
 	Detect(repoRoot string) bool
 	Discover(ctx context.Context, repoRoot string) ([]model.ConfigItem, error)
+}
+
+// AdapterHarness reports whether h can name an installed adapter.
+// The seven product harnesses can. generic can: it is the shared adapter
+// for skill files that more than one product reads. vscode and
+// devcontainer are finding surfaces, not adapters.
+func AdapterHarness(h model.Harness) bool {
+	return h.IsProduct() || h == model.SurfaceGeneric
 }
 
 // Registry holds adapters in deterministic harness order.
@@ -32,8 +45,8 @@ func NewRegistry(adapters ...Adapter) (*Registry, error) {
 			return nil, fmt.Errorf("adapter is nil")
 		}
 		harness := adapter.Harness()
-		if !harness.IsProduct() {
-			return nil, fmt.Errorf("adapter harness %q is not a product harness", harness)
+		if !AdapterHarness(harness) {
+			return nil, fmt.Errorf("adapter harness %q is not a supported adapter harness", harness)
 		}
 		if _, exists := r.adapters[harness]; exists {
 			return nil, fmt.Errorf("adapter harness %q is registered twice", harness)

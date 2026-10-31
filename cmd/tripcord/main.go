@@ -17,11 +17,15 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/vgmartinez/tripcord/internal/adapters"
+	"github.com/vgmartinez/tripcord/internal/adapters/claude"
+	"github.com/vgmartinez/tripcord/internal/adapters/generic"
 	"github.com/vgmartinez/tripcord/internal/exitcode"
 	"github.com/vgmartinez/tripcord/internal/model"
 	"github.com/vgmartinez/tripcord/internal/output"
+	"github.com/vgmartinez/tripcord/internal/pathx"
 	"github.com/vgmartinez/tripcord/internal/policy"
 	"github.com/vgmartinez/tripcord/internal/rules"
 )
@@ -38,8 +42,9 @@ Usage:
   tripcord version
   tripcord scan [PATH] [flags]
 
-scan performs static configuration scanning only. Harness adapters land in
-later releases; this command already provides the safe orchestration boundary.
+scan performs static configuration scanning only. --scope selects repository
+(the default), user, managed, or all. The default does not read the home
+directory or system settings.
 --secrets (v1) and --all (v1) are not available.
 `
 
@@ -70,6 +75,7 @@ type scanOptions struct {
 	secrets   bool
 	all       bool
 	harnesses string
+	scope     string
 	format    string
 	output    string
 	since     string
@@ -130,7 +136,14 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return scanConfigError(stderr, err)
 	}
-	registry, err := adapters.NewRegistry()
+	repoScope, userScope, managedScope, err := parseScope(opts.scope)
+	if err != nil {
+		return scanConfigError(stderr, err)
+	}
+	registry, err := adapters.NewRegistry(
+		claude.New(claude.Options{SkipRepo: !repoScope, IncludeUser: userScope, IncludeManaged: managedScope}),
+		generic.New(generic.Options{SkipRepo: !repoScope}),
+	)
 	if err != nil {
 		return scanInternalError(stderr, err)
 	}
@@ -139,9 +152,14 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 		return scanConfigError(stderr, err)
 	}
 	var items []model.ConfigItem
+	var diagnostics []adapters.Diagnostic
 	for _, adapter := range selected {
 		discovered, err := adapter.Discover(context.Background(), root)
-		if err != nil {
+		var partial *adapters.DiagnosticError
+		switch {
+		case errors.As(err, &partial):
+			diagnostics = append(diagnostics, partial.Diagnostics...)
+		case err != nil:
 			return scanInternalError(stderr, fmt.Errorf("%s discovery: %w", adapter.Harness(), err))
 		}
 		items = append(items, discovered...)
@@ -157,6 +175,9 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 		}
 		items = slices.DeleteFunc(items, func(item model.ConfigItem) bool {
 			return item.Scope != model.ScopeRepo || !changed[item.Path]
+		})
+		diagnostics = slices.DeleteFunc(diagnostics, func(d adapters.Diagnostic) bool {
+			return d.Scope == model.ScopeRepo && d.Path != "" && !changed[d.Path]
 		})
 	}
 	engine := rules.NewEngine(env, catalog.Rules(), rules.WithFilter(effective.RuleFilter()))
@@ -188,6 +209,11 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 		}
 		return scanInternalError(stderr, err)
 	}
+	blocking, notes := partitionDiagnostics(diagnostics)
+	if err := handle.SetDiagnostics(outputDiagnostics(blocking)); err != nil {
+		_ = handle.Close()
+		return scanInternalError(stderr, err)
+	}
 	for _, finding := range findings {
 		if err := handle.Write(finding); err != nil {
 			_ = handle.Close()
@@ -200,6 +226,19 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	}
 	if err := handle.Close(); err != nil {
 		return scanInternalError(stderr, err)
+	}
+	// Exit 3 wins over exit 1: an incomplete scan is not a clean result.
+	// Informational diagnostics are printed and do not change the exit code.
+	for _, d := range append(append([]adapters.Diagnostic{}, blocking...), notes...) {
+		if writeString(stderr, "tripcord scan: "+output.TerminalLine(d.String())+"\n") != int(exitcode.OK) {
+			return int(exitcode.Internal)
+		}
+	}
+	if len(blocking) > 0 {
+		if writeString(stderr, "tripcord scan: configuration could not be fully read; the scan is incomplete\n") != int(exitcode.OK) {
+			return int(exitcode.Internal)
+		}
+		return int(exitcode.Config)
 	}
 	for _, finding := range findings {
 		fails, err := effective.Fails(finding.Severity)
@@ -231,6 +270,7 @@ func parseScanFlags(args []string, stdout io.Writer) (scanOptions, error) {
 	flags.BoolVar(&opts.secrets, "secrets", false, "(v1) not available")
 	flags.BoolVar(&opts.all, "all", false, "(v1) not available")
 	flags.StringVar(&opts.harnesses, "harness", "", "comma-separated harnesses; default autodetect")
+	flags.StringVar(&opts.scope, "scope", "repo", "repo, user, managed, or all")
 	flags.StringVar(&opts.format, "format", "text", "text, json, sarif, md, or gha")
 	flags.StringVar(&opts.output, "output", "-", "output path or - for stdout")
 	flags.StringVar(&opts.since, "since", "", "files changed between the ref and HEAD; requires git")
@@ -253,6 +293,9 @@ func parseScanFlags(args []string, stdout io.Writer) (scanOptions, error) {
 		return scanOptions{}, err
 	}
 	if _, err := output.ParseFormat(opts.format); err != nil {
+		return scanOptions{}, err
+	}
+	if _, _, _, err := parseScope(opts.scope); err != nil {
 		return scanOptions{}, err
 	}
 	if opts.since != "" {
@@ -311,7 +354,7 @@ func gitRoot(dir string) string {
 func normalizeScanArgs(args []string) ([]string, error) {
 	valueFlags := map[string]bool{
 		"harness": true, "format": true, "output": true, "since": true,
-		"fail-on": true, "policy": true, "org-policy": true,
+		"fail-on": true, "policy": true, "org-policy": true, "scope": true,
 	}
 	var flags []string
 	var positionals []string
@@ -352,7 +395,7 @@ func parseHarnesses(value string) ([]model.Harness, error) {
 	var out []model.Harness
 	for _, raw := range strings.Split(value, ",") {
 		harness := model.Harness(strings.TrimSpace(raw))
-		if !harness.IsProduct() {
+		if !adapters.AdapterHarness(harness) {
 			return nil, fmt.Errorf("--harness: %q is not a supported harness", raw)
 		}
 		out = append(out, harness)
@@ -449,64 +492,84 @@ func gitCommandEnv(root string) []string {
 	)
 }
 
+// maxGitStderrBytes caps a git diagnostic once it is embedded in our own
+// error message. Git's own remediation text for some failures (for
+// example, dubious ownership) is long enough, and the file or ref names
+// attacker-controlled content can prepend to the usual one-line error, to
+// be worth bounding on its own, well before the sink-level MaxFieldBytes
+// cap a Finding gets.
+const maxGitStderrBytes = 1024
+
 // sanitizeGitStderr trims git's diagnostic output for inclusion in an
-// error message. The user's home directory is rewritten to "~" only where
-// it is a full path prefix, so the message does not leak the local account
-// path and a shorter home does not rewrite a longer one.
+// error message. The user's home directory is rewritten to "~" using the
+// same pathx.TildeHome rule the Claude Code adapter uses, so the message
+// does not leak the local account path and a shorter home does not
+// rewrite a longer one, then the result is capped so one long git
+// diagnostic (git's "dubious ownership" remediation text, for example, or
+// its usage text on an argument git itself rejects) cannot grow this
+// error message without bound.
 func sanitizeGitStderr(stderr []byte) string {
 	msg := strings.TrimSpace(string(stderr))
 	if msg == "" {
 		return ""
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		msg = replaceHomePrefix(msg, home)
+		msg = pathx.TildeHome(home, msg)
 	}
-	return strings.ReplaceAll(msg, "\n", "; ")
+	msg = strings.ReplaceAll(msg, "\n", "; ")
+	return truncateUTF8(msg, maxGitStderrBytes)
 }
 
-// replaceHomePrefix rewrites home to "~" only where it is a complete path
-// prefix. An empty home and "/" are left alone, because "/" would rewrite
-// every absolute path. home matches only when the next byte is "/", the
-// end of the string, or a character that does not continue a path
-// component, so "/home/vic" does not rewrite "/home/victor".
-func replaceHomePrefix(msg, home string) string {
-	if home == "" || home == "/" || !strings.Contains(msg, home) {
-		return msg
+// truncateUTF8 caps value at limit bytes, cutting on a UTF-8 rune
+// boundary, and appends a marker naming how many bytes were dropped.
+func truncateUTF8(value string, limit int) string {
+	if len(value) <= limit {
+		return value
 	}
-	var b strings.Builder
-	b.Grow(len(msg))
-	for {
-		i := strings.Index(msg, home)
-		if i < 0 {
-			b.WriteString(msg)
-			return b.String()
-		}
-		b.WriteString(msg[:i])
-		rest := msg[i+len(home):]
-		if rest == "" || !continuesPathComponent(rest[0]) {
-			b.WriteByte('~')
-		} else {
-			b.WriteString(home)
-		}
-		msg = rest
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
 	}
+	return value[:cut] + fmt.Sprintf("...[truncated %d bytes]", len(value)-cut)
 }
 
-// continuesPathComponent reports whether c extends the path component
-// before it. A slash ends the component. Letters, digits, and the
-// characters commonly found inside one path segment do too, so a shorter
-// home is not substituted inside a longer name.
-func continuesPathComponent(c byte) bool {
-	switch {
-	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-		return true
-	case c == '.' || c == '_' || c == '-' || c == '+' || c == '@' || c == '~':
-		return true
-	case c >= 0x80:
-		return true
+func parseScope(value string) (repo, user, managed bool, err error) {
+	switch value {
+	case "repo":
+		return true, false, false, nil
+	case "user":
+		return false, true, false, nil
+	case "managed":
+		return false, false, true, nil
+	case "all":
+		return true, true, true, nil
 	default:
-		return false
+		return false, false, false, fmt.Errorf("--scope %q: want repo, user, managed, or all", value)
 	}
+}
+
+func partitionDiagnostics(in []adapters.Diagnostic) (blocking, notes []adapters.Diagnostic) {
+	for _, d := range in {
+		if d.Informational {
+			notes = append(notes, d)
+		} else {
+			blocking = append(blocking, d)
+		}
+	}
+	return blocking, notes
+}
+
+func outputDiagnostics(in []adapters.Diagnostic) []output.Diagnostic {
+	out := make([]output.Diagnostic, len(in))
+	for i, d := range in {
+		out[i] = output.Diagnostic{
+			Harness: string(d.Harness),
+			Scope:   string(d.Scope),
+			Path:    d.Path,
+			Message: d.Message,
+		}
+	}
+	return out
 }
 
 func decision(mode policy.Mode) model.Decision {
