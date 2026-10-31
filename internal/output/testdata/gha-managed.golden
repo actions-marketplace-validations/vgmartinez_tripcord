@@ -1,0 +1,1 @@
+::notice title=/etc/cursor/hooks.json::Hook points outside the repository [TC-CFG-006] Point the hook at a versioned script. (tcf_046edadf58888351) /etc/cursor/hooks.json

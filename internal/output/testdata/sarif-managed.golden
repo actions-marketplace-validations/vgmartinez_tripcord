@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "tripcord",
+          "version": "1.2.3",
+          "semanticVersion": "1.2.3",
+          "rules": [
+            {
+              "id": "TC-CFG-006",
+              "shortDescription": {
+                "text": "Hook points outside the repository"
+              },
+              "fullDescription": {
+                "text": "Hook points outside the repository"
+              },
+              "help": {
+                "text": "Point the hook at a versioned script."
+              },
+              "helpUri": "https://example.invalid/rules/TC-CFG-006",
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "properties": {
+                "tags": [
+                  "security"
+                ],
+                "security-severity": "3.0"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "TC-CFG-006",
+          "level": "note",
+          "message": {
+            "text": "Hook points outside the repository: Point the hook at a versioned script. (/etc/cursor/hooks.json)"
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "name": "hooks.json",
+                  "fullyQualifiedName": "/etc/cursor/hooks.json",
+                  "kind": "managed"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "tripcord/fingerprint": "tcf_046edadf58888351"
+          },
+          "properties": {
+            "tripcord": {
+              "scope": "managed",
+              "path": "/etc/cursor/hooks.json"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
