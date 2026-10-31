@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.tripcord.invalid/tripcord.finding/v1",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "Tripcord finding",
+  "description": "One policy result. fingerprint is tcf_ plus exactly 16 lowercase hex digits. Each evidence item cites exactly one of event (an Event.id) or config (an object with id, a ConfigItem.id, and an optional key), via oneOf; Finding.Validate in internal/model enforces the same rule independently. Objects are open (additionalProperties: true): a reader must ignore properties it does not recognize, so a v1.x addition never breaks it.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema",
+    "rule",
+    "title",
+    "severity",
+    "decision",
+    "confidence",
+    "evidence",
+    "location",
+    "refs",
+    "fix",
+    "fingerprint"
+  ],
+  "properties": {
+    "schema": {
+      "const": "tripcord.finding/v1"
+    },
+    "rule": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "critical"]
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["allow", "deny", "warn", "audit", "ask"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "oneOf": [
+          { "required": ["event"] },
+          {
+            "required": ["config"],
+            "properties": {
+              "config": {
+                "type": "object",
+                "additionalProperties": true,
+                "required": ["id"]
+              }
+            }
+          }
+        ],
+        "properties": {
+          "event": {
+            "type": "string",
+            "minLength": 1
+          },
+          "config": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["id"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "excerpt": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["harness"],
+      "properties": {
+        "harness": {
+          "type": "string",
+          "enum": [
+            "claude",
+            "codex",
+            "cursor",
+            "copilot",
+            "gemini",
+            "opencode",
+            "windsurf",
+            "vscode",
+            "devcontainer",
+            "generic"
+          ]
+        },
+        "session": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["repo", "user", "managed"]
+        },
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "if": {
+        "properties": {
+          "scope": { "enum": ["repo"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "path": {
+            "not": {
+              "pattern": "(^[/\\\\]|^~|^[A-Za-z]:($|[/\\\\]))|((^|[/\\\\])\\.\\.([/\\\\]|$))"
+            }
+          }
+        }
+      }
+    },
+    "refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "fix": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^tcf_[0-9a-f]{16}$"
+    }
+  }
+}

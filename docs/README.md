@@ -1,6 +1,22 @@
 # Documentation
 
-Design notes will be added here. This repository is a private pre-release.
+Design notes for this private pre-release.
+
+## Finding fingerprints
+
+[fingerprint.md](fingerprint.md) defines the canonical finding fingerprint.
+The digest is stable across versions. Golden tests lock it.
+
+## Decisions
+
+A finding's `decision` is `allow`, `deny`, `warn`, `audit`, or `ask`.
+Policy mode (`enforce`, `warn`, `audit`) is a separate vocabulary.
+
+In hook mode, `ask` maps to the harness's native human-confirmation
+prompt where that harness supports one (Claude Code, Cursor) and
+degrades to `deny` with an explanatory message elsewhere. The mapping
+itself is implemented later, in the hook PR. This package only records
+`ask` as a valid decision.
 
 ## Repository identity
 
