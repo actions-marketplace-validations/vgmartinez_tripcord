@@ -1,0 +1,84 @@
+# A SessionStart or Setup hook runs on every session the repository
+# opens, before a PreToolUse guard can see it. The npm worm of August
+# 2026 planted one that piped a remote script to a shell.
+#
+# Rules read each field as the file wrote it, before URL secrets are
+# stripped; findings show only the sanitized form (see docs/scan.md).
+#
+# shell.risks reads each command field the way a shell splits it (see
+# internal/rules/shellcmd): quotes, separators, and pipes per simple
+# command, and the payload of sudo, env, sh -c, PowerShell -Command or a
+# positional command, cmd /c, eval, iex, and $( ) read as a command line
+# of its own, with the same exemptions. Shell and PowerShell flags that
+# take a value (-o pipefail, -ExecutionPolicy Bypass) and -- are skipped.
+#
+# fetch: a downloader in command position (curl, wget, iwr, irm,
+#   Invoke-WebRequest, Invoke-RestMethod, Start-BitsTransfer, nc, ncat)
+#   with a target that is not loopback; python -c or node -e code that
+#   uses the network; a .NET DownloadString; pnpm or yarn dlx, uvx, or
+#   pipx run of a package, pinned or not; deno run of a remote module;
+#   npx or bunx of a remote spec or with -y; git clone followed by
+#   another command. localhost, 127.0.0.0/8, and [::1] are loopback;
+#   localhost@host and localhost.host are not. uvx --from and pipx run
+#   --spec of a local path run local code.
+# pipe: any unquoted pipe into a shell, loopback or not, except a
+#   relative script piped into a bare shell (./x.sh | sh); and
+#   Invoke-Expression in a statement that downloads: curl, wget, iwr,
+#   irm, their long names, or a .NET Download* call with a target that
+#   is not provably loopback. A variable or $env target is not, so
+#   iwr $u | iex fires, while oh-my-posh init pwsh | Invoke-Expression
+#   is quiet like eval of it. $x = <command> is unwrapped, and a
+#   variable assigned a download carries it to a later $x | iex or
+#   iex $x on the same line.
+# encoded: PowerShell -EncodedCommand, or decoded content feeding
+#   Invoke-Expression: base64 -d/--decode, FromBase64, or
+#   [Text.Encoding]::GetString, piped in, passed as the argument, or
+#   assigned to a variable that is.
+#   powershell and pwsh -Command and a positional script block are read,
+#   with backtick as PowerShell's escape character (I`E`X is IEX); a
+#   hook command with a backtick is read both as POSIX and PowerShell.
+# nested: a payload nested deeper than the reader follows (eight levels
+#   of $( ), -c, or eval), reported so that nesting cannot hide a fetch.
+#
+# npx and bunx of a bare name (npx tsc) are read as a local or
+# devDependency binary: the expression cannot read package.json.
+# Not read: $VAR as a fetch target outside Invoke-Expression, $(echo
+# cur)l, nohup, xargs, env -S, busybox, and start /b wrappers, and the
+# script a hook calls.
+id: TC-CFG-001
+pack: tripcord/core
+title: "SessionStart or Setup hook in shared config downloads or runs code from the network"
+severity: high
+harness: [claude, codex, copilot, cursor, gemini]
+files:
+  - "**/.claude/settings.json"
+  - "**/.codex/hooks.json"
+  - "**/.codex/config.toml"
+  - "**/.gemini/settings.json"
+  - "**/.github/hooks/*.json"
+  - "**/.github/copilot/settings.json"
+  - "**/.cursor/hooks.json"
+when: |
+  config.kind == "hook" && config.scope == "repo" &&
+    has(payload.event) && payload.event in ["SessionStart", "sessionStart", "Setup"] &&
+    ([
+      has(payload.command) && type(payload.command) == string ? payload.command : "",
+      has(payload.exec) && type(payload.exec) == string ? payload.exec : "",
+      has(payload.bash) && type(payload.bash) == string ? payload.bash : "",
+      has(payload.powershell) && type(payload.powershell) == string ? payload.powershell : "",
+      has(payload.commandWindows) && type(payload.commandWindows) == string ? payload.commandWindows : "",
+      has(payload.command_windows) && type(payload.command_windows) == string ? payload.command_windows : "",
+      has(payload.windows) && type(payload.windows) == string ? payload.windows : "",
+      has(payload.linux) && type(payload.linux) == string ? payload.linux : "",
+      has(payload.osx) && type(payload.osx) == string ? payload.osx : ""
+    ].exists(c, shell.risks(c).size() > 0) ||
+    (has(payload.args) && type(payload.args) == list && payload.args.all(a, type(a) == string) &&
+      shell.risks([
+        has(payload.exec) && type(payload.exec) == string ? payload.exec :
+          has(payload.command) && type(payload.command) == string ? payload.command : ""
+      ] + payload.args).size() > 0))
+fix: "Do not fetch code in a SessionStart or Setup hook. Commit the script to the repository, pin what it installs by version and hash, and run it explicitly."
+refs:
+  - https://workos.com/blog/npm-worm-coding-agent-config-credentials
+  - https://novee.security/blog/breaking-ai-agent-sandboxes/
+  - https://code.claude.com/docs/en/hooks

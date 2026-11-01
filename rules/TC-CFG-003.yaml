@@ -1,0 +1,46 @@
+# A stdio MCP server is a process the agent starts. When its command is
+# a shell, or an interpreter started with an inline-code flag, or the
+# command string pipes into a shell, the "server" is an arbitrary script.
+# Novee showed that persistence payload at DEF CON 34.
+#
+# Every MCP server any adapter normalizes is in scope: .mcp.json,
+# .cursor/mcp.json, .vscode/mcp.json, Codex mcp_servers, Gemini
+# mcpServers, OpenCode's command array, Copilot mcp-config.json, and
+# Windsurf mcp_config.json.
+#
+# The command and its args are read as one command line (OpenCode's
+# array is joined). Its first word decides: a shell (sh, bash, zsh,
+# dash, ksh, ash, csh, tcsh, fish, cmd, powershell, pwsh) matches, and
+# an interpreter matches only when its inline-code flag comes before any
+# script or -m: python -c, node -e/--eval, perl -e, ruby -e, deno eval.
+# python -m my_server -c config.yaml and node server.js -e production are
+# a server's own flags and do not match. Other flags may come first
+# (python -u -c), but not a flag that takes a separate value
+# (python -W ignore -c).
+#
+# A pipe counts only in the command string, or because the command is
+# itself a shell. A literal argument of a non-shell executable, such as
+# node server.js --filter 'a|sh', does not. The pipe is found by
+# shell.risks, with the exemption TC-CFG-001 uses (./x.sh | sh).
+#
+id: TC-CFG-003
+pack: tripcord/core
+title: "MCP server launched through a shell, a pipe to sh, or an inline interpreter"
+severity: high
+harness: [claude, codex, copilot, cursor, gemini, opencode, windsurf, vscode]
+files: ["**"]
+when: |
+  config.kind == "mcp-server" &&
+    (!has(payload.type) || (type(payload.type) == string && payload.type in ["", "stdio", "local"])) &&
+    has(payload.command) && (
+      [
+        type(payload.command) == string ?
+          payload.command + (has(payload.args) && type(payload.args) == list && payload.args.all(a, type(a) == string) ? " " + payload.args.join(" ") : "") :
+        type(payload.command) == list && payload.command.all(a, type(a) == string) ? payload.command.join(" ") : ""
+      ].exists(h, h.matches(r'''(?i)^\s*(?:[^\s]*[/\\])?(?:(?:(?:ba|z|da|k|a|c|tc|fi)?sh|cmd|powershell|pwsh)(?:\.exe)?(?:\s|$)|python(?:3(?:\.[0-9]+)?)?(?:\.exe)?(?:\s+-[^\sm]\S*)*?\s+-c(?:\s|$)|node(?:\.exe)?(?:\s+-[^\se]\S*)*?\s+(?:-e|--eval)(?:\s|$)|(?:perl|ruby)(?:\.exe)?(?:\s+-[^\se]\S*)*?\s+-e(?:\s|$)|deno(?:\.exe)?\s+eval(?:\s|$))''')) ||
+      (type(payload.command) == string && "pipe" in shell.risks(payload.command))
+    )
+fix: "Point command at the server binary and pass its arguments in args, without a shell, an inline interpreter, or a downloaded script."
+refs:
+  - https://novee.security/blog/breaking-ai-agent-sandboxes/
+  - https://code.visualstudio.com/docs/agents/reference/mcp-configuration

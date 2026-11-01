@@ -39,24 +39,33 @@ and CEL cannot read files, use the network, or run commands.
 ```yaml
 id: TC-CFG-002
 pack: tripcord/core
-title: "VS Code task that runs when the folder opens"
+title: "VS Code task that runs when the folder opens (also Cursor and Windsurf)"
 severity: high                       # low | medium | high | critical
-harness: [vscode, cursor, windsurf]
+harness: [vscode]
 files: [".vscode/tasks.json"]        # repo-relative or ~/ globs; ** is allowed
 when: >-
   has(task.runOptions) && has(task.runOptions.runOn) &&
     task.runOptions.runOn == "folderOpen"
-fix: "Remove runOn: folderOpen or move the task to an explicit script"
+fix: "Remove runOn: folderOpen or move the task to an explicit script. Cursor and Windsurf open this same .vscode/tasks.json."
 refs:
   - https://workos.com/blog/npm-worm-coding-agent-config-credentials
 ```
 
-Every key is required. `refs` needs at least one https link to the
-incident or to official documentation; a rule without `refs` is not
-accepted. `pack` is the pack name, `<namespace>/<name>`. The version
-lives only in `rules/pack.yaml` (for example `tripcord/core@2026.11`);
-a rule inherits it. `rules/REGISTRY` is what stops a rule id from being
-reused.
+Every key except `severity_when` is required. `refs` needs at least one
+https link to the incident or to official documentation; a rule without
+`refs` is not accepted. `pack` is the pack name, `<namespace>/<name>`.
+The version lives only in `rules/pack.yaml` (for example
+`tripcord/core@2026.11`); a rule inherits it. `rules/REGISTRY` is what
+stops a rule id from being reused.
+
+`severity` is the rule's catalog severity and the floor a policy lock
+refuses to lower. `severity_when` is an optional list of
+`{severity, when}` clauses tried in order once `when` is true. The
+first true clause is that match's severity, so one permissions object
+can be high and another medium. An item no clause accepts is not a
+match, so `when` holds only what the clauses share and each pattern is
+written once. A policy severity override replaces the per-match
+result.
 
 `when` sees these variables:
 
@@ -65,6 +74,17 @@ reused.
 - `task`: the same as `payload` when `config.kind == "task"`, otherwise empty.
 - `event`: a `tripcord.event/v1` event, for event rules. Every
   non-list event field is present; omitted strings are `""`.
+
+Besides the standard CEL and string extension functions, `when` can
+call `shell.risks(command)`, which reads a command line (a string, or
+an argv list of strings) as a POSIX, PowerShell, or cmd shell would and
+returns the risks it found: `"fetch"` (a downloader in command position
+with a non-loopback target), `"pipe"` (output piped into a shell, or a
+fetch piped into Invoke-Expression), `"encoded"` (`powershell
+-EncodedCommand`, or decoded content fed to Invoke-Expression), and
+`"nested"` (payloads nested deeper than it follows). It follows `-c`, `-Command`, and `/c` payloads, `$( )`,
+backticks, and `eval`, and costs one unit per byte it reads at each
+nesting level, so prefer it to long regexes over hook commands.
 
 Reading a field that is missing makes the whole expression false, not
 an error. That fails open for negations and deny rules:
@@ -82,11 +102,17 @@ entry name, that name is the evidence key: `label` for a task, `name`
 for an MCP server, and `matcher|command` for a hook. Two entries in
 one file then get different fingerprints. Other kinds have no key.
 `matches()` uses RE2: no backreferences or lookaround. Each evaluation
-has a cost limit and a timeout (10 ms in scans, 5 ms on the hook path),
-and a hook event's rules share a 15 ms budget with a 64 KiB input cap.
-The timeouts are cooperative: CEL checks them between steps, so one
-`matches()` over a large string finishes before it notices. The input
-caps bound that case.
+has a cost limit (20M units in scans, 2M on the hook path, where the
+input is capped at 64 KiB). Cost is counted, not timed, so a rule gives
+the same result on a loaded machine. Every core rule on a 1 MiB config
+file stays under 10M. The timeouts (10 s in scans, 1 s on the hook
+path, and a 5 s budget for one hook event's rules) are only a safety
+net for a cost model that underestimates a rule. They are cooperative:
+CEL checks them between steps, so one `matches()` over a large string
+finishes before it notices. The input caps bound that case. A rule that fails to evaluate on a file, for
+example over the cost limit, does not stop the scan: the other rules and
+files are reported, with a diagnostic naming the rule and file, and the
+scan exits 3 as incomplete.
 
 ### Rule ids
 
@@ -104,14 +130,32 @@ Do not remove lines. CI compares the file with the pull request base.
 
 `rules/<ID>.test/positivos/` holds inputs that must trigger the rule and
 `rules/<ID>.test/negativos/` inputs that must not. Each needs at least
-one file. An engine fixture is a JSON config item, or an array of
-them; `sha256` may be left empty. Raw config files are checked later,
-with the harness adapters:
+one fixture. A fixture is either of:
+
+- A directory: a repository tree of real config files, sanitized. The
+  test runs every adapter on it, autodetected as `tripcord scan` does,
+  and fails if the adapters report the tree as incomplete. Prefer this
+  form, with one directory per case, for example
+  `positivos/claude-sessionstart-curl/.claude/settings.json`.
+  A directory named `_home` is that fixture's home directory, with user
+  scope on and an empty environment, so a host `COPILOT_HOME` or
+  `XDG_CONFIG_HOME` cannot redirect it. Use it for user-scope files such
+  as `~/.copilot/mcp-config.json`.
+- A `.json` engine fixture: a config item, or an array of them, with
+  `sha256` optionally left empty. Use it for payloads an adapter would
+  not produce from a real file, such as a field of the wrong type:
 
 ```json
 {"harness": "vscode", "scope": "repo", "path": ".vscode/tasks.json", "sha256": "",
  "kind": "task", "payload": {"label": "setup", "runOptions": {"runOn": "folderOpen"}}}
 ```
+
+A positive and a negative both fail when no discovered item is inside
+the rule's harness and file globs. A negative that only holds an
+out-of-scope file would otherwise pass without testing `when`.
+
+Fixture configs use `.invalid` or `example` hosts and placeholder
+secrets only.
 
 Run one rule:
 

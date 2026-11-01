@@ -110,7 +110,7 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return scanConfigError(stderr, err)
 	}
-	env, err := rules.NewEnv(rules.DefaultLimits())
+	env, err := rules.NewEnv(scanLimits())
 	if err != nil {
 		return scanInternalError(stderr, err)
 	}
@@ -165,6 +165,12 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return scanConfigError(stderr, err)
 	}
+	// The editor opens .vscode/tasks.json whichever agent is in use, so
+	// a scan limited by --harness still reads it once. Only that file:
+	// the harness may not load the shared skills and AGENTS.md.
+	if len(requested) > 0 && repoScope && !slices.ContainsFunc(selected, func(a adapters.Adapter) bool { return a.Harness() == model.SurfaceGeneric }) {
+		selected = append(selected, generic.New(generic.Options{TasksOnly: true}))
+	}
 	var items []model.ConfigItem
 	var diagnostics []adapters.Diagnostic
 	for _, owner := range registry.ImpliedOwners(requested) {
@@ -204,15 +210,17 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	}
 	engine := rules.NewEngine(env, catalog.Rules(), rules.WithFilter(effective.RuleFilter()))
 	result := engine.ScanConfig(context.Background(), items)
-	if len(result.Errors) > 0 {
-		return scanInternalError(stderr, result.Errors[0])
-	}
+	diagnostics = append(diagnostics, evalDiagnostics(result.Errors)...)
 	findings := make([]model.Finding, 0, len(result.Matches))
 	for _, match := range result.Matches {
 		if _, status := effective.Exception(match.Rule.ID, match.Item.Path, match.Item.SHA256, now()); status == policy.ExceptionActive {
 			continue
 		}
-		finding, err := match.Finding(effective.Severity(match.Rule.ID, match.Rule.Severity), decision(effective.Mode))
+		base := match.Severity
+		if base == "" {
+			base = match.Rule.Severity
+		}
+		finding, err := match.Finding(effective.Severity(match.Rule.ID, base), decision(effective.Mode))
 		if err != nil {
 			return scanInternalError(stderr, err)
 		}
@@ -257,7 +265,7 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if len(blocking) > 0 {
-		if writeString(stderr, "tripcord scan: configuration could not be fully read; the scan is incomplete\n") != int(exitcode.OK) {
+		if writeString(stderr, "tripcord scan: configuration could not be fully read or evaluated; the scan is incomplete\n") != int(exitcode.OK) {
 			return int(exitcode.Internal)
 		}
 		return int(exitcode.Config)
@@ -581,6 +589,24 @@ func partitionDiagnostics(in []adapters.Diagnostic) (blocking, notes []adapters.
 	return blocking, notes
 }
 
+// evalDiagnostics reports each rule that could not be evaluated on a
+// file, once, as a blocking diagnostic: the other rules and files are
+// still reported, and the scan exits as incomplete.
+func evalDiagnostics(errs []rules.EvalError) []adapters.Diagnostic {
+	var out []adapters.Diagnostic
+	for _, e := range errs {
+		msg := "config item could not be evaluated: " + e.Reason()
+		if e.Rule != "" {
+			msg = e.Rule + ": rule evaluation failed: " + e.Reason()
+		}
+		d := adapters.Diagnostic{Harness: e.Harness, Scope: e.Scope, Path: e.Path, Message: msg}
+		if !slices.Contains(out, d) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 func outputDiagnostics(in []adapters.Diagnostic) []output.Diagnostic {
 	out := make([]output.Diagnostic, len(in))
 	for i, d := range in {
@@ -621,6 +647,10 @@ func sarifRuleText(catalog *rules.Catalog) map[string]output.RuleText {
 }
 
 func now() time.Time { return time.Now() }
+
+// scanLimits returns the CEL limits for a scan. A test that lowers them
+// must not run in parallel.
+var scanLimits = rules.DefaultLimits
 
 func scanConfigError(stderr io.Writer, err error) int {
 	writeString(stderr, "tripcord scan: "+redactHomeFromError(err)+"\n")
