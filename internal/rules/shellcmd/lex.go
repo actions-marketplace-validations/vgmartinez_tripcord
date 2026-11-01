@@ -309,11 +309,17 @@ func closeParen(src string, i int) int {
 // command is one simple command. pipeIn is set when its standard input
 // is the previous command's output. stmt numbers the statement it is in:
 // a statement runs to ;, &&, ||, &, or a newline, so the commands of
-// curl x | sh and of iex (iwr x) share one.
+// curl x | sh and of iex (iwr x) share one. sep is the operator that
+// ended the statement, set on its last command: ";" (also a newline),
+// "&&", "||", "&", or "" at the end of the line.
 type command struct {
 	words  []string
 	pipeIn bool
 	stmt   int
+	sep    string
+	// depth is the parenthesis nesting of this command. set -e inside
+	// ( ) does not cover the rest of the line.
+	depth int
 }
 
 // split groups tokens into simple commands and drops redirection
@@ -326,13 +332,15 @@ func split(toks []token) []command {
 	var cur command
 	dropNext := false
 	stmt := 0
+	depth := 0
 	end := func(pipeIn bool) {
 		if len(all) > start {
 			cur.words = all[start:len(all):len(all)]
+			cur.depth = depth
 			cmds = append(cmds, cur)
 		}
 		start = len(all)
-		cur = command{pipeIn: pipeIn, stmt: stmt}
+		cur = command{pipeIn: pipeIn, stmt: stmt, depth: depth}
 	}
 	for _, t := range toks {
 		switch t.op {
@@ -349,11 +357,20 @@ func split(toks []token) []command {
 		case opOpen:
 			// curl ... | (sh) still pipes into sh.
 			end(cur.pipeIn && len(all) == start)
+			depth++
+			cur.depth = depth
 		case ")":
 			end(false)
+			if depth > 0 {
+				depth--
+			}
+			cur.depth = depth
 		default:
 			stmt++
 			end(false)
+			if n := len(cmds); n > 0 && cmds[n-1].stmt == stmt-1 && cmds[n-1].sep == "" {
+				cmds[n-1].sep = t.op
+			}
 		}
 	}
 	end(false)

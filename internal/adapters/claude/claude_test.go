@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -1072,5 +1073,65 @@ func TestBypassPairDetectFlags(t *testing.T) {
 				t.Errorf("skipDangerousModePermissionPrompt emitted = %v, want %v", seen["skipDangerousModePermissionPrompt"], tc.skip)
 			}
 		})
+	}
+}
+
+// TestEnabledPluginsDetectView checks that the enabledPlugins Detect view
+// lists the plugins set to true, outside the payload, and that values of
+// the wrong type are diagnostics.
+func TestEnabledPluginsDetectView(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		settings string
+		enabled  []any
+		diag     string
+	}{
+		"mixed":        {`{"enabledPlugins":{"b@m":true,"a@m":true,"c@m":false}}`, []any{"a@m", "b@m"}, ""},
+		"none":         {`{"enabledPlugins":{"a@m":false}}`, []any{}, ""},
+		"not bool":     {`{"enabledPlugins":{"a@m":"yes","b@m":true}}`, []any{"b@m"}, "enabledPlugins values must be booleans"},
+		"not object":   {`{"enabledPlugins":["a@m"]}`, []any{}, "enabledPlugins must be an object"},
+		"marketplaces": {`{"extraKnownMarketplaces":["acme"]}`, nil, "extraKnownMarketplaces must be an object"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, ".claude", "settings.json"), tc.settings)
+			got := discover(t, New(Options{}), root)
+			if tc.diag == "" && len(got.Diagnostics) != 0 || tc.diag != "" && (len(got.Diagnostics) != 1 || !strings.Contains(got.Diagnostics[0], tc.diag)) {
+				t.Fatalf("diagnostics = %v, want %q", got.Diagnostics, tc.diag)
+			}
+			if tc.enabled == nil {
+				return
+			}
+			if len(got.Items) != 1 {
+				t.Fatalf("items = %+v", got.Items)
+			}
+			var payload, detect map[string]any
+			if err := json.Unmarshal(got.Items[0].Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(got.Items[0].Detect, &detect); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(detect["enabled_plugins"], tc.enabled) || payload["enabled_plugins"] != nil {
+				t.Fatalf("detect %v, payload %v", detect, payload)
+			}
+		})
+	}
+}
+
+// TestMarkdownHiddenChars checks that a CLAUDE.md item carries the
+// hidden code points of the raw file, and that invalid UTF-8 in an
+// instruction file is a diagnostic.
+func TestMarkdownHiddenChars(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "CLAUDE.md"), "# Notes\nrun \u202etests\xff\n")
+	got := discover(t, New(Options{}), root)
+	if len(got.Items) != 1 || got.Items[0].Hidden.Total != 1 || got.Items[0].Hidden.Runs[0] != (model.HiddenRun{CodePoint: 0x202E, Line: 2, Column: 5, Length: 1}) {
+		t.Fatalf("items = %+v", got.Items)
+	}
+	if len(got.Diagnostics) != 1 || !strings.Contains(got.Diagnostics[0], "not valid UTF-8") {
+		t.Fatalf("diagnostics = %v", got.Diagnostics)
 	}
 }

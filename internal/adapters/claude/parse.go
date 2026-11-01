@@ -15,6 +15,7 @@ import (
 	"github.com/vgmartinez/tripcord/internal/adapters"
 	"github.com/vgmartinez/tripcord/internal/adapters/kit"
 	"github.com/vgmartinez/tripcord/internal/fpkey"
+	"github.com/vgmartinez/tripcord/internal/hiddenchar"
 	"github.com/vgmartinez/tripcord/internal/model"
 	"github.com/vgmartinez/tripcord/internal/output"
 	"github.com/vgmartinez/tripcord/internal/pathx"
@@ -355,6 +356,12 @@ func (s *src) settingsObject(obj map[string]any) {
 			value, removed = s.safePayloadValue(name, value)
 		}
 		switch name {
+		case "enabledPlugins":
+			raw["enabled_plugins"] = enabledPlugins(s, obj[name])
+		case "extraKnownMarketplaces":
+			if _, ok := obj[name].(map[string]any); !ok {
+				s.warn("extraKnownMarketplaces must be an object keyed by marketplace name")
+			}
 		case "permissions":
 			raw["skip_dangerous_mode_prompt"] = obj["skipDangerousModePermissionPrompt"] == true
 		case "skipDangerousModePermissionPrompt":
@@ -366,6 +373,33 @@ func (s *src) settingsObject(obj map[string]any) {
 		}
 		s.addDetect(kind, []string{"setting", name}, payload, kit.Removed("value", removed...), raw)
 	}
+}
+
+// enabledPlugins returns the plugin ids an enabledPlugins object turns
+// on, sorted, for the setting's Detect view: a rule cannot read map
+// values by a variable key. A value that is not an object, or an entry
+// that is not a bool, is a diagnostic.
+func enabledPlugins(s *src, value any) []string {
+	m, ok := value.(map[string]any)
+	if !ok {
+		s.warn("enabledPlugins must be an object of plugin ids to booleans")
+		return []string{}
+	}
+	out := []string{}
+	invalid := false
+	for _, id := range sortedKeys(m) {
+		switch m[id] {
+		case true:
+			out = append(out, id)
+		case false:
+		default:
+			invalid = true
+		}
+	}
+	if invalid {
+		s.warn("enabledPlugins values must be booleans")
+	}
+	return out
 }
 
 // bypassPermissions reports whether a permissions value sets
@@ -661,7 +695,8 @@ func redactToolArgs(payload map[string]any) []string {
 }
 
 // markdown normalizes an instruction, rule, agent, command, or skill file.
-// The raw content is kept for Unicode checks; frontmatter hooks and
+// The raw content is kept for Unicode checks, and its hidden code points
+// are located as kit.Source.Markdown does; frontmatter hooks and
 // mcpServers become their own items.
 func (s *src) markdown(kind model.ConfigKind, role string, raw []byte) {
 	payload := map[string]any{"role": role, "content": s.tildeHome(string(raw))}
@@ -693,7 +728,15 @@ func (s *src) markdown(kind model.ConfigKind, role string, raw []byte) {
 		}
 		payload["frontmatter"] = frontmatter
 	}
+	hidden, valid := hiddenchar.Scan(raw)
+	if !valid && kind == model.ConfigKindInstructions && hiddenchar.InstructionPath(s.path) {
+		s.warn("%s", kit.InvalidUTF8)
+	}
+	before := len(s.c.items)
 	s.add(kind, []string{role}, payload, nil)
+	if len(s.c.items) > before {
+		s.c.items[len(s.c.items)-1].Hidden = hidden
+	}
 	if meta == nil {
 		return
 	}

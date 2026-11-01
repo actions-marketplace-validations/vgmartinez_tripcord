@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/vgmartinez/tripcord/internal/adapters/kit"
 	"github.com/vgmartinez/tripcord/internal/model"
@@ -181,14 +182,14 @@ func (f *file) setupSteps(raw []byte) {
 			f.Warn("jobs.%s.steps entry must be a mapping", setupJob)
 			continue
 		}
-		f.step(step)
+		f.step(step, job, workflow)
 	}
 }
 
 // step emits one setup step, keyed by its id, name, uses, or run (the
 // first present). env values are redacted; with inputs are sanitized and
 // secret-looking ones redacted.
-func (f *file) step(step map[string]any) {
+func (f *file) step(step, job, workflow map[string]any) {
 	payload := map[string]any{"setting": "step", "job": setupJob}
 	for _, name := range kit.SortedKeys(step) {
 		payload[name] = f.safeWithEnv(name, step[name])
@@ -200,12 +201,106 @@ func (f *file) step(step map[string]any) {
 			break
 		}
 	}
-	run, _ := step["run"].(string)
+	run, isString := step["run"].(string)
 	key := []string{"step", setupJob, label}
 	if run != "" && run != label {
 		key = append(key, run)
 	}
-	f.Add(model.ConfigKindEnvSetup, key, payload)
+	if !isString {
+		if _, present := step["run"]; present {
+			f.Warn("%s step run must be a string; it is reported as written", setupJob)
+		}
+		f.Add(model.ConfigKindEnvSetup, key, payload)
+		return
+	}
+	rawRun := run
+	if shell, ok := effectiveShell(step, job, workflow); ok && shellErrexit(shell) {
+		// GitHub runs the default, bash, and sh with errexit. The
+		// Detect view shows that; set +e in the script turns it off
+		// again when the command is read.
+		rawRun = "set -e; " + run
+	}
+	detect := map[string]any{"run": rawRun}
+	if dir, ok := workingDirectory(step, job, workflow); ok {
+		// A relative path in the script, such as a sha256sum -c sums
+		// file, is then not read from the repository root.
+		detect["working-directory"] = dir
+	}
+	f.AddDetect(model.ConfigKindEnvSetup, key, payload, detect)
+}
+
+// workingDirectory is the step's working-directory, then the job's
+// defaults.run.working-directory, then the workflow's, as GitHub picks
+// it. ok is false when none sets one.
+func workingDirectory(step, job, workflow map[string]any) (any, bool) {
+	if dir, ok := step["working-directory"]; ok {
+		return dir, true
+	}
+	for _, scope := range []map[string]any{job, workflow} {
+		defaults, _ := scope["defaults"].(map[string]any)
+		run, _ := defaults["run"].(map[string]any)
+		if dir, ok := run["working-directory"]; ok {
+			return dir, true
+		}
+	}
+	return nil, false
+}
+
+// effectiveShell is the shell GitHub uses: the step's shell, then the
+// job's defaults.run.shell, then the workflow's, then the platform
+// default. ok is false when a shell key is present but not a string.
+func effectiveShell(step, job, workflow map[string]any) (string, bool) {
+	if shell, ok := step["shell"].(string); ok {
+		return shell, true
+	}
+	if _, present := step["shell"]; present {
+		return "", false
+	}
+	if shell, ok := defaultsRunShell(job); ok {
+		return shell, true
+	}
+	if shell, ok := defaultsRunShell(workflow); ok {
+		return shell, true
+	}
+	return "", true
+}
+
+func defaultsRunShell(scope map[string]any) (string, bool) {
+	defaults, _ := scope["defaults"].(map[string]any)
+	run, _ := defaults["run"].(map[string]any)
+	shell, ok := run["shell"].(string)
+	return shell, ok
+}
+
+// shellErrexit reports whether GitHub runs this shell with -e. The
+// default and the built-in names bash and sh do. A custom template such
+// as "bash {0}" does only when its command before {0} passes -e.
+func shellErrexit(shell string) bool {
+	shell = strings.TrimSpace(shell)
+	switch shell {
+	case "", "bash", "sh":
+		return true
+	case "pwsh", "powershell", "python", "cmd":
+		return false
+	}
+	template := shell
+	if !strings.Contains(template, "{0}") {
+		template += " {0}"
+	}
+	before, _, _ := strings.Cut(template, "{0}")
+	fields := strings.Fields(before)
+	if len(fields) < 2 {
+		return false
+	}
+	for _, arg := range fields[1:] {
+		if arg == "-o" {
+			continue
+		}
+		if len(arg) > 1 && arg[0] == '-' && arg[1] != '-' && strings.Contains(arg, "e") {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *file) safeWithEnv(name string, value any) any {

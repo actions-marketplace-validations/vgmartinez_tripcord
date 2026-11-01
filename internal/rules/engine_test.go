@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vgmartinez/tripcord/internal/hiddenchar"
 	"github.com/vgmartinez/tripcord/internal/model"
 )
 
@@ -164,6 +165,50 @@ func TestEvidenceKey(t *testing.T) {
 	note := find(`{"label":"setup"}`, model.ConfigKindInstructions)
 	if note.Evidence[0].Config.Key != "" {
 		t.Fatalf("instructions key %q", note.Evidence[0].Config.Key)
+	}
+}
+
+func TestHiddenCharsEvidence(t *testing.T) {
+	_, cat := fixtureEngine(t)
+	base, ok := cat.Rule("TEST-CFG-001")
+	if !ok {
+		t.Fatal("missing fixture rule")
+	}
+	it := item(model.HarnessClaude, "CLAUDE.md", model.ConfigKindInstructions, `{}`)
+	it.Hidden, _ = hiddenchar.Scan([]byte("ok\nsee \u202ehidden\u202c\n"))
+	plain, err := Match{Rule: base, Item: it}.Finding(model.SeverityHigh, model.DecisionDeny)
+	if err != nil || plain.Evidence[0].Excerpt != "" || plain.Location.Line != nil {
+		t.Fatalf("rule without evidence got %+v (%v)", plain, err)
+	}
+
+	withEvidence := base
+	withEvidence.ID = "TC-CFG-011"
+	withEvidence.Evidence = EvidenceHiddenChars
+	f, err := Match{Rule: withEvidence, Item: it}.Finding(model.SeverityHigh, model.DecisionDeny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Evidence[0].Excerpt != hiddenchar.Excerpt(it.Hidden) || !strings.Contains(f.Evidence[0].Excerpt, "U+202E") || strings.Contains(f.Evidence[0].Excerpt, "hidden\u202c") {
+		t.Fatalf("excerpt %q", f.Evidence[0].Excerpt)
+	}
+	if f.Location.Line == nil || *f.Location.Line != 2 {
+		t.Fatalf("location %+v", f.Location)
+	}
+	if f.Fingerprint == plain.Fingerprint {
+		t.Fatal("excerpt is not part of the fingerprint")
+	}
+	moved := it
+	moved.Hidden, _ = hiddenchar.Scan([]byte("\n\nok\nsee \u202ehidden\u202c\n"))
+	m, err := Match{Rule: withEvidence, Item: moved}.Finding(model.SeverityHigh, model.DecisionDeny)
+	if err != nil || m.Fingerprint != f.Fingerprint {
+		t.Fatalf("moving hidden text changed fingerprint: %s vs %s (%v)", m.Fingerprint, f.Fingerprint, err)
+	}
+
+	clean := it
+	clean.Hidden = model.HiddenChars{}
+	c, err := Match{Rule: withEvidence, Item: clean}.Finding(model.SeverityHigh, model.DecisionDeny)
+	if err != nil || c.Evidence[0].Excerpt != "" || c.Location.Line != nil {
+		t.Fatalf("clean item got %+v (%v)", c, err)
 	}
 }
 

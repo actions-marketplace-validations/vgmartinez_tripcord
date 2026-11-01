@@ -76,6 +76,44 @@ type ConfigItem struct {
 	// symlink resolves outside the repository: "home", "temp", "absolute",
 	// or "network". The target path is not kept.
 	ScriptLocations []string `json:"-"`
+	// ChecksumFiles maps each committed sums file a repository env-setup
+	// command checks with sha256sum -c to the file names it lists (see
+	// scriptcheck). It is set after discovery, for rule evaluation only;
+	// a sums file that is missing, outside the repository, or malformed
+	// has no entry.
+	ChecksumFiles map[string][]string `json:"-"`
+	// ChecksumSymlinks is the set of fetch and run file names in a
+	// repository env-setup checksum script that exist as symlinks in the
+	// repository. It is set after discovery, for rule evaluation only.
+	ChecksumSymlinks []string `json:"-"`
+	// Hidden is the invisible and direction-changing code points of an
+	// instruction or skill file (see internal/hiddenchar): where each run
+	// of them starts and its first code point, never the text around
+	// or between them. It is set by the adapter, for rule evaluation and
+	// the finding's excerpt only.
+	Hidden HiddenChars `json:"-"`
+}
+
+// HiddenChars is what internal/hiddenchar found in one file. Runs holds
+// the first runs, at most hiddenchar.MaxRuns; RunCount counts every run
+// and Total every hidden code point in the file.
+type HiddenChars struct {
+	Runs     []HiddenRun
+	Sequence []rune
+	RunCount int
+	Total    int
+}
+
+// String counts the hidden code points, so a formatted ConfigItem stays
+// printable with %s.
+func (h HiddenChars) String() string { return strconv.Itoa(h.Total) + " hidden code points" }
+
+// HiddenRun is a run of consecutive hidden code points: the first one,
+// its 1-based line and column (in code points), and the run's length.
+type HiddenRun struct {
+	CodePoint    rune
+	Line, Column int
+	Length       int
 }
 
 // ScriptCount is a number of scripts (see ConfigItem.MissingScripts).

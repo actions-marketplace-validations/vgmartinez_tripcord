@@ -101,6 +101,8 @@ func AnalyzeArgv(argv []string) Result {
 type scanner struct {
 	fetch, pipe, encoded, nested bool
 	work                         int
+	// unpinned records a fetch whose target is not an immutable URL.
+	unpinned bool
 	// tainted maps a lower-case PowerShell variable name to what was
 	// assigned to it: taintFetch, taintDecoded, or both.
 	tainted map[string]int
@@ -161,6 +163,11 @@ func (s *scanner) line(src string, depth int, ps bool) (decodes bool) {
 	}
 	if dotNetDownload(src) {
 		s.fetch = true
+		if !urlsImmutable(src) {
+			s.unpinned = true
+		}
+	} else if hasDownloadCall(src) && strings.Contains(src, "$") {
+		s.unpinned = true
 	}
 	cmds := split(toks)
 	fetched := make([]bool, len(cmds))
@@ -365,6 +372,11 @@ func (s *scanner) command(words []string, depth int, followed bool) {
 	default:
 		if fetches(name, args, followed) {
 			s.fetch = true
+			if !immutableTargets(name, args) {
+				s.unpinned = true
+			}
+		} else if downloaderNames[name] && variableTarget(args) {
+			s.unpinned = true
 		}
 	}
 }

@@ -1,0 +1,91 @@
+# A cloud agent or dev container runs the repository's environment
+# setup before anyone reviews what it fetched: the Copilot coding
+# agent's copilot-setup-steps workflow, Cursor's cloud-agent
+# .cursor/environment.json, and a dev container's lifecycle commands
+# and Features. A setup command that downloads and runs code from a
+# source that can change runs whatever that source serves next.
+#
+# Rules read each command as the file wrote it, before URL secrets are
+# stripped; findings show only the sanitized form (see docs/scan.md).
+#
+# Read, with shell.unpinned (see internal/rules/shellcmd/pinned.go),
+# which reports what shell.risks reports (fetch, pipe, encoded, nested;
+# see TC-CFG-001) unless every fetch in the command is pinned:
+#   - Copilot: the run of each step of the copilot-setup-steps job in
+#     .github/workflows/copilot-setup-steps.yml. uses steps are not read.
+#     The effective shell is step, then job defaults.run.shell, then
+#     workflow defaults.run.shell, then GitHub's bash -eo pipefail.
+#     Built-in bash and sh are fail-closed; "bash {0}" is not, and a
+#     script that starts with set +e turns errexit off.
+#   - Cursor: the install and start strings and each terminal command
+#     of .cursor/environment.json.
+#   - Dev containers: onCreateCommand, updateContentCommand,
+#     postCreateCommand, postStartCommand, and postAttachCommand, in
+#     string, array, or object form; and initializeCommand, which runs
+#     on the host before the container starts. A Feature whose reference
+#     is an http(s) tarball URL is read as a curl of that URL.
+#
+# Pinned means one of:
+#   - Immutable URL: every downloader target is https, without userinfo
+#     or a trailing-dot host, on an allowlisted host and path position
+#     (GitHub raw/archive/codeload/gist, jsDelivr gh@<sha>, GitLab
+#     /-/raw/<sha>). A sha256: digest is not a pin (curl and wget do
+#     not verify it), and a hex string on any other host, including a
+#     release asset, is not a pin,
+#     nor is a path with a . or .. segment (also %2e%2e, .%2E).
+#   - Checksum verified before execution: the whole script parses under
+#     the checksum grammar (docs/rules/TC-CFG-009.md): only curl/wget to
+#     one plain current-directory filename (no /, leading ., or
+#     leading -; config and command names rejected in any case),
+#     sha256sum -c <sums> or shasum -a 256 -c <sums> where <sums> is
+#     committed (config.checksum_files, see internal/scriptcheck),
+#     echo|printf '<64 hex>  <file>' | sha256sum -c [-] naming the
+#     fetched and run file, sh/bash <fetched file>, a leading set -e,
+#     and mkdir/chmod/rm with plain filenames, joined by ;, newlines,
+#     or &&. Every fetch is the run script or an echo/printf entry's
+#     file; a sums file is never fetched or run. A sums check covers
+#     only the names the committed final regular file lists (a sums-file
+#     symlink gets no credit). A fetched or run filename that exists as
+#     a repository symlink also gets no credit
+#     (config.checksum_symlinks). Each run follows a check that stops it
+#     on failure. Anything
+#     else (cd, export, assignments, trap, eval, functions, subshells,
+#     ||, $, ...) gives no credit.
+# Package runners (npx -y, uvx, pnpm dlx, ...), git clone (including a
+# later sha checkout), tags, and a variable target are never pinned.
+#
+# Not read: Devin's .devin/blueprint.yaml (no adapter reads it), RUN
+# lines of a Dockerfile, OCI Feature references (ghcr.io/...:1), and
+# what a fetched script does. OCI Feature tags are not flagged.
+id: TC-CFG-009
+pack: tripcord/core
+title: "Environment setup runs code fetched from an unpinned source"
+severity: high
+harness: [copilot, cursor, devcontainer]
+files: ["**"]
+when: |
+  config.kind == "env-setup" && config.scope == "repo" && has(payload.setting) && (
+    (config.harness == "copilot" && payload.setting == "step" &&
+      has(payload.run) && type(payload.run) == string &&
+      shell.unpinned(payload.run, config.checksum_files, config.checksum_symlinks).size() > 0) ||
+    (config.harness == "cursor" && payload.setting in ["install", "start"] &&
+      has(payload.value) && type(payload.value) == string &&
+      shell.unpinned(payload.value, config.checksum_files, config.checksum_symlinks).size() > 0) ||
+    (config.harness == "cursor" && payload.setting == "terminals" &&
+      has(payload.command) && type(payload.command) == string &&
+      shell.unpinned(payload.command, config.checksum_files, config.checksum_symlinks).size() > 0) ||
+    (config.harness == "devcontainer" &&
+      payload.setting in ["initializeCommand", "onCreateCommand", "updateContentCommand", "postCreateCommand", "postStartCommand", "postAttachCommand"] &&
+      has(payload.command) && (type(payload.command) == string || type(payload.command) == list) &&
+      shell.unpinned(payload.command, config.checksum_files, config.checksum_symlinks).size() > 0) ||
+    (config.harness == "devcontainer" && payload.setting == "features" &&
+      has(payload.feature) && type(payload.feature) == string &&
+      payload.feature.matches(r'''(?i)^https?://''') &&
+      shell.unpinned(["curl", payload.feature]).size() > 0)
+  )
+fix: "Commit the setup script to the repository and run it from there, or pin what it downloads: fetch an https URL that names a commit, or download to a file and check its SHA-256 (sha256sum -c) before running it, with && so a mismatch stops setup."
+refs:
+  - https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/customize-the-agent-environment
+  - https://cursor.com/docs/cloud-agent
+  - https://containers.dev/implementors/json_reference/
+  - https://workos.com/blog/npm-worm-coding-agent-config-credentials

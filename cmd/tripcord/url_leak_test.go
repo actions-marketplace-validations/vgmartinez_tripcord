@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/vgmartinez/tripcord/internal/exitcode"
+	"github.com/vgmartinez/tripcord/internal/rules"
 )
 
 // TestScanHookURLSecretsNeverLeak puts URLs whose query, fragment, or
@@ -89,8 +90,9 @@ var (
 	urlSecret  = regexp.MustCompile(`://[^\s'"<>]*?[?#&=]([A-Za-z0-9_\-.]{8,})`)
 )
 
-// TestScanConfigCorporaNeverLeak scans every fixture of the rules that
-// detect on the raw view as its own repository in every format.
+// TestScanConfigCorporaNeverLeak scans every fixture of the established
+// raw-view rules and a fixed, canary-bearing subset for TC-CFG-009..011 as
+// its own repository in every format.
 // Detection reads the raw command or setting, so this checks that none
 // of it reaches a report: no LEAK marker and no URL query or fragment
 // value of the fixture appears, and every positive is still reported.
@@ -112,6 +114,40 @@ func TestScanConfigCorporaNeverLeak(t *testing.T) {
 			}
 		}
 	}
+	covered := map[string]bool{}
+	for _, tree := range configLeakFixtureTrees {
+		parts := strings.Split(tree, "/")
+		if len(parts) != 3 || parts[1] != "positivos" {
+			t.Fatalf("invalid config leak fixture tree %q", tree)
+		}
+		covered[strings.TrimSuffix(parts[0], rules.TestDirSuffix)] = true
+		scanCorpusFixture(t, strings.TrimSuffix(parts[0], rules.TestDirSuffix), parts[1], filepath.Join("../../rules", filepath.FromSlash(tree)))
+	}
+	raw, err := os.ReadFile(filepath.Join("../../rules", rules.RegistryFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := rules.ParseRegistry(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range registry.Entries() {
+		if entry.Status != rules.StatusActive || entry.ID < "TC-CFG-009" || entry.ID > "TC-CFG-011" {
+			continue
+		}
+		if !covered[entry.ID] {
+			t.Fatalf("fixed leak subset has no positive for %s", entry.ID)
+		}
+	}
+}
+
+// configLeakFixtureTrees is deliberately fixed to bound the five-format
+// corpus scan. The selection has one positive per new rule and retains the
+// raw-view canaries: a URL secret (009) and hidden bidi text (011).
+var configLeakFixtureTrees = []string{
+	"TC-CFG-009.test/positivos/cursor-install-curl-pipe",
+	"TC-CFG-010.test/positivos/claude-enabled-plugins",
+	"TC-CFG-011.test/positivos/agents-bidi-override",
 }
 
 func scanCorpusFixture(t *testing.T, id, kind, src string) {
