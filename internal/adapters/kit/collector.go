@@ -8,9 +8,10 @@
 // are sanitized before they become items (URL userinfo, query, and
 // fragment removed; secret CLI flags, bearer tokens, and secret-looking
 // env and header values redacted; the home directory rewritten as "~" in
-// user scope only), and a key whose text lost a secret carries a short
-// discriminator hashed from the removed text so two different secrets
-// never share a fingerprint.
+// user scope only), and a key whose text lost a secret carries a "sig:"
+// discriminator: an HMAC of the removed text under the fingerprint key
+// (k1), or, with no key, the structure of what was removed and an
+// ordinal (s1). Neither is an unkeyed hash of a secret.
 package kit
 
 import (
@@ -24,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/vgmartinez/tripcord/internal/adapters"
+	"github.com/vgmartinez/tripcord/internal/fpkey"
 	"github.com/vgmartinez/tripcord/internal/model"
 )
 
@@ -35,6 +37,10 @@ type Collector struct {
 	home    string
 	items   []model.ConfigItem
 	diags   []adapters.Diagnostic
+	// key selects the k1 discriminator when present (see discriminated).
+	key *fpkey.Key
+	// ordinals counts s1 entries per file and key prefix.
+	ordinals map[string]int
 }
 
 // NewCollector returns a collector whose diagnostics are attributed to
@@ -46,6 +52,40 @@ func NewCollector(harness model.Harness, product string) *Collector {
 // SetHome records the home directory rewritten as "~" in user-scope
 // values. It is never applied to repository or managed scope.
 func (c *Collector) SetHome(home string) { c.home = home }
+
+// SetFingerprintKey selects the k1 discriminator for entries that lost a
+// secret. A nil key selects s1.
+func (c *Collector) SetFingerprintKey(k *fpkey.Key) { c.key = k }
+
+// ordinal returns how many earlier entries of the same file had key and
+// part as their key so far, and counts this one. The map key is a
+// cheap NUL-separated join, not JSON, since it is never compared across
+// processes or stored: ordinal() is called once per entry on top of the
+// JSON encoding its caller already pays for key, so a second
+// json.Marshal here would double that cost for no benefit.
+func (c *Collector) ordinal(harness model.Harness, scope model.Scope, path string, kind model.ConfigKind, key []string, part string) int {
+	if c.ordinals == nil {
+		c.ordinals = map[string]int{}
+	}
+	var b strings.Builder
+	b.WriteString(string(harness))
+	b.WriteByte(0)
+	b.WriteString(string(scope))
+	b.WriteByte(0)
+	b.WriteString(path)
+	b.WriteByte(0)
+	b.WriteString(string(kind))
+	for _, p := range key {
+		b.WriteByte(0)
+		b.WriteString(p)
+	}
+	b.WriteByte(0)
+	b.WriteString(part)
+	id := b.String()
+	n := c.ordinals[id]
+	c.ordinals[id] = n + 1
+	return n
+}
 
 // Warn records a diagnostic that makes the scan incomplete.
 func (c *Collector) Warn(scope model.Scope, path, format string, args ...any) {
@@ -111,8 +151,11 @@ type Source struct {
 	sha     string
 	fields  map[string]any
 	// removed is every raw value sanitization removed since the last
-	// Add, in the order it was removed; Add hashes it into the key.
-	removed []string
+	// Add, in the order it was removed; Add discriminates on it.
+	removed []Removal
+	// field is the top-level payload field removals are attributed to
+	// (see enterField).
+	field string
 	// sanitized memoizes Sanitize, keyed by its input.
 	sanitized map[string]Sanitized
 	// presanitized reports strings Sanitize may return as they are (see
@@ -125,7 +168,7 @@ type Source struct {
 // the scan.
 func (s *Source) recordRemoved(raw ...string) {
 	for _, r := range raw {
-		s.removed = append(s.removed, s.tildeHome(r))
+		s.removed = append(s.removed, Removal{Field: s.field, Value: s.tildeHome(r)})
 	}
 }
 
@@ -166,7 +209,7 @@ func (c *Collector) SourceSHA(scope model.Scope, path, sha string) *Source {
 // TrustSanitized makes Sanitize return a string f reports as already
 // sanitized as it is, with nothing removed. It is for an adapter that
 // runs the same string sanitization itself and signs its own output
-// (see EntrySignature): re-sanitizing that text protects nothing, since
+// (see EntryKey): re-sanitizing that text protects nothing, since
 // it is already in the payload as written, while kit's key and array
 // rules still apply to the whole entry.
 func (s *Source) TrustSanitized(f func(string) bool) *Source {
@@ -210,7 +253,7 @@ func (s *Source) WarnAll(warnings []string) {
 // Add emits one item. key is sanitized, has a content digest of the full
 // sanitized payload appended (see PayloadDigest), then a discriminator
 // over every raw value sanitization removed while building the entry
-// (see KeyDiscriminator), and is encoded as payload["key"]: the
+// (see discriminated), and is encoded as payload["key"]: the
 // content-derived evidence key, which never encodes a position in the
 // file. The digest means two entries whose caller-supplied key parts
 // match, but whose other fields differ (a second "uses" step with a
@@ -244,7 +287,7 @@ func (s *Source) add(kind model.ConfigKind, key []string, payload, rawFields map
 	// scopes this scan read, not on the file's own content, and must
 	// never affect the key (see WithField).
 	fullKey := append(s.SafeKey(key), "sig:"+PayloadDigest(payload))
-	fullKey = discriminated(fullKey, removed)
+	fullKey = s.discriminated(kind, fullKey, removed, payload)
 	for name, value := range s.fields {
 		payload[name] = value
 	}
@@ -287,20 +330,24 @@ func DetectView(payload, raw map[string]any, keep []string) model.DetectPayload 
 	return out
 }
 
-// EntrySignature returns the "sig:" key parts Add would append for
-// payload, for an adapter that builds its items itself (the Claude
-// adapter): a digest of payload as this Source sanitizes it, so a value
-// the caller left raw never feeds the digest, then a discriminator over
-// removed (what the caller's own sanitization removed, in a
-// deterministic order) followed by what this Source's sanitization of
-// payload removed.
-func (s *Source) EntrySignature(payload map[string]any, removed []string) []string {
+// EntryKey returns the evidence key parts Add would build for kind, the
+// already-sanitized key, and payload, for an adapter that builds its
+// items itself (the Claude adapter): key, a digest of payload as this
+// Source sanitizes it, so a value the caller left raw never feeds the
+// digest, then a discriminator over removed (what the caller's own
+// sanitization removed, in a deterministic order) followed by what this
+// Source's sanitization of payload removed.
+func (s *Source) EntryKey(kind model.ConfigKind, key []string, payload map[string]any, removed []Removal) []string {
 	s.removed = nil
-	s.recordRemoved(removed...)
+	for _, r := range removed {
+		restore := s.enterField(r.Field)
+		s.recordRemoved(r.Value)
+		restore()
+	}
 	view, _ := s.SafeValue("", payload).(map[string]any)
 	all := s.removed
 	s.removed = nil
-	return discriminated([]string{"sig:" + PayloadDigest(view)}, all)
+	return s.discriminated(kind, append(slices.Clone(key), "sig:"+PayloadDigest(view)), all, view)
 }
 
 // EvidenceKey encodes parts as a compact JSON array, so no choice of

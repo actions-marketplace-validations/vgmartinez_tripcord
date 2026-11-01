@@ -248,6 +248,59 @@ func canonicalFingerprintScope(scope Scope) (Scope, error) {
 	return scope, nil
 }
 
+// k1Marker and s1Marker are the discriminator prefixes
+// internal/adapters/kit.discriminated appends as the LAST element of a
+// ConfigRef.Key's part array when an entry lost a secret to redaction
+// (see docs/fingerprint.md). Key is compact JSON encoding that array
+// (internal/adapters/kit.EvidenceKey); every earlier part can be
+// arbitrary user-controlled text (a command, a header value, ...), so
+// the marker must only ever be looked for, anchored, in the decoded
+// last element, never as a substring of the whole JSON text.
+const (
+	k1Marker = "sig:k1:"
+	s1Marker = "sig:s1:"
+)
+
+// FingerprintMode returns which "sig:" discriminator mode, if any,
+// produced evidence's fingerprint: "k1" when a fingerprint key keyed it,
+// "s1" when the structural discriminator did, or "" when no evidence
+// config key carries either marker at all. The empty case is not an
+// error: an entry that removed nothing to redact (Q2 in the researcher
+// review) has no discriminator and its fingerprint does not depend on
+// the mode, so it is deliberately the same in k1 and s1 runs. Renderers
+// use this to annotate SARIF properties and JSON output with the mode,
+// without hashing the mode itself or changing Fingerprint.
+func FingerprintMode(evidence []Evidence) string {
+	for _, ev := range evidence {
+		if ev.Config == nil {
+			continue
+		}
+		switch last := lastKeyPart(ev.Config.Key); {
+		case strings.HasPrefix(last, k1Marker):
+			return "k1"
+		case strings.HasPrefix(last, s1Marker):
+			return "s1"
+		}
+	}
+	return ""
+}
+
+// lastKeyPart decodes key, a compact JSON array
+// (internal/adapters/kit.EvidenceKey's output), and returns its last
+// element, or "" if key is not that shape or is empty. The discriminator
+// FingerprintMode looks for is always this last element in full, never a
+// substring of an earlier, caller-controlled part: a hook whose command
+// literally contains the text "sig:s1:x[0]" (as in `echo sig:s1:x[0]`)
+// must not be mistaken for a discriminated entry, and an s1 entry whose
+// payload happens to embed the text "sig:k1:" must not be mislabeled k1.
+func lastKeyPart(key string) string {
+	var parts []string
+	if err := json.Unmarshal([]byte(key), &parts); err != nil || len(parts) == 0 {
+		return ""
+	}
+	return parts[len(parts)-1]
+}
+
 func canonicalJSON(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

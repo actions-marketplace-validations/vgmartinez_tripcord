@@ -9,10 +9,29 @@ import (
 	"testing"
 
 	"github.com/vgmartinez/tripcord/internal/adapters"
+	"github.com/vgmartinez/tripcord/internal/fpkey"
 	"github.com/vgmartinez/tripcord/internal/model"
 )
 
+// testKey is the k1 fingerprint key the kit tests use. fpkey.New
+// requires a hex string, so this is 64 hex characters.
+const testKey = "fee1deadfee1deadfee1deadfee1deadfee1deadfee1deadfee1deadfee1dead"
+
+// source is a k1 source: the tests that expect entries differing only in
+// a secret to get different keys use it.
 func source(scope model.Scope, path string) *Source {
+	k, err := fpkey.New(testKey)
+	if err != nil {
+		panic(err)
+	}
+	c := NewCollector(model.HarnessCodex, "Codex")
+	c.SetHome("/home/dev")
+	c.SetFingerprintKey(k)
+	return c.Source(scope, path, nil)
+}
+
+// s1Source is a source with no fingerprint key.
+func s1Source(scope model.Scope, path string) *Source {
 	c := NewCollector(model.HarnessCodex, "Codex")
 	c.SetHome("/home/dev")
 	return c.Source(scope, path, nil)

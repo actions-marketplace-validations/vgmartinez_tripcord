@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/vgmartinez/tripcord/internal/adapters"
+	"github.com/vgmartinez/tripcord/internal/fpkey"
 	"github.com/vgmartinez/tripcord/internal/model"
 	"github.com/vgmartinez/tripcord/internal/rules"
 )
@@ -210,4 +211,20 @@ func Env(pairs ...string) func(string) string {
 		}
 		return ""
 	}
+}
+
+// TestFingerprintKey is the k1 fingerprint key adapter tests use. It is
+// a fixed test value, never a real key. fpkey.New requires a hex
+// string, so this is 64 hex characters, matching a generated key file's
+// length, even though no test here reads it from a file.
+const TestFingerprintKey = "cafef00dcafef00dcafef00dcafef00dcafef00dcafef00dcafef00dcafef00d"
+
+// FingerprintKey returns TestFingerprintKey as a key, for adapter
+// options in tests that expect k1 semantics.
+func FingerprintKey() *fpkey.Key {
+	k, err := fpkey.New(TestFingerprintKey)
+	if err != nil {
+		panic(err)
+	}
+	return k
 }

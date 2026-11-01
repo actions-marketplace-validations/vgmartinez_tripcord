@@ -135,8 +135,14 @@ func BenchmarkDiscoverHookHeavySettings(b *testing.B) {
 // regression to main, on losing kit's Sanitize memo (about 70x
 // distinct), or on signing a long command by re-redacting it (about
 // 85x long).
+//
+// The s1 discriminator memoizes output.DefaultRedactor on payload field
+// names (kit.redactedFieldName), or repeatedHooks would re-redact the
+// same few names for every one of its identical hooks. repeatedHooks
+// measures about 14x here and up to about 17x on a CI runner (the Detect
+// view rules evaluate added about 3x), so its budget is 20x.
 var hookHeavyBudget = map[hookHeavyShape]float64{
-	repeatedHooks: 25, distinctHooks: 60, oneLongHook: 80,
+	repeatedHooks: 20, distinctHooks: 60, oneLongHook: 80,
 	pathColonHook: 80, flagPathColonHook: 80,
 }
 
