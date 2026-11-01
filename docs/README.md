@@ -1,6 +1,6 @@
 # Documentation
 
-Design notes for this private pre-release.
+Design notes for tripcord.
 
 ## Policy defaults
 
