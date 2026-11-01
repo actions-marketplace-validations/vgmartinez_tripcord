@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -556,6 +557,36 @@ func TestPluginReferencesStayInRepo(t *testing.T) {
 	}
 }
 
+// TestPluginSkillsAreRead checks that a plugin's skills/*/SKILL.md is a
+// skill, with its frontmatter hooks as hook items, under a plugin.json
+// root and a marketplace source, and that a SKILL.md outside skills/
+// is not.
+func TestPluginSkillsAreRead(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	skill := "---\nname: review\nhooks:\n  Stop:\n    - hooks:\n        - type: command\n          command: ./notify.sh\n---\nReview the diff.\n"
+	writeFile(t, filepath.Join(root, "tools", "acme", ".claude-plugin", "plugin.json"), `{"name":"acme"}`)
+	writeFile(t, filepath.Join(root, "tools", "acme", "skills", "review", "SKILL.md"), skill)
+	writeFile(t, filepath.Join(root, "tools", "acme", "skills", "lower", "skill.md"), skill)
+	writeFile(t, filepath.Join(root, "tools", "acme", "docs", "SKILL.md"), skill)
+	writeFile(t, filepath.Join(root, ".claude-plugin", "marketplace.json"), `{"plugins":[{"name":"m","source":"./plugins/m"}]}`)
+	writeFile(t, filepath.Join(root, "plugins", "m", "skills", "fmt", "SKILL.md"), skill)
+	got := discover(t, New(Options{}), root)
+	kinds := map[string][]model.ConfigKind{}
+	for _, item := range got.Items {
+		kinds[item.Path] = append(kinds[item.Path], item.Kind)
+	}
+	for _, p := range []string{"tools/acme/skills/review/SKILL.md", "tools/acme/skills/lower/skill.md", "plugins/m/skills/fmt/SKILL.md"} {
+		slices.Sort(kinds[p])
+		if !slices.Equal(kinds[p], []model.ConfigKind{model.ConfigKindHook, model.ConfigKindSkill}) {
+			t.Errorf("%s: kinds = %v, want skill and hook", p, kinds[p])
+		}
+	}
+	if k, ok := kinds["tools/acme/docs/SKILL.md"]; ok {
+		t.Errorf("docs/SKILL.md read as %v", k)
+	}
+}
+
 func TestCuratedSettingKeys(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -578,6 +609,7 @@ func TestCuratedSettingKeys(t *testing.T) {
 		"otelHeadersHelper",
 		"permissions",
 		"sandbox",
+		"skipDangerousModePermissionPrompt",
 		"statusLine",
 		"strictKnownMarketplaces",
 		"subagentStatusLine",
@@ -992,5 +1024,53 @@ func assertGolden(t *testing.T, name string, got []byte) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("%s mismatch\n--- got ---\n%s--- want ---\n%s", name, got, want)
+	}
+}
+
+// TestBypassPairDetectFlags checks that each of permissions and
+// skipDangerousModePermissionPrompt says in its Detect view whether the
+// other is set in the same file, and that the flags stay out of the
+// payload.
+func TestBypassPairDetectFlags(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		settings   string
+		skip, pair bool
+	}{
+		"both":      {`{"permissions":{"defaultMode":"bypassPermissions"},"skipDangerousModePermissionPrompt":true}`, true, true},
+		"skip only": {`{"permissions":{"defaultMode":"acceptEdits"},"skipDangerousModePermissionPrompt":true}`, true, false},
+		"bypass":    {`{"permissions":{"defaultMode":"bypassPermissions"}}`, false, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, ".claude", "settings.json"), tc.settings)
+			got := discover(t, New(Options{}), root)
+			seen := map[string]bool{}
+			for _, item := range got.Items {
+				var payload, detect map[string]any
+				if err := json.Unmarshal(item.Payload, &payload); err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(item.Detect, &detect); err != nil {
+					t.Fatal(err)
+				}
+				setting, _ := payload["setting"].(string)
+				seen[setting] = true
+				switch setting {
+				case "permissions":
+					if detect["skip_dangerous_mode_prompt"] != tc.skip || payload["skip_dangerous_mode_prompt"] != nil {
+						t.Errorf("permissions: detect %v, payload %v", detect, payload)
+					}
+				case "skipDangerousModePermissionPrompt":
+					if detect["bypass_permissions"] != tc.pair || payload["bypass_permissions"] != nil {
+						t.Errorf("skip: detect %v, payload %v", detect, payload)
+					}
+				}
+			}
+			if seen["skipDangerousModePermissionPrompt"] != tc.skip {
+				t.Errorf("skipDangerousModePermissionPrompt emitted = %v, want %v", seen["skipDangerousModePermissionPrompt"], tc.skip)
+			}
+		})
 	}
 }

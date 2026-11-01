@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"cel.dev/cel-go/ext"
 	"cel.dev/cel-go/interpreter"
 
+	"github.com/vgmartinez/tripcord/internal/model"
 	"github.com/vgmartinez/tripcord/internal/rules/shellcmd"
 )
 
@@ -118,13 +120,16 @@ var (
 	ErrBudget     = errors.New("rule evaluation budget exhausted")
 	ErrNotBool    = errors.New("cel expression did not return a bool")
 	ErrInputLimit = errors.New("input exceeds size limit")
+	// ErrHookArgs is hook.argv on args that are not a list of strings,
+	// numbers, and bools.
+	ErrHookArgs = errors.New("hook args are not strings, numbers, or bools")
 )
 
 // Env compiles expressions against the Tripcord variables. It has the
-// CEL standard library, the cel-go strings extension, and shell.risks.
-// None can read files, the network, the clock, or the environment.
-// matches() uses Go's RE2 engine and shell.risks a single pass of the
-// shellcmd reader; both run in linear time.
+// CEL standard library, the cel-go strings extension, shell.risks,
+// shell.locations, hook.commands, and hook.argv. None can read files, the network, the clock, or the
+// environment. matches() uses Go's RE2 engine and the shell functions a
+// single pass of the shellcmd reader; all run in linear time.
 type Env struct {
 	env    *cel.Env
 	limits Limits
@@ -139,6 +144,10 @@ func NewEnv(limits Limits) (*Env, error) {
 		cel.Variable(VarEvent, cel.MapType(cel.StringType, cel.DynType)),
 		ext.Strings(),
 		shellRisks,
+		shellLocations,
+		hookCommands,
+		hookArgs,
+		hookArgv,
 		cel.ParserExpressionSizeLimit(limits.MaxExpressionBytes),
 		cel.ParserRecursionLimit(limits.MaxNesting),
 	)
@@ -163,7 +172,7 @@ var shellRisks = cel.Function(shellRisksName,
 		})),
 	cel.Overload(overloadShellRisksList, []*cel.Type{cel.ListType(cel.DynType)}, cel.ListType(cel.StringType),
 		cel.UnaryBinding(func(v ref.Val) ref.Val {
-			argv, err := stringList(v)
+			argv, err := stringList(shellRisksName, v)
 			if err != nil {
 				return types.WrapErr(err)
 			}
@@ -171,29 +180,174 @@ var shellRisks = cel.Function(shellRisksName,
 		})),
 )
 
-const (
-	shellRisksName           = "shell.risks"
-	overloadShellRisksString = "shell_risks_string"
-	overloadShellRisksList   = "shell_risks_list"
+// shell.locations(command) and shell.locations([program, arg, ...])
+// return where the programs and scripts a hook command runs live:
+// "network", "home", "temp", "absolute", and "parent" (see
+// shellcmd.Locate). A program on PATH or inside the project has none.
+var shellLocations = cel.Function(shellLocationsName,
+	cel.Overload(overloadShellLocationsString, []*cel.Type{cel.StringType}, cel.ListType(cel.StringType),
+		cel.UnaryBinding(func(v ref.Val) ref.Val {
+			s, ok := v.(types.String)
+			if !ok {
+				return types.MaybeNoSuchOverloadErr(v)
+			}
+			r := shellcmd.Locate(string(s))
+			return newWorkList(r.Locations, r.Work)
+		})),
+	cel.Overload(overloadShellLocationsList, []*cel.Type{cel.ListType(cel.DynType)}, cel.ListType(cel.StringType),
+		cel.UnaryBinding(func(v ref.Val) ref.Val {
+			argv, err := stringList(shellLocationsName, v)
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			r := shellcmd.LocateArgv(argv)
+			return newWorkList(r.Locations, r.Work)
+		})),
 )
 
-// risksList is the list shell.risks returns, carrying the work the
-// reader did so shellRisksCost can charge it.
+// hook.commands(payload) returns the string values of a hook payload's
+// command fields (model.HookCommandFields); a missing or non-string field is
+// skipped. hook.args(payload) returns args, and hook.argv(payload) returns
+// [exec or command] + args. Number and bool args become their text; either is
+// an evaluation error when args is not a list or holds an object, list, or
+// null (see argvList). They let a rule read every command field without
+// restating the list in each clause.
+var hookCommands = cel.Function(hookCommandsName,
+	cel.Overload(overloadHookCommands, []*cel.Type{cel.DynType}, cel.ListType(cel.StringType),
+		cel.UnaryBinding(func(v ref.Val) ref.Val {
+			m, ok := v.(traits.Mapper)
+			if !ok {
+				return types.NewStringList(types.DefaultTypeAdapter, nil)
+			}
+			var out []string
+			for _, k := range model.HookCommandFields {
+				if s, ok := mapString(m, k); ok {
+					out = append(out, s)
+				}
+			}
+			return types.NewStringList(types.DefaultTypeAdapter, out)
+		})),
+)
+
+var hookArgv = cel.Function(hookArgvName,
+	cel.Overload(overloadHookArgv, []*cel.Type{cel.DynType}, cel.ListType(cel.StringType),
+		cel.UnaryBinding(func(v ref.Val) ref.Val {
+			empty := types.NewStringList(types.DefaultTypeAdapter, nil)
+			m, ok := v.(traits.Mapper)
+			if !ok {
+				return empty
+			}
+			args, found := m.Find(types.String("args"))
+			if !found {
+				return empty
+			}
+			list, err := argvList(args)
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			program, ok := mapString(m, "exec")
+			if !ok {
+				program, _ = mapString(m, "command")
+			}
+			return types.NewStringList(types.DefaultTypeAdapter, append([]string{program}, list...))
+		})),
+)
+
+var hookArgs = cel.Function(hookArgsName,
+	cel.Overload(overloadHookArgs, []*cel.Type{cel.DynType}, cel.ListType(cel.StringType),
+		cel.UnaryBinding(func(v ref.Val) ref.Val {
+			empty := types.NewStringList(types.DefaultTypeAdapter, nil)
+			m, ok := v.(traits.Mapper)
+			if !ok {
+				return empty
+			}
+			args, found := m.Find(types.String("args"))
+			if !found {
+				return empty
+			}
+			list, err := argvList(args)
+			if err != nil {
+				return types.WrapErr(err)
+			}
+			return types.NewStringList(types.DefaultTypeAdapter, list)
+		})),
+)
+
+// argvList returns a hook's args as strings. A number or bool is passed
+// to the program as its text, so it is stringified; an object, list, or
+// null element, or args that is not a list, is an error rather than an
+// empty argv, so a rule cannot pass over a hook it could not read.
+func argvList(v ref.Val) ([]string, error) {
+	list, ok := v.(traits.Lister)
+	if !ok {
+		return nil, fmt.Errorf("%s: args is %s, not a list: %w", hookArgvName, v.Type().TypeName(), ErrHookArgs)
+	}
+	var out []string
+	i := 0
+	for it := list.Iterator(); it.HasNext() == types.True; i++ {
+		switch e := it.Next().(type) {
+		case types.String:
+			out = append(out, string(e))
+		case types.Bool:
+			out = append(out, strconv.FormatBool(bool(e)))
+		case types.Int:
+			out = append(out, strconv.FormatInt(int64(e), 10))
+		case types.Uint:
+			out = append(out, strconv.FormatUint(uint64(e), 10))
+		case types.Double:
+			out = append(out, strconv.FormatFloat(float64(e), 'f', -1, 64))
+		default:
+			return nil, fmt.Errorf("%s: args element %d is %s: %w", hookArgvName, i, e.Type().TypeName(), ErrHookArgs)
+		}
+	}
+	return out, nil
+}
+
+func mapString(m traits.Mapper, key string) (string, bool) {
+	v, found := m.Find(types.String(key))
+	if !found {
+		return "", false
+	}
+	s, ok := v.(types.String)
+	return string(s), ok
+}
+
+const (
+	hookCommandsName             = "hook.commands"
+	overloadHookCommands         = "hook_commands_dyn"
+	hookArgsName                 = "hook.args"
+	overloadHookArgs             = "hook_args_dyn"
+	hookArgvName                 = "hook.argv"
+	overloadHookArgv             = "hook_argv_dyn"
+	shellRisksName               = "shell.risks"
+	overloadShellRisksString     = "shell_risks_string"
+	overloadShellRisksList       = "shell_risks_list"
+	shellLocationsName           = "shell.locations"
+	overloadShellLocationsString = "shell_locations_string"
+	overloadShellLocationsList   = "shell_locations_list"
+)
+
+// risksList is the list a shell function returns, carrying the work the
+// reader did so shellCost can charge it.
 type risksList struct {
 	traits.Lister
 	work uint64
 }
 
 func newRisksList(r shellcmd.Result) risksList {
-	return risksList{Lister: types.NewStringList(types.DefaultTypeAdapter, r.Risks), work: uint64(r.Work)}
+	return newWorkList(r.Risks, r.Work)
 }
 
-// shellRisksCost charges shell.risks one unit per byte the reader read,
-// at every nesting level it read it: about len × (depth + 1). The
-// reader takes a few nanoseconds a byte, so this is the same rate or
-// slower than the rest of CEL, and the cost limit, not the clock,
-// decides when a long command is too much.
-func shellRisksCost(result ref.Val) *uint64 {
+func newWorkList(items []string, work int) risksList {
+	return risksList{Lister: types.NewStringList(types.DefaultTypeAdapter, items), work: uint64(work)}
+}
+
+// shellCost charges shell.risks and shell.locations one unit per byte
+// the reader read, at every nesting level it read it: about
+// len × (depth + 1). The reader takes a few nanoseconds a byte, so this
+// is the same rate or slower than the rest of CEL, and the cost limit,
+// not the clock, decides when a long command is too much.
+func shellCost(result ref.Val) *uint64 {
 	n := uint64(1)
 	if r, ok := result.(risksList); ok {
 		n += r.work
@@ -201,29 +355,29 @@ func shellRisksCost(result ref.Val) *uint64 {
 	return &n
 }
 
-// costEstimator charges shell.risks by function name: with a dyn
+// costEstimator charges the shell functions by name: with a dyn
 // argument the checker cannot pick one overload, so the call has no
 // overload id an overload tracker could match. Other functions keep
 // the standard costs.
 type costEstimator struct{}
 
 func (costEstimator) CallCost(function, _ string, _ []ref.Val, result ref.Val) *uint64 {
-	if function != shellRisksName {
+	if function != shellRisksName && function != shellLocationsName {
 		return nil
 	}
-	return shellRisksCost(result)
+	return shellCost(result)
 }
 
-func stringList(v ref.Val) ([]string, error) {
+func stringList(function string, v ref.Val) ([]string, error) {
 	list, ok := v.(traits.Lister)
 	if !ok {
-		return nil, errors.New("shell.risks: argument is not a list")
+		return nil, errors.New(function + ": argument is not a list")
 	}
 	var out []string
 	for it := list.Iterator(); it.HasNext() == types.True; {
 		s, ok := it.Next().(types.String)
 		if !ok {
-			return nil, errors.New("shell.risks: list element is not a string")
+			return nil, errors.New(function + ": list element is not a string")
 		}
 		out = append(out, string(s))
 	}

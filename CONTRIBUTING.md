@@ -65,11 +65,12 @@ first true clause is that match's severity, so one permissions object
 can be high and another medium. An item no clause accepts is not a
 match, so `when` holds only what the clauses share and each pattern is
 written once. A policy severity override replaces the per-match
-result.
+result. A clause may also set `title`, which replaces the rule title on
+its findings when the rule title does not say why that match fired.
 
 `when` sees these variables:
 
-- `config`: the config item (`id`, `harness`, `scope`, `path`, `sha256`, `kind`).
+- `config`: the config item (`id`, `harness`, `scope`, `path`, `sha256`, `kind`), `missing_scripts`: on a repository hook, how many project-relative scripts it runs are not in the scanned tree (0 otherwise; see `internal/scriptcheck`), and `script_locations`: the location classes of project scripts whose symlink resolves outside the repository.
 - `payload`: the item's parsed content.
 - `task`: the same as `payload` when `config.kind == "task"`, otherwise empty.
 - `event`: a `tripcord.event/v1` event, for event rules. Every
@@ -85,6 +86,33 @@ fetch piped into Invoke-Expression), `"encoded"` (`powershell
 `"nested"` (payloads nested deeper than it follows). It follows `-c`, `-Command`, and `/c` payloads, `$( )`,
 backticks, and `eval`, and costs one unit per byte it reads at each
 nesting level, so prefer it to long regexes over hook commands.
+
+`shell.locations(command)` reads the line the same way and returns
+where the programs it runs live: the program of each simple command,
+and the script an interpreter is given (`bash x.sh`, `python x.py`,
+`node x.js`, `pwsh -File x.ps1`, `source x`). The classes are
+`"network"` (a non-loopback URL or a UNC share), `"home"` (`~`,
+`$HOME`, `%USERPROFILE%`, `/home/<user>`, ...), `"temp"` (`/tmp`,
+`$TMPDIR`, `%TEMP%`, ...), `"absolute"` (any other absolute path,
+except a binary without a script extension under a system directory
+such as `/usr/local/bin`), and `"parent"` (`../x.sh`). Relative paths,
+`$CLAUDE_PROJECT_DIR`, `$CLAUDE_PLUGIN_ROOT`, `$GEMINI_PROJECT_DIR`,
+`$CURSOR_PROJECT_DIR`, and `$PWD` are the project directory; other
+variables, substitutions, and programs on `PATH` have no location.
+Arguments are not read, so `cat ~/.ssh/config` is not a home program.
+It costs what `shell.risks` costs.
+
+`hook.commands(payload)` returns the string values of a hook's command
+fields (`command`, `exec`, `bash`, `powershell`, `commandWindows`,
+`command_windows`, `windows`, `linux`, `osx`), skipping missing and
+non-string ones. `hook.argv(payload)` returns `[exec or command] +
+args`, with number and bool args as their text, and `[]` when there are
+no `args`. When `args` is not a list or holds an object, list, or null,
+it is an evaluation error ("hook args are not strings, numbers, or
+bools"), not an empty argv, so the scan reports that rule and file as
+incomplete and exits 3 instead of passing over the hook. Use them
+instead of restating the field list in every clause: a long expression
+is parsed again on every scan.
 
 Reading a field that is missing makes the whole expression false, not
 an error. That fails open for negations and deny rules:
@@ -153,6 +181,17 @@ one fixture. A fixture is either of:
 A positive and a negative both fail when no discovered item is inside
 the rule's harness and file globs. A negative that only holds an
 out-of-scope file would otherwise pass without testing `when`.
+
+`rules/<ID>.test/expect.yaml` says what each fixture must produce, keyed
+by its directory or file name. A positive lists the distinct severities
+of its matches (`curl-pipe: high`, `two-hooks: [high, medium]`); a rule
+with `severity_when` needs an entry for every positive, and a positive
+of any other rule must match at the rule's severity. A negative may be
+marked `error`: the rule must fail to evaluate it, as for a hook whose
+`args` hold an object. An entry for a fixture that does not exist
+fails. `TestSeverityClausesAreCovered` disables each `severity_when`
+clause in turn and fails when the fixtures still pass, so every clause
+needs a fixture whose severity it decides.
 
 Fixture configs use `.invalid` or `example` hosts and placeholder
 secrets only.

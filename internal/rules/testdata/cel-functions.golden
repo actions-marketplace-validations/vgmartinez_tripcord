@@ -38,6 +38,9 @@ getMilliseconds
 getMinutes
 getMonth
 getSeconds
+hook.args
+hook.argv
+hook.commands
 in
 indexOf
 int
@@ -47,6 +50,7 @@ lowerAscii
 matches
 replace
 reverse
+shell.locations
 shell.risks
 size
 split
