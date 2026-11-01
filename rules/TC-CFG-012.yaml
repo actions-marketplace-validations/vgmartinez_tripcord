@@ -1,0 +1,69 @@
+# An instructions file can tell the agent to read the environment, a
+# dotenv file, or credentials, or to send that data to an outbound sink.
+# The model follows the file. This is a heuristic over the text, not a
+# proof that a session did either thing.
+#
+# Read, in repository scope, the same paths as TC-CFG-011:
+# AGENTS.md, CLAUDE.md, and CLAUDE.local.md at any depth,
+# .claude/rules/**/*.md, .windsurfrules, .cursorrules,
+# .github/copilot-instructions.md, .github/instructions/**/*.md,
+# .github/agents/**/*.agent.md, and .cursor/rules/**/*.md(c), plus
+# repository SKILL.md files that the Claude and generic adapters emit,
+# .claude/commands/**/*.md, .claude/agents/**/*.md, and
+# .windsurf/rules/**/*.md. AGENTS.local.md and GEMINI.local.md are not
+# included because no repository adapter emits them.
+# The match is on the raw whole file, including frontmatter. The raw view
+# is evaluation-only; findings contain only the line number, never text.
+#
+# A line matches when a verb follows optional Markdown (#, >, <!--,
+# bullet, number, or **) and an optional prefix (please, always, first, you
+# must/should, make sure to), and then directly names a secret target.
+# The read verbs are read, cat, cp, copy, open,
+# load, source, print, dump, collect, extract, show, curl, wget, type,
+# and Get-Content. The targets are .env (also .env.local,
+# .env.development, .env.production, .env.prod, and .env.dev),
+# printenv, process.env, os.environ, "environment variables",
+# credentials, secret(s), api key, token, password, private key,
+# ~/.aws, ~/.ssh, id_rsa, and AWS_*/GITHUB_TOKEN-style environment
+# variables. .env.example, .env.sample, .env.template, and .envrc do
+# not count.
+# Between the verb and target, only curl/wget flags, one URL, one or
+# more determiners (the/all/your/any/every/each/its/their/those and the
+# rest), "contents/values of", and one quote, backtick, @, or
+# PowerShell $env: prefix are allowed. curl and wget also match when a
+# secret appears anywhere later in the same clause, so a flag value
+# such as "-d @.env" still counts. Authorization and user flags
+# (-H/--header, -u/--user, --oauth2-bearer) and plain http(s) URLs are
+# ignored. A URL containing $( or a backtick is kept, so $(cat .env)
+# inside it still counts. Documentation modifiers after the
+# target, singular or plural (for example "token budgets", "API key
+# policies", or "credentials section"), do not count.
+#
+# A line also matches when it begins with send, post, upload,
+# exfiltrate, transmit, or forward and, on that same line, both names a
+# secret and an outbound sink: an http(s) URL, webhook, curl/wget with
+# -d/--data/-F/POST, gist, pastebin, Slack, Discord, or "... to".
+# A repository skill, or a Claude-emitted agent or command, is in scope
+# even when it lives below a plugin root outside the usual path set.
+#
+# Medium: the wording is ordinary setup prose as often as it is an
+# exfiltration instruction, and scan mode cannot see whether a session
+# followed it. It is reported for review without failing a scan at the
+# default fail-on (high).
+id: TC-CFG-012
+pack: tripcord/core
+title: "Agent instructions ask to read secrets or send them out"
+severity: medium
+evidence: instruction_match
+harness: [claude, copilot, cursor, gemini, windsurf, generic]
+files: ["**"]
+when: |
+  config.kind in ["instructions", "skill"] && config.scope == "repo" &&
+    has(payload.content) && type(payload.content) == string &&
+    (config.kind == "skill" || (has(payload.role) && payload.role in ["agent", "command"]) ||
+      config.path.matches(r'''(?i)((^|/)(AGENTS|CLAUDE(\.local)?)\.md|(^|/)GEMINI\.md|(^|/)\.claude/rules/.+\.md|(^|/)\.claude/(commands|agents)/.+\.md|(^|/)\.claude/skills/.+/SKILL\.md|(^|/)\.agents/skills/.+/SKILL\.md|(^|/)\.github/skills/.+/SKILL\.md|(^|/)\.windsurfrules|^\.cursorrules|^\.github/copilot-instructions\.md|^\.github/instructions/.+\.md|^\.github/agents/.+\.agent\.md|(^|/)\.cursor/rules/.+\.mdc?|(^|/)\.windsurf/rules/.+\.md)$''')) &&
+    instruction.first_match_line(payload.content) > 0
+fix: "Delete the instruction that reads the environment, a dotenv file, or credentials, or that sends them to an outbound sink. Keep notes that only name .env.example or tell the agent not to reveal secrets. To accept a reviewed file, add a policy exception for this rule and file."
+refs:
+  - https://novee.security/blog/breaking-ai-agent-sandboxes/
+  - https://fidelius.blisslabs.dev/research/ai-coding-agents-api-keys-env/

@@ -142,8 +142,9 @@ func TestScanConfigCorporaNeverLeak(t *testing.T) {
 }
 
 // configLeakFixtureTrees is deliberately fixed to bound the five-format
-// corpus scan. The selection has one positive per new rule and retains the
-// raw-view canaries: a URL secret (009) and hidden bidi text (011).
+// corpus scan. The selection has one positive per rule through TC-CFG-011
+// and retains the raw-view canaries: a URL secret (009) and hidden bidi
+// text (011). TC-CFG-012 has its own focused per-format leak test.
 var configLeakFixtureTrees = []string{
 	"TC-CFG-009.test/positivos/cursor-install-curl-pipe",
 	"TC-CFG-010.test/positivos/claude-enabled-plugins",
