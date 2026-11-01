@@ -1,16 +1,16 @@
 # tripcord
 
-Scan the configuration coding agents will run: hooks, skills, MCP servers, and setup commands.
+Catch malicious coding-agent configuration before it runs: hooks, MCP servers, skills, and setup commands in Claude Code, Cursor, Copilot, Codex, Gemini CLI, and more.
 
 [![CI](https://github.com/vgmartinez/tripcord/actions/workflows/ci.yml/badge.svg)](https://github.com/vgmartinez/tripcord/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go 1.27.3](https://img.shields.io/badge/Go-1.27.3-00ADD8?logo=go&logoColor=white)](go.mod)
 
-Coding agents read repository configuration, hooks, skills, and MCP servers that can run code or leak secrets. tripcord scans that configuration locally, before a session starts, and reports the rules in the built-in pack. It does not start an agent, execute a hook, or contact a network service to do the scan.
+Opening a repository in a coding agent can run code: a SessionStart hook, a folder-open task, an MCP server launched through a shell, or a setup step that pipes curl to sh. tripcord reads that configuration statically, without running the agent, a hook, or a network call, and reports what would run.
 
 ## Quick start
 
-There is no published release and no installable GitHub Action. Build the `github.com/vgmartinez/tripcord/cmd/tripcord` package from a checkout (`go list -m` prints `github.com/vgmartinez/tripcord`):
+tripcord has no published release yet. Build it from source with Go 1.27.3:
 
 ```sh
 git clone https://github.com/vgmartinez/tripcord.git
@@ -18,22 +18,21 @@ cd tripcord
 CGO_ENABLED=0 go build -trimpath -o tripcord ./cmd/tripcord
 ```
 
-Go 1.27.3, from `go.mod`. `make build` writes the same binary to `bin/tripcord` and sets `main.version` with `-ldflags`.
-
-`tripcord scan PATH` scans the Git repository that contains `PATH`, or `PATH` itself when it is not inside a checkout. The example below uses a temporary directory so the scan stays on the two fixture files:
+`tripcord scan PATH` scans the Git repository that contains `PATH`, or `PATH` itself when it is not inside a checkout. From that checkout, this scans two fixtures in a temporary directory:
 
 ```sh
+bin="$PWD/tripcord"
 sample=$(mktemp -d)
 mkdir -p "$sample/.vscode" "$sample/.github/workflows"
-cp rules/TC-CFG-002.test/positivos/worm-folderopen-curl/.vscode/tasks.json "$sample/.vscode/"
+cp rules/TC-CFG-002.test/positivos/folderopen-local-script/.vscode/tasks.json "$sample/.vscode/"
 cp rules/TC-CFG-009.test/positivos/copilot-curl-pipe-sh/.github/workflows/copilot-setup-steps.yml "$sample/.github/workflows/"
-(cd "$sample" && tripcord scan .)
+(cd "$sample" && "$bin" scan .)
 ```
 
 That command exits 1. This is the output, captured from that run:
 
 ```text
-HIGH TC-CFG-002 .vscode/tasks.json: VS Code task that runs when the folder opens (also Cursor and Windsurf) | fix: Remove runOn: folderOpen or move the task to an explicit script. Cursor and Windsurf open this same .vscode/tasks.json. | fingerprint: tcf_7e258b7758d88b5c
+HIGH TC-CFG-002 .vscode/tasks.json: VS Code task that runs when the folder opens (also Cursor and Windsurf) | fix: Remove runOn: folderOpen or move the task to an explicit script. Cursor and Windsurf open this same .vscode/tasks.json. | fingerprint: tcf_22bc80b217a42306
 HIGH TC-CFG-009 .github/workflows/copilot-setup-steps.yml: Environment setup runs code fetched from an unpinned source | fix: Commit the setup script to the repository and run it from there, or pin what it downloads: fetch an https URL that names a commit, or download to a file and check its SHA-256 (sha256sum -c) before running it, with && so a mismatch stops setup. | fingerprint: tcf_529866e0be350750
 2 finding(s): 0 critical, 2 high, 0 medium, 0 low
 ```
@@ -91,7 +90,7 @@ tripcord scan [PATH] [flags]
 
 `version` prints the link-time version, or `dev` when it was not set. `scan --help` prints the flags below.
 
-`preopen`, `pr-context`, and `hook` are policy surface names. They are not commands. `tripcord preopen` exits 3 with `unknown command`. There is no `action.yml` in this repository. The [CI](#ci) example builds the scanner in the workflow.
+`preopen`, `pr-context`, `hook`, and a GitHub Action are planned; today the CLI implements `scan`.
 
 ### `tripcord scan`
 
@@ -100,7 +99,7 @@ tripcord scan [PATH] [flags]
 | Flag | Meaning |
 | --- | --- |
 | `--config` | Scan configuration. This is what a scan does when the flag is omitted. |
-| `--secrets`, `--all` | Accepted by the flag parser and not available. Either one stops before scanning and exits 3 (`secret scanning lands in v1; v0 supports --config only`). |
+| `--secrets`, `--all` | Reserved for secret scanning (planned). Currently exits 3. |
 | `--harness` | Comma-separated adapter ids from the table above. Empty means autodetect. |
 | `--scope repo\|user\|managed\|all` | `repo` (default) does not read the home directory or system settings. `user` and `managed` read those locations and skip the repository. `all` reads every scope. |
 | `--format text\|json\|jsonl\|sarif\|md\|gha` | Default `text`. `json` and `jsonl` both write one `tripcord.finding/v1` document per line. `sarif` is SARIF 2.1.0. `md` is Markdown. `gha` is GitHub Actions workflow commands. Help text lists `text`, `json`, `sarif`, `md`, and `gha`; `jsonl` is accepted as well. |
@@ -136,13 +135,15 @@ mode: audit
 fail-on: critical    # low | medium | high | critical
 ```
 
-`mode` is `enforce`, `warn`, or `audit`. On the sample above, this file makes `tripcord scan . --policy /path/to/policy.yaml` print the same two findings and exit 0. Layers, locks, and exceptions are in [docs/policy.md](docs/policy.md).
+`mode` is `enforce`, `warn`, or `audit`. On the sample above, the same binary with `--policy` pointing at this file prints the same two findings and exits 0. Layers, locks, and exceptions are in [docs/policy.md](docs/policy.md).
 
 ## CI
 
-There is no published Action. This workflow checks out the repository to scan and this repository, builds `./cmd/tripcord`, writes SARIF, and uploads it. Actions are pinned by commit. `ref: main` is the default branch of this repository; no release tag exists to pin instead. The checkout of `vgmartinez/tripcord` needs access to that repository.
+There is no published Action. This workflow checks out the repository to scan and this repository, builds `./cmd/tripcord`, writes SARIF, and uploads it. Actions are pinned by commit. `ref: main` is the default branch of this repository; no release tag exists to pin instead.
 
-A high finding makes `scan` exit 1, which fails the job. The upload step still runs. Code scanning has to be enabled on the repository that receives the SARIF.
+While tripcord is private, store a fine-grained token with read access to `vgmartinez/tripcord` contents as the `TRIPCORD_READ_TOKEN` secret. Remove the `token:` line once the repository is public.
+
+A high finding makes `scan` exit 1, which fails the job. The upload step still runs. Uploading SARIF on a private repository requires GitHub Code Security.
 
 ```yaml
 name: tripcord
@@ -168,6 +169,7 @@ jobs:
           repository: vgmartinez/tripcord
           ref: main
           persist-credentials: false
+          token: ${{ secrets.TRIPCORD_READ_TOKEN }}
           path: tripcord
 
       - name: Setup Go
@@ -182,7 +184,7 @@ jobs:
 
       - name: Scan
         working-directory: target
-        run: "$RUNNER_TEMP/tripcord" scan . --format sarif --output "$RUNNER_TEMP/tripcord.sarif"
+        run: '"$RUNNER_TEMP/tripcord" scan . --format sarif --output "$RUNNER_TEMP/tripcord.sarif"'
 
       - name: Upload SARIF
         if: always() && !cancelled()
@@ -195,13 +197,10 @@ jobs:
 
 ## How it works
 
-The scan is local. Adapters read configuration files and normalize them. They do not start the agent, run a hook or lifecycle command, start an MCP server, or call a network service. `--since` runs Git with repository hooks, fsmonitor, textconv, and external diff drivers disabled, and with Git's network transports denied (`protocol.allow=never`).
-
-Rule conditions are CEL. Each evaluation has a fixed cost limit, so the result does not depend on how busy the machine is. A rule that cannot be evaluated becomes a diagnostic and exit 3, and the rest of the scan is still reported.
-
-Findings are built from a sanitized copy of each entry: URL userinfo, queries, and fragments are stripped, and credential-shaped values are redacted. Text output names the rule, path, title, fix, and fingerprint. It does not print the command. Sinks redact again before display. See [docs/scan.md](docs/scan.md) and [docs/output.md](docs/output.md).
-
-A fingerprint (`tcf_` plus 16 hex characters) is a stable id of the rule, location, and evidence. Line numbers are not part of the digest. When redaction removed a secret, the evidence key carries a keyed HMAC (`k1`) if `TRIPCORD_FINGERPRINT_KEY` or `~/.tripcord/fingerprint.key` is available, and a structural discriminator (`s1`) that does not hash the secret otherwise. A local scan creates that file, mode `0600`, on first use. A scan that sees a CI environment variable does not create it. A key that is present and unusable fails the scan with exit 3. The key is never printed. See [docs/fingerprint.md](docs/fingerprint.md).
+- The scan is local: adapters read configuration files and do not start the agent, run a hook, or make a network call, and `--since` denies Git's network transports ([docs/scan.md](docs/scan.md)).
+- Rules are CEL with a fixed budget, so a busy machine does not change the result ([docs/scan.md](docs/scan.md)).
+- Findings are built from sanitized text, and sinks redact again before display ([docs/output.md](docs/output.md)).
+- Fingerprints are stable ids for triage; findings that involved a redacted secret use a per-machine key ([docs/fingerprint.md](docs/fingerprint.md)).
 
 ## Roadmap
 
@@ -212,7 +211,7 @@ Planned. None of these are in this build:
 - Local forensics and blast radius.
 - Import from cloud agents.
 
-`preopen`, `pr-context`, `hook`, and a published GitHub Action are the same kind of follow-up: the policy package knows the surface names, and the CLI implements `scan`.
+`preopen`, `pr-context`, `hook`, and a GitHub Action are planned; today the CLI implements `scan`.
 
 ## Contributing
 
