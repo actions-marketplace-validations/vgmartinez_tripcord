@@ -2,6 +2,8 @@
 
 Tripcord has no hosted service.
 
+Private vulnerability reporting is available once the repository is public and an administrator enables it. Until then, contact a maintainer directly and do not open a public issue.
+
 ## Reporting a vulnerability
 
 Report vulnerabilities in Tripcord through GitHub private vulnerability
