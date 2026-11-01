@@ -288,8 +288,12 @@ func TestScanScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	setHome(t, home)
+	// This test asserts a silent user-scope scan. A runner may export
+	// XDG_CONFIG_HOME outside the temporary home, which is an
+	// informational note on stderr (it does not fail the scan).
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
 
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"scan", "--scope", "user", "--format", "text", root}, &stdout, &stderr); code != int(exitcode.OK) || stderr.Len() != 0 {
@@ -314,8 +318,7 @@ func TestScanScope(t *testing.T) {
 // other diagnostic in this codebase redacts it (see pathx.TildeHome).
 func TestScanErrorsRedactHomeDirectory(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	setHome(t, home)
 	repo := outsideGit(t)
 
 	cases := []struct {
@@ -393,6 +396,19 @@ func TestHomeOverrideOutsideHomeFailsScan(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
+		{"gemini", "GEMINI_CLI_HOME", func(dir string) {
+			if err := os.MkdirAll(filepath.Join(dir, ".gemini"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, ".gemini", "settings.json"), []byte(`{"mcpServers":{"a":{"command":"x"}}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"opencode", "OPENCODE_CONFIG_DIR", func(dir string) {
+			if err := os.WriteFile(filepath.Join(dir, "opencode.json"), []byte(`{"plugin":["p"]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.harness, func(t *testing.T) {
@@ -403,8 +419,7 @@ func TestHomeOverrideOutsideHomeFailsScan(t *testing.T) {
 			home := t.TempDir()
 			outside := t.TempDir()
 			tc.setup(outside)
-			t.Setenv("HOME", home)
-			t.Setenv("USERPROFILE", home)
+			setHome(t, home)
 			t.Setenv(tc.envName, outside)
 
 			var stdout, stderr bytes.Buffer
@@ -419,6 +434,58 @@ func TestHomeOverrideOutsideHomeFailsScan(t *testing.T) {
 	}
 }
 
+// TestXDGOutsideHomeDoesNotFailScan is the user-scope repro: with no
+// OpenCode configuration installed, XDG_CONFIG_HOME or XDG_DATA_HOME
+// pointing outside home must not make `tripcord scan --scope user` exit
+// non-zero. The override is still reported, as an informational note.
+func TestXDGOutsideHomeDoesNotFailScan(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME"} {
+		t.Run(name, func(t *testing.T) {
+			setHome(t, home)
+			t.Setenv("XDG_CONFIG_HOME", "")
+			t.Setenv("XDG_DATA_HOME", "")
+			t.Setenv(name, t.TempDir())
+			var stdout, stderr bytes.Buffer
+			code := run([]string{"scan", "--scope", "user", "--format", "text", root}, &stdout, &stderr)
+			if code != int(exitcode.OK) {
+				t.Fatalf("exit %d stderr %q", code, stderr.String())
+			}
+			msg := stderr.String()
+			if !strings.Contains(msg, name+" is outside the home directory") || strings.Contains(msg, "incomplete") {
+				t.Fatalf("stderr = %q", msg)
+			}
+		})
+	}
+}
+
+// TestRelativeXDGUsesDefault checks the freedesktop rule: a relative
+// XDG base directory is invalid and ignored, and the default under home
+// is scanned, with no diagnostic.
+func TestRelativeXDGUsesDefault(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	setHome(t, home)
+	t.Setenv("XDG_CONFIG_HOME", "rel")
+	t.Setenv("XDG_DATA_HOME", "rel")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"scan", "--scope", "user", "--format", "text", root}, &stdout, &stderr)
+	if code != int(exitcode.OK) {
+		t.Fatalf("exit %d stderr %q", code, stderr.String())
+	}
+	msg := stderr.String()
+	if strings.Contains(msg, "not an absolute path") || strings.Contains(msg, "incomplete") || strings.Contains(msg, "XDG_") {
+		t.Fatalf("stderr = %q", msg)
+	}
+}
+
 func TestLegacyNoteDoesNotFailScan(t *testing.T) {
 	legacy := t.TempDir()
 	restore := claude.SetLegacyManagedDirForTest(legacy)
@@ -428,8 +495,7 @@ func TestLegacyNoteDoesNotFailScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	setHome(t, home)
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"scan", "--scope", "managed", "--format", "json", root}, &stdout, &stderr)
 	if code != int(exitcode.OK) {
@@ -481,6 +547,97 @@ func TestScanDedupesEscapingSymlinkAcrossAdapters(t *testing.T) {
 	}
 	if !strings.Contains(msg, "codex: .codex/skills") {
 		t.Fatalf("stderr = %q, want the kept report to name codex, the actual owner of .codex/skills", msg)
+	}
+}
+
+func TestScanEscapingSymlinkReportedOnceByNewOwners(t *testing.T) {
+	cases := map[string]struct{ dir, owner string }{
+		"opencode agents":  {".opencode/agents", "opencode: .opencode/agents"},
+		"windsurf rules":   {".windsurf/rules", "windsurf: .windsurf/rules"},
+		"gemini dir":       {".gemini", "gemini: .gemini"},
+		"devcontainer dir": {".devcontainer", "devcontainer: .devcontainer"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := outsideGit(t)
+			link := filepath.Join(root, filepath.FromSlash(tc.dir))
+			if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(t.TempDir(), link); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			var stdout, stderr bytes.Buffer
+			if code := run([]string{"scan", "--scope", "repo", root}, &stdout, &stderr); code != int(exitcode.Config) {
+				t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+			}
+			msg := stderr.String()
+			if n := strings.Count(msg, "symlink resolves outside"); n != 1 || !strings.Contains(msg, tc.owner) {
+				t.Fatalf("stderr = %q, want one report by %q", msg, tc.owner)
+			}
+		})
+	}
+}
+
+func TestScanGeminiOpenCodeWindsurfDevcontainer(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		".gemini/settings.json":           `{"mcpServers":{"a":{"command":"x"}}}`,
+		"opencode.jsonc":                  `{"plugin":["p",],}`,
+		".windsurf/hooks.json":            `{"hooks":{"pre_run_command":[{"command":"x"}]}}`,
+		".devcontainer/devcontainer.json": `{"postCreateCommand":"x"}`,
+		"AGENTS.md":                       "x\n",
+	}
+	for rel, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		harness string
+		implied []string
+	}{
+		{"gemini", []string{"generic: also scanned"}},
+		{"opencode", []string{"claude: also scanned", "generic: also scanned"}},
+		{"windsurf", []string{"generic: also scanned"}},
+		{"devcontainer", nil},
+	}
+	for _, tc := range cases {
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{"scan", "--harness", tc.harness, root}, &stdout, &stderr); code != int(exitcode.OK) {
+			t.Fatalf("%s exit %d stderr %q", tc.harness, code, stderr.String())
+		}
+		for _, want := range tc.implied {
+			if !strings.Contains(stderr.String(), want) {
+				t.Fatalf("%s stderr = %q, want %q", tc.harness, stderr.String(), want)
+			}
+		}
+		if tc.implied == nil && strings.Contains(stderr.String(), "also scanned") {
+			t.Fatalf("%s stderr = %q", tc.harness, stderr.String())
+		}
+	}
+}
+
+// setHome points the home directory at home and clears the tool-specific
+// overrides that move one harness's configuration elsewhere. Those stay
+// blocking when they point outside home, so a runner that exports one
+// would fail a user-scope scan. XDG_CONFIG_HOME and XDG_DATA_HOME are
+// not cleared here: a value outside home is informational and does not
+// change the exit code.
+func setHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for _, name := range []string{"OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "GEMINI_CLI_HOME", "CODEX_HOME", "COPILOT_HOME", "CLAUDE_CONFIG_DIR"} {
+		t.Setenv(name, "")
 	}
 }
 
