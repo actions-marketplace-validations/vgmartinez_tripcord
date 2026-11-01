@@ -1,7 +1,8 @@
 # Contributing
 
-This repository is a private pre-release. The license is Apache-2.0
-([LICENSE](LICENSE)).
+The license is Apache-2.0 ([LICENSE](LICENSE)). Using the scanner is in
+the [README](README.md). Package layout, link-time version, and Make
+targets are in [docs/development.md](docs/development.md).
 
 ## Developer Certificate of Origin
 
