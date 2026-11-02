@@ -20,6 +20,7 @@ import (
 	"github.com/vgmartinez/tripcord/internal/adapters/copilot"
 	"github.com/vgmartinez/tripcord/internal/adapters/cursor"
 	"github.com/vgmartinez/tripcord/internal/adapters/devcontainer"
+	"github.com/vgmartinez/tripcord/internal/adapters/devin"
 	"github.com/vgmartinez/tripcord/internal/adapters/gemini"
 	"github.com/vgmartinez/tripcord/internal/adapters/generic"
 	"github.com/vgmartinez/tripcord/internal/adapters/kit/kittest"
@@ -44,6 +45,7 @@ var fixtureRepos = []string{
 	"../opencode/testdata/repo",
 	"../windsurf/testdata/repo",
 	"../devcontainer/testdata/repo",
+	"../devin/testdata/repo",
 }
 
 // secrets are values planted in the fixtures and in userConfig that no
@@ -56,6 +58,7 @@ var secrets = []string{
 	"oc-key-111", "oc-tok-222", "oc-q-333", "oc-bearer-444", "oc-q-555", "oc-code-000", "AUTHSECRET",
 	"ws-tok-111", "ws-q-222", "ws-key-333", "ws-q-444",
 	"dc-dock-111", "dc-tok-222", "dc-q-333", "dc-env-444", "dc-run-555", "dc-arg-666",
+	"devin-tok-111", "devin-tok-222",
 }
 
 func mergedRepo(t *testing.T) string {
@@ -121,6 +124,7 @@ func allAdaptersWithKey(home string, user bool, k *fpkey.Key) []adapters.Adapter
 		gemini.New(gemini.Options{IncludeUser: user, HomeDir: home, Getenv: kittest.Env(), FingerprintKey: k}),
 		opencode.New(opencode.Options{IncludeUser: user, HomeDir: home, Getenv: kittest.Env(), FingerprintKey: k}),
 		windsurf.New(windsurf.Options{IncludeUser: user, HomeDir: home, Getenv: kittest.Env(), FingerprintKey: k}),
+		devin.New(devin.Options{FingerprintKey: k}),
 		devcontainer.New(devcontainer.Options{FingerprintKey: k}),
 	}
 }
@@ -185,6 +189,7 @@ func TestEachFileHasOneOwner(t *testing.T) {
 		"repo:.windsurf/global_rules.md":       model.HarnessWindsurf,
 		"repo:.windsurf/rules/style.md":        model.HarnessWindsurf,
 		"repo:.windsurfrules":                  model.HarnessWindsurf,
+		"repo:.devin/blueprint.yaml":           model.HarnessDevin,
 		"repo:.devcontainer/devcontainer.json": model.SurfaceDevcontainer,
 		"repo:.devcontainer.json":              model.SurfaceDevcontainer,
 	}
