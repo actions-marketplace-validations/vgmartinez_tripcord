@@ -22,8 +22,8 @@ type file struct {
 	// repository root, must fail closed instead of being credited
 	// against the wrong directory. See command.
 	elsewhere bool
-	// cdSeen is set once a command has run a bare cd or pushd outside a
-	// subshell: see hasBareCD. Devin runs initialize then maintenance
+	// cdSeen is set once a command has an ambiguous shell-state word
+	// outside a subshell: see hasShellState. Devin runs initialize then maintenance
 	// as build steps, and a plain blueprint.yaml gives no reason to
 	// think either resets the working directory the other left behind,
 	// so a bare cd also carries from initialize into maintenance, and
@@ -206,21 +206,36 @@ func (f *file) workingDirectory(command string) (string, bool) {
 // change there is confined to a subshell. A function definition is also
 // stateful: its body might later run cd, and static scanning cannot prove
 // when that happens.
+//
+// A standalone "." fails closed anywhere in a simple command, because it
+// is the source builtin unless the context proves it is a directory
+// argument. "./build.sh" and "FOO=./x" are not standalone dots. A dot is
+// safe only immediately after a non-prefix option, or when the effective
+// command (after its prefixes, options, and leading assignments) is in
+// directoryArgumentCommands. The list is intentionally explicit: these
+// common tools accept a directory operand and do not change this shell's
+// directory. All other commands, including shell syntax we do not model,
+// keep the fail-closed result.
 func hasShellState(command string) bool {
 	depth := 0
 	var quote byte
 	var word []byte
+	var words []string
 	flush := func() bool {
 		if len(word) == 0 {
 			return false
 		}
-		defer func() { word = word[:0] }()
-		switch string(word) {
-		case "cd", "pushd", "popd", "eval", "source", ".", "exec", "function":
-			return true
-		default:
-			return false
+		text := string(word)
+		word = word[:0]
+		if text == "." {
+			return !safeDotArgument(words)
 		}
+		switch text {
+		case "cd", "pushd", "popd", "source", "function", "eval", "exec":
+			return true
+		}
+		words = append(words, text)
+		return false
 	}
 	for i := 0; i < len(command); i++ {
 		c := command[i]
@@ -257,19 +272,147 @@ func hasShellState(command string) bool {
 			if depth > 0 {
 				depth--
 			}
+		case depth == 0 && c == '/' && len(word) > 0 && word[0] == '.':
+			word = append(word, '/')
 		case depth == 0 && isShellWord(c):
+			word = append(word, c)
+		case depth == 0 && continuesAssignment(word, c):
 			word = append(word, c)
 		case depth == 0:
 			if flush() {
 				return true
+			}
+			if c == ';' || c == '&' || c == '|' || c == '\n' || c == '{' || c == '}' || c == '!' {
+				words = words[:0]
 			}
 		}
 	}
 	return flush()
 }
 
+// safeDotArgument reports whether "." is provably a directory argument
+// instead of source. Prefix options (for time, command, env, and so on)
+// do not count as an option immediately before dot: their effective
+// command would be ".", which must fail closed.
+func safeDotArgument(words []string) bool {
+	if len(words) > 0 && strings.HasPrefix(words[len(words)-1], "-") && !prefixOption(words) {
+		return true
+	}
+	return directoryArgumentCommands[effectiveCommand(words)]
+}
+
+// effectiveCommand skips leading assignments, prefixes, and their options
+// to identify the command a simple command ultimately runs.
+func effectiveCommand(words []string) string {
+	for len(words) > 0 && isShellAssignment(words[0]) {
+		words = words[1:]
+	}
+	for len(words) > 0 && isShellPrefix(words[0]) {
+		words = words[1:]
+		for len(words) > 0 && strings.HasPrefix(words[0], "-") {
+			words = words[1:]
+		}
+	}
+	if len(words) == 0 {
+		return ""
+	}
+	return words[0]
+}
+
+// prefixOption reports whether the final word is an option belonging to a
+// prefix rather than an option to the effective command.
+func prefixOption(words []string) bool {
+	if len(words) == 0 || !strings.HasPrefix(words[len(words)-1], "-") {
+		return false
+	}
+	words = words[:len(words)-1]
+	for len(words) > 0 && isShellAssignment(words[0]) {
+		words = words[1:]
+	}
+	for len(words) > 0 && isShellPrefix(words[0]) {
+		words = words[1:]
+		for len(words) > 0 && strings.HasPrefix(words[0], "-") {
+			words = words[1:]
+		}
+		if len(words) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func isShellPrefix(word string) bool {
+	switch word {
+	case "time", "command", "env", "nohup", "builtin", "sudo":
+		return true
+	default:
+		return false
+	}
+}
+
+var directoryArgumentCommands = map[string]bool{
+	"ls":     true,
+	"cp":     true,
+	"mv":     true,
+	"find":   true,
+	"make":   true,
+	"git":    true,
+	"rsync":  true,
+	"tar":    true,
+	"docker": true,
+	"podman": true,
+	"npm":    true,
+	"pnpm":   true,
+	"yarn":   true,
+	"go":     true,
+	"cargo":  true,
+	"pip":    true,
+	"uv":     true,
+	"chmod":  true,
+	"chown":  true,
+	"mkdir":  true,
+	"du":     true,
+	"grep":   true,
+	"rg":     true,
+}
+
+// isShellAssignment reports whether word is a leading NAME=value shell
+// assignment. The value may be empty. Anything after the first "=" is
+// the value, so the name is only the characters before it.
+func isShellAssignment(word string) bool {
+	name, _, ok := strings.Cut(word, "=")
+	if !ok || name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// continuesAssignment reports whether c is still part of an assignment
+// value. "=" joins the name via isShellWord; a slash or similar character
+// would otherwise end the word and look like the command.
+func continuesAssignment(word []byte, c byte) bool {
+	if !isShellAssignment(string(word)) {
+		return false
+	}
+	switch c {
+	case ' ', '\t', '\n', '\r', ';', '&', '|', '(', ')', '{', '}', '<', '>':
+		return false
+	default:
+		return true
+	}
+}
+
 func isShellWord(c byte) bool {
-	return c == '_' || c == '-' || c == '.' ||
+	return c == '_' || c == '-' || c == '.' || c == '=' ||
 		c >= 'a' && c <= 'z' ||
 		c >= 'A' && c <= 'Z' ||
 		c >= '0' && c <= '9'
