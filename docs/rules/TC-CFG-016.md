@@ -229,7 +229,7 @@ reported.
   `bootstrap.sh` and `embed.json` consistently, is only reported with
   `--since` or `--base`. A `--staged` pre-commit scan has no base.
 - The hook `init --embed` wires runs `tripcord hook`, which is not in
-  this build (hook mode is the next change; see
+  this build (hook mode is coming in v0; see
   [init.md](../init.md)). The `disableAllHooks` finding stands on its
   own merits regardless: it also weakens whatever other hook-based
   checks the harness or its plugins run.
