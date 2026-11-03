@@ -1,8 +1,31 @@
 # Policy defaults
 
 `internal/policy` merges policy layers and picks the mode and fail-on
-for the surface that is about to run. The CLI commands consume that
-result; they are not in this change.
+for the surface that is about to run. `scan`, `preopen`, `pr-context`,
+and the GitHub Action consume that result. The `hook` surface is for
+hook mode, which is coming in v0.
+
+## Files and locations
+
+`.tripcord/policy.yaml` is the repository policy; `tripcord init` writes
+one ([init](init.md#without---embed)). `.tripcord/policy.local.yaml` is
+the per-checkout layer and is not meant to be committed. An organization
+file is read from `/etc/tripcord/policy.yaml` on Linux,
+`/Library/Application Support/Tripcord/policy.yaml` on macOS, and
+`%ProgramData%\Tripcord\policy.yaml` on Windows, and from
+`--org-policy`.
+
+```yaml
+version: 1
+mode: audit
+fail-on: critical    # low | medium | high | critical
+```
+
+`mode` is `enforce`, `warn`, or `audit`. With this file, a scan prints
+its findings and exits 0 ([Getting started](getting-started.md#scan-a-sample)).
+`preopen` ignores the fetched repository's own `.tripcord` policy, and a
+scan with `--base` reads the repository policy from the base revision
+([scan](scan.md#flags)).
 
 ## Surfaces
 
@@ -12,7 +35,7 @@ surfaces are `scan`, `preopen`, `pr-context`, `action`, and `hook`.
 | Surface | Mode | Fail-on |
 | --- | --- | --- |
 | scan, preopen, pr-context, action | `enforce` | `high` |
-| hook | `warn` | `high` |
+| hook (coming in v0) | `warn` | `high` |
 
 A finding blocks the run (exit 1, or a hook block) only when mode is
 `enforce` and the finding's severity is at or above fail-on. `audit`

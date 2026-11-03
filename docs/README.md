@@ -1,82 +1,84 @@
-# Documentation
+# tripcord
 
-Design notes for tripcord.
+tripcord catches malicious coding-agent configuration before it runs:
+hooks, MCP servers, skills, and setup commands in Claude Code, Cursor,
+GitHub Copilot, Codex, Gemini CLI, and more.
 
-## Policy defaults
+The [project wiki](https://github.com/vgmartinez/tripcord/wiki) is
+generated from the repository's
+[`docs/`](https://github.com/vgmartinez/tripcord/tree/main/docs)
+directory by `cmd/wikigen` and pushed by the `wiki-sync` workflow when
+`main` changes; nobody edits the wiki by hand. To change a page, edit the
+matching file under `docs/` and open a pull request.
 
-[policy.md](policy.md) defines the mode and fail-on used when a repo has
-no policy file, and how an explicit policy overrides them. The value
-depends on the surface: scans fail on high, and the hook warns.
+## What it is
 
-## Scan CLI
+Opening a repository in a coding agent can run code: a SessionStart hook,
+a folder-open task, an MCP server launched through a shell, or a setup
+step that pipes curl to sh. tripcord reads that configuration statically,
+without running the agent, a hook, or a network call, and reports what
+would run. It works on a checkout ([`scan`](scan.md)), on a repository you
+have not cloned yet ([`preopen`](preopen.md)), on a pull request in CI
+([`pr-context`](pr-context.md) and the [GitHub Action](github-action.md)),
+and before a commit ([pre-commit](pre-commit.md)).
 
-[scan.md](scan.md) documents `tripcord scan`, its static-only behavior,
-formats, flags, policy interaction, examples, and exit codes.
-[pr-context.md](pr-context.md) documents `tripcord pr-context`, which
-reports whether a pull request looks agent-authored.
-[preopen.md](preopen.md) documents `tripcord preopen`, which fetches a
-repository without running its hooks, filters, LFS, or submodules and then
-scans it.
-[pre-commit.md](pre-commit.md) documents the staged-index pre-commit hook.
-[init.md](init.md) documents `tripcord init`, which writes the policy
-file and, with `--embed`, the pinned bootstrap, the pull request
-workflow, and each harness's hook wiring. Embed is not releasable until
-hook mode lands.
-[github-action.md](github-action.md) documents the local composite action:
-it builds Tripcord from source, publishes annotations, SARIF, and an
-optional pull-request comment, and exposes `pr-context` outputs.
+## Install
 
-## Adapters
+There is no published release, and no npm or PyPI package. Install from
+source with Go 1.27.3 or newer:
 
-[adapters/claude.md](adapters/claude.md) documents the Claude Code
-configuration adapter and its scope boundaries.
-[adapters/codex.md](adapters/codex.md), [adapters/cursor.md](adapters/cursor.md),
-and [adapters/copilot.md](adapters/copilot.md) document the Codex, Cursor,
-and GitHub Copilot adapters.
-[adapters/gemini.md](adapters/gemini.md),
-[adapters/opencode.md](adapters/opencode.md), and
-[adapters/windsurf.md](adapters/windsurf.md) document the Gemini CLI,
-OpenCode, and Windsurf adapters, and
-[adapters/devcontainer.md](adapters/devcontainer.md) the Dev Container
-adapter (`devcontainer`), and
-[adapters/devin.md](adapters/devin.md) the Devin blueprint adapter
-(`devin`).
-[adapters/generic.md](adapters/generic.md) documents the shared-files
-adapter (`generic`) and which adapter owns a file several harnesses read.
+```sh
+go install github.com/vgmartinez/tripcord/cmd/tripcord@main
+```
 
-## Finding fingerprints
+or build a checkout:
 
-[fingerprint.md](fingerprint.md) defines the canonical finding fingerprint.
-The digest is stable across versions. Golden tests lock it. Its "Secret
-discriminator" section covers the keyed (`k1`) and structural (`s1`)
-modes and where the fingerprint key lives.
+```sh
+git clone https://github.com/vgmartinez/tripcord.git
+cd tripcord
+CGO_ENABLED=0 go build -trimpath -o tripcord ./cmd/tripcord
+```
 
-## Release notes
+In GitHub Actions, call the reusable workflow pinned by commit
+([GitHub Action](github-action.md)). It builds tripcord from source too.
 
-[release-notes.md](release-notes.md) lists changes that affect
-fingerprints, baselines, or other stored results.
+## 60-second quickstart
 
-## Output
+1. Scan a repository. Exit 1 means a finding at or above `high`:
 
-[output.md](output.md) defines how sinks display paths, the JSONL UTF-8
-contract, SARIF rule text, and Markdown table cells.
+   ```sh
+   tripcord scan .
+   ```
 
-## Decisions
+2. Write a repository policy (`.tripcord/policy.yaml`) with
+   [`tripcord init`](init.md):
 
-A finding's `decision` is `allow`, `deny`, `warn`, `audit`, or `ask`.
-Policy mode (`enforce`, `warn`, `audit`) is a separate vocabulary.
+   ```sh
+   tripcord init .
+   ```
 
-In hook mode, `ask` maps to the harness's native human-confirmation
-prompt where that harness supports one (Claude Code, Cursor) and
-degrades to `deny` with an explanatory message elsewhere. The mapping
-itself is implemented later, in the hook PR. This package only records
-`ask` as a valid decision.
+   `init --embed` also wires each harness's hooks to a pinned,
+   checksum-verified bootstrap. Its hook mode runs `tripcord hook`,
+   which is coming in v0, so read [Init](init.md) before you embed.
 
-## Repository identity
+3. Run it on every pull request with the
+   [GitHub Action](github-action.md), or before every commit with the
+   [pre-commit hook](pre-commit.md).
 
-The GitHub owner and repository name are defined in one place: `Repository`
-in `internal/project`.
+[Getting started](getting-started.md) walks through a scan with real
+output. [Commands](commands.md) lists every command, flag, and exit code.
 
-The module path in `go.mod` is the import path (`github.com/` plus that
-constant). A test checks that the two stay in sync. To move the project to
-another owner, change those two and leave every other file alone.
+## Pages
+
+- Using tripcord: [Getting started](getting-started.md),
+  [Commands](commands.md), [FAQ and troubleshooting](faq.md).
+- Commands: [`scan`](scan.md), [`init` and `init --embed`](init.md),
+  [`preopen`](preopen.md), [`pr-context`](pr-context.md),
+  [fingerprints](fingerprint.md), [output and sinks](output.md).
+- CI and hooks: [GitHub Action](github-action.md),
+  [pre-commit](pre-commit.md).
+- Configuration: [Policy](policy.md),
+  [Harness adapters](adapters/README.md),
+  [Rules catalog](rules/README.md).
+- Project: [Roadmap](roadmap.md), [Release notes](release-notes.md),
+  [Development](development.md).

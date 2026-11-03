@@ -11,7 +11,7 @@ subdirectory of a Git repository exits 3.
 > **Not releasable yet.** `init --embed` wires each hook-capable harness
 > to run `bash .tripcord/bootstrap.sh hook --harness <h> --event
 > pre-tool`, which runs the verified binary's `tripcord hook`. This
-> build has no `hook` subcommand; hook mode is the next pull request.
+> build has no `hook` subcommand; hook mode is coming in v0.
 > Until it lands, the Claude Code hook blocks every tool call
 > (`onFailure: block`) and the Cursor hook fails closed. Do not cut a
 > release that contains `init --embed` before hook mode. `make
@@ -350,7 +350,7 @@ action at `main@8b33b1b`, which has both. The generated workflow calls
 `tripcord-pr.yml` at `main@6a12795`, and the file there pins the same
 action, so both paths pass. It reads the pinned commits with `git show`,
 so the clone must have them (`fetch-depth: 0`).
-`TestReleaseGateHookSubcommand` still fails until hook mode lands;
+`TestReleaseGateHookSubcommand` still fails until hook mode (coming in v0) lands;
 that failure is the missing `hook` subcommand.
 
 Without the variable both log that the gate was not requested and pass,

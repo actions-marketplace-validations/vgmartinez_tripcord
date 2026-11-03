@@ -1,0 +1,91 @@
+# Renders docs/ into the GitHub Wiki and pushes it. docs/ is the source
+# of truth; nobody edits the wiki by hand. Pull requests only render and
+# link-check the pages (the "wiki render and links" job in ci.yml); this
+# workflow is the only writer, and only from main.
+name: wiki sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "rules/**"
+      - "cmd/wikigen/**"
+      - "internal/wiki/**"
+      - ".github/workflows/wiki-sync.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: wiki-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: render and push the wiki
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the rendered pages to the wiki repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Render the wiki
+        run: go run ./cmd/wikigen -out "$RUNNER_TEMP/wiki"
+
+      - name: Push the wiki
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          wiki_url="https://github.com/${GITHUB_REPOSITORY}.wiki.git"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          # The token reaches git only through this environment, never
+          # through a remote URL or a file in the clone.
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          export GIT_TERMINAL_PROMPT=0
+
+          err="$RUNNER_TEMP/ls-remote.err"
+          if ! refs=$(git ls-remote "$wiki_url" 2>"$err"); then
+            if grep -qiE 'repository not found|not found$|does not appear to be a git repository' "$err"; then
+              echo "::notice title=wiki sync::The wiki repository does not exist. Create the first wiki page on GitHub, then rerun this workflow."
+              exit 0
+            fi
+            cat "$err" >&2
+            exit 1
+          fi
+          if ! grep -q $'\trefs/heads/master$' <<<"$refs"; then
+            echo "::notice title=wiki sync::The wiki repository has no master branch (it is empty). Create the first wiki page on GitHub, then rerun this workflow."
+            exit 0
+          fi
+
+          dest="$RUNNER_TEMP/wiki-repo"
+          git clone --quiet --depth 1 --branch master "$wiki_url" "$dest"
+          git -C "$dest" rm -rq --ignore-unmatch -- .
+          cp -- "$RUNNER_TEMP"/wiki/*.md "$dest"/
+          git -C "$dest" add -A
+          if git -C "$dest" diff --cached --quiet; then
+            echo "::notice title=wiki sync::The wiki already matches docs/ at ${GITHUB_SHA}. Nothing to push."
+            exit 0
+          fi
+          git -C "$dest" diff --cached --stat
+          git -C "$dest" \
+            -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --quiet -m "Sync wiki from ${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+          git -C "$dest" push --quiet origin HEAD:master

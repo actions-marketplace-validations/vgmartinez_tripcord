@@ -184,3 +184,66 @@ permissions:
   security-events: write # upload the SARIF report
 uses: vgmartinez/tripcord/.github/workflows/tripcord-pr-comment.yml@6a1279565e9e41e9dec163e6bedf07f2647a2c67 # main@6a12795
 ```
+
+## Building from source in your own workflow
+
+A repository that does not want to call the reusable workflows can build
+`./cmd/tripcord` itself, write SARIF, and upload it. This workflow checks
+out the repository to scan and this repository, and pins every action by
+commit. `ref: main` builds the default branch of this repository; set it
+to a full commit SHA to pin the scanner as well, since no release tag
+exists to pin instead.
+
+A high finding makes `scan` exit 1, which fails the job. The upload step
+still runs. Uploading SARIF on a private repository requires GitHub Code
+Security.
+
+```yaml
+name: tripcord
+on:
+  pull_request:
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository to scan
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: target
+
+      - name: Checkout tripcord
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: vgmartinez/tripcord
+          ref: main
+          persist-credentials: false
+          path: tripcord
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tripcord/go.mod
+          cache: false
+
+      - name: Build tripcord
+        working-directory: tripcord
+        run: CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/tripcord" ./cmd/tripcord
+
+      - name: Scan
+        working-directory: target
+        run: '"$RUNNER_TEMP/tripcord" scan . --format sarif --output "$RUNNER_TEMP/tripcord.sarif"'
+
+      - name: Upload SARIF
+        if: always() && !cancelled()
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: ${{ runner.temp }}/tripcord.sarif
+```
+
+`actions: read` is what `github/codeql-action/upload-sarif` requires when
+the repository is private.

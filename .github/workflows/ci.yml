@@ -65,6 +65,30 @@ jobs:
           install-mode: binary
           args: --timeout=5m
 
+  # Renders docs/ into wiki pages and checks every link, without pushing.
+  # Only wiki-sync.yml, after a merge to main, writes the wiki.
+  wiki:
+    name: wiki render and links
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Render the wiki
+        run: go run ./cmd/wikigen -out "$RUNNER_TEMP/wiki"
+
+      - name: Link and page tests
+        run: go test ./internal/wiki/... -count=1 -v
+
   fuzz:
     name: fuzz parsers
     runs-on: ubuntu-latest
