@@ -9,7 +9,7 @@ import (
 func TestSeedList(t *testing.T) {
 	t.Parallel()
 	db := loadSeed(t)
-	if db.Count() != 8 || db.LatestReview() != "2026-11-02" {
+	if db.Count() != 10 || db.LatestReview() != "2026-11-03" {
 		t.Fatalf("count %d reviewed %s", db.Count(), db.LatestReview())
 	}
 	hits, err := db.Match([]PackageRef{{
@@ -132,6 +132,32 @@ func TestSeedList(t *testing.T) {
 		Ecosystem: EcoNPM, Name: "figma-developer-mcp", Kind: KindDigest,
 	}}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMCPHubBounds(t *testing.T) {
+	t.Parallel()
+	db := loadSeed(t)
+	// 0.9.10 is the first release that contains 66b6053, which adds the
+	// unguarded passthroughHeaders loop. 0.9.9 is the release before it.
+	// 1.1.8 is the fix and 1.2.0 is a later release.
+	affected := []string{"0.9.10", "0.12.17", "1.0.0", "1.0.46", "1.1.7"}
+	clear := []string{"0.9.9", "1.1.8", "1.2.0"}
+	for _, version := range affected {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoNPM, Name: "@samanhappy/mcphub", Kind: KindExact, Version: version,
+		}})
+		if err != nil || len(hits) != 1 || hits[0].ID != "TCA-2026-0010" {
+			t.Fatalf("%s hits = %+v %v", version, hits, err)
+		}
+	}
+	for _, version := range clear {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoNPM, Name: "@samanhappy/mcphub", Kind: KindExact, Version: version,
+		}})
+		if err != nil || len(hits) != 0 {
+			t.Fatalf("%s hits = %+v %v", version, hits, err)
+		}
 	}
 }
 
