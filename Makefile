@@ -4,7 +4,7 @@
 BINARY := bin/tripcord
 VERSION ?= dev
 
-.PHONY: build test lint fmt test-rule release-gate
+.PHONY: build test lint fmt test-rule release-gate wiki
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$(VERSION)" -o $(BINARY) ./cmd/tripcord
@@ -18,6 +18,11 @@ lint:
 
 fmt:
 	gofmt -s -w .
+
+# wiki renders docs/ into bin/wiki, the pages the wiki-sync workflow pushes.
+wiki:
+	rm -rf bin/wiki
+	go run ./cmd/wikigen -out bin/wiki
 
 # release-gate fails while a feature a release depends on is missing.
 # Today: init --embed wires `tripcord hook`, which this build lacks.
