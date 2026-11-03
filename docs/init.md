@@ -10,12 +10,20 @@ subdirectory of a Git repository exits 3.
 
 > **Not releasable yet.** `init --embed` wires each hook-capable harness
 > to run `bash .tripcord/bootstrap.sh hook --harness <h> --event
-> pre-tool`, which runs the verified binary's `tripcord hook`. This
-> build has no `hook` subcommand; hook mode is coming in v0.
-> Until it lands, the Claude Code hook blocks every tool call
-> (`onFailure: block`) and the Cursor hook fails closed. Do not cut a
-> release that contains `init --embed` before hook mode. `make
-> release-gate` (see "Release gate" below) fails until then.
+> pre-tool`, which runs the verified binary's
+> [`tripcord hook`](hook.md). Each generated hook blocks the tool call
+> when the hook fails: the Claude Code hook has `onFailure: block`, the
+> Cursor hook `failClosed`, and Copilot blocks a `preToolUse` hook on
+> any non-zero exit or crash. Two gaps remain. A Copilot hook that times
+> out lets the call through; `tripcord hook` ends its own run after
+> 10 s, under the 60 s `timeoutSec` init sets. A Claude Code release
+> older than the `onFailure` field treats a failed hook as non-blocking.
+> Fail-closed inside `tripcord hook` (`--on-failure block`) is set by the
+> generated wiring, which does not pass it yet. The bootstrap's npm and
+> PyPI sources are not published, so only a binary already in its cache
+> can run. Do not cut a release that contains `init --embed` until the
+> wiring passes `--on-failure block` and the bootstrap no longer depends
+> on unpublished packages.
 >
 > The generated `.github/workflows/tripcord.yml` pins the reusable
 > workflow at `main@6a12795`. `tripcord-pr.yml` at that commit pins the
@@ -350,8 +358,7 @@ action at `main@8b33b1b`, which has both. The generated workflow calls
 `tripcord-pr.yml` at `main@6a12795`, and the file there pins the same
 action, so both paths pass. It reads the pinned commits with `git show`,
 so the clone must have them (`fetch-depth: 0`).
-`TestReleaseGateHookSubcommand` still fails until hook mode (coming in v0) lands;
-that failure is the missing `hook` subcommand.
+Both pass on this tree.
 
 Without the variable both log that the gate was not requested and pass,
 so pull request CI stays green. There is no release workflow in this

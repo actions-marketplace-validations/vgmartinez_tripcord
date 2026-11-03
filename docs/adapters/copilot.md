@@ -110,6 +110,18 @@ Nesting deeper than 64 levels fails closed.
 Reads, symlink handling, limits, and diagnostics are those of the
 [Claude adapter](claude.md#safe-reads).
 
+## Hook mode
+
+`tripcord hook --harness copilot --event pre-tool` reads a `preToolUse`
+hook's stdin from `.github/hooks/*.json`, for the CLI and the coding
+agent (`toolName`, and `toolArgs` as a JSON-encoded string or an
+object). `ParseHookInput` keeps the tool name and the `command`, path,
+and `url` of `toolArgs`. `RenderDecision` blocks with exit 2 and the
+reason on stderr; an allow exits 0 with nothing on stdout. `ask` is a
+deny: the CLI has a native ask but the coding agent treats one as a
+deny, and the two send the same input, so they cannot be told apart.
+See [Hook](../hook.md).
+
 ## Not scanned in v0
 
 - The Windows registry policy source
