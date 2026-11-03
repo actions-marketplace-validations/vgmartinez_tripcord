@@ -69,9 +69,9 @@ func writeFile(rel, content string) func(*testing.T, string) {
 }
 
 const (
-	claudeHookCommand  = `"command": "bash \"${CLAUDE_PROJECT_DIR}/.tripcord/bootstrap.sh\" hook --harness claude --event pre-tool",`
-	cursorHookCommand  = `"command": "bash \"${CURSOR_PROJECT_DIR}/.tripcord/bootstrap.sh\" hook --harness cursor --event pre-tool",`
-	copilotHookCommand = `"bash": "bash .tripcord/bootstrap.sh hook --harness copilot --event pre-tool",`
+	claudeHookCommand  = `"command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.tripcord/bootstrap.sh\" hook --harness claude --event pre-tool --on-failure block",`
+	cursorHookCommand  = `"command": "bash \"${CURSOR_PROJECT_DIR}/.tripcord/bootstrap.sh\" hook --harness cursor --event pre-tool --on-failure block",`
+	copilotHookCommand = `"bash": "bash .tripcord/bootstrap.sh hook --harness copilot --event pre-tool --on-failure block",`
 	emptyClaudeHooks   = "{\n  \"hooks\": {}\n}\n"
 	emptyCursorHooks   = "{\n  \"version\": 1,\n  \"hooks\": {}\n}\n"
 )
@@ -96,7 +96,7 @@ func forgeDigest(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	before := sha256Hex(raw)
-	replaceInFile(embedded.BootstrapPath, `[ "$got" = "$want" ]`, `true`)(t, dir)
+	replaceInFile(embedded.BootstrapPath, `[ "$got" != "$want" ]`, `false`)(t, dir)
 	raw, err = os.ReadFile(bootstrap)
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ var cfg016Fixtures = map[string]cfg016Fixture{
 		edit: edits(removeFile(embedded.BootstrapPath), removeFile(embedded.ManifestPath), removeFile(embedded.WorkflowPath))},
 	"embed-bootstrap-missing": {kind: "positivos", args: embedArgs("--harness", "claude"), edit: removeFile(embedded.BootstrapPath)},
 	"embed-bootstrap-changed": {kind: "positivos", args: embedArgs("--harness", "claude"),
-		edit: replaceInFile(embedded.BootstrapPath, `[ "$got" = "$want" ]`, `true`)},
+		edit: replaceInFile(embedded.BootstrapPath, `[ "$got" != "$want" ]`, `false`)},
 	"embed-bootstrap-digest-forged": {kind: "positivos", args: embedArgs("--harness", "claude"), edit: forgeDigest},
 	"embed-manifest-unreadable":     {kind: "positivos", args: embedArgs("--harness", "claude,cursor,copilot"), edit: writeFile(embedded.ManifestPath, "{\n")},
 	"embed-workflow-changed": {kind: "positivos", args: embedArgs("--harness", "claude"),
@@ -277,7 +277,7 @@ func TestCFG016FixturesMatchInit(t *testing.T) {
 	for _, name := range slices.Sorted(maps.Keys(cfg016Fixtures)) {
 		fx := cfg016Fixtures[name]
 		t.Run(name, func(t *testing.T) {
-			dir := outsideGit(t)
+			dir := embedRoot(t)
 			if fx.args != nil {
 				if code, _, stderr := runCLI(t, append(slices.Clone(fx.args), dir)...); code != 0 {
 					t.Fatalf("init: exit %d: %s", code, stderr)

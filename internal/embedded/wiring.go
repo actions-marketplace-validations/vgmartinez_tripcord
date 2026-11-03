@@ -73,17 +73,21 @@ const HookEvent = "pre-tool"
 
 // HookArgs is the argv after the tripcord binary that the pre-tool hook
 // of h runs. bootstrap.sh passes it to the verified binary unchanged.
+// --on-failure block makes a run that cannot decide deny the call in the
+// harness's format rather than exit 3 or 4.
 func HookArgs(h model.Harness) []string {
-	return []string{"hook", "--harness", string(h), "--event", HookEvent}
+	return []string{"hook", "--harness", string(h), "--event", HookEvent, "--on-failure", "block"}
 }
 
 // projectBootstrap is how a hook of h names bootstrap.sh. Claude Code
 // and Cursor set a project directory variable. Copilot sets none; its
-// hooks run with cwd "." (the repository root).
+// hooks run with cwd "." (the repository root). The Copilot CLI also
+// runs the hooks in .claude/settings.json, without CLAUDE_PROJECT_DIR,
+// so the Claude Code hooks fall back to the working directory.
 func projectBootstrap(h model.Harness) string {
 	switch h {
 	case model.HarnessClaude:
-		return `"${CLAUDE_PROJECT_DIR}/` + BootstrapPath + `"`
+		return `"${CLAUDE_PROJECT_DIR:-.}/` + BootstrapPath + `"`
 	case model.HarnessCursor:
 		return `"${CURSOR_PROJECT_DIR}/` + BootstrapPath + `"`
 	default:

@@ -10,7 +10,7 @@
   "files": [
     {
       "path": ".tripcord/bootstrap.sh",
-      "sha256": "1ba8f03afc94e3ee71b6aa96086f4dc4916c563c993929c2f4c4a08847022d62"
+      "sha256": "37319ffcdf61a85a453cff39bce9c89a2ef722be20d6bebfdd9d7e4911d9977f"
     },
     {
       "path": ".github/workflows/tripcord.yml",
@@ -22,13 +22,13 @@
       "harness": "claude",
       "path": ".claude/settings.json",
       "event": "SessionStart",
-      "sha256": "2a43a6768d77210aa384bc246184f3d34e2383284683b5477585e0987e797e96"
+      "sha256": "3c2b4d1858b4e8afc5cac4838025edb3a8838804765573a3671e99d277f0372d"
     },
     {
       "harness": "claude",
       "path": ".claude/settings.json",
       "event": "PreToolUse",
-      "sha256": "3ce2977b6677c2e831268759e813283b13613620fcfd8dae7a73116f458912ef"
+      "sha256": "7b26bc6d65b3c6705ec8aff6e78db7f36041f56ad9472ed3b5ad5f1b7f68cdf3"
     }
   ]
 }

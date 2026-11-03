@@ -23,6 +23,17 @@ func embedArgs(extra ...string) []string {
 	return append([]string{"init", "--embed", "--version", "0.1.0", "--sha256", "linux-x64=" + testSHA256}, extra...)
 }
 
+// embedRoot is a directory outside any Git repository that is the root
+// of its own, as init --embed requires.
+func embedRoot(t *testing.T) string {
+	t.Helper()
+	dir := outsideGit(t)
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func runCLI(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -97,7 +108,7 @@ func TestInitEmbedRequiresPin(t *testing.T) {
 		"unknown harness":  {"init", "--embed", "--version", "0.1.0", "--sha256", "linux-x64=" + testSHA256, "--harness", "gemini"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := outsideGit(t)
+			dir := embedRoot(t)
 			code, _, stderr := runCLI(t, append(args, dir)...)
 			if code != int(exitcode.Config) {
 				t.Fatalf("exit %d, want 3: %s", code, stderr)
@@ -110,7 +121,7 @@ func TestInitEmbedRequiresPin(t *testing.T) {
 }
 
 func TestInitEmbedIdempotent(t *testing.T) {
-	dir := outsideGit(t)
+	dir := embedRoot(t)
 	if code, _, stderr := runCLI(t, embedArgs(dir)...); code != 0 {
 		t.Fatalf("first run: exit %d: %s", code, stderr)
 	}
@@ -153,7 +164,7 @@ func TestInitEmbedScanHasNoFindings(t *testing.T) {
 	}
 	for _, sel := range selections {
 		t.Run(strings.Join(append([]string{"all"}, sel...), " "), func(t *testing.T) {
-			dir := outsideGit(t)
+			dir := embedRoot(t)
 			if code, _, stderr := runCLI(t, embedArgs(append(sel, dir)...)...); code != 0 {
 				t.Fatalf("init: exit %d: %s", code, stderr)
 			}
@@ -172,7 +183,7 @@ func TestInitEmbedScanHasNoFindings(t *testing.T) {
 // where the harness has a field for it. The literals are written out so
 // a change to embedded.HookArgs or the wiring fails here.
 func TestInitWiringInvokesTripcordHook(t *testing.T) {
-	dir := outsideGit(t)
+	dir := embedRoot(t)
 	if code, _, stderr := runCLI(t, embedArgs(dir)...); code != 0 {
 		t.Fatalf("init: exit %d: %s", code, stderr)
 	}
@@ -194,12 +205,12 @@ func TestInitWiringInvokesTripcordHook(t *testing.T) {
 		t.Fatalf("claude PreToolUse = %+v", pre)
 	}
 	h := pre[0].Hooks[0]
-	if h.Type != "command" || h.Command != `bash "${CLAUDE_PROJECT_DIR}/.tripcord/bootstrap.sh" hook --harness claude --event pre-tool` || h.Args != nil || h.OnFailure != "block" {
+	if h.Type != "command" || h.Command != `bash "${CLAUDE_PROJECT_DIR:-.}/.tripcord/bootstrap.sh" hook --harness claude --event pre-tool --on-failure block` || h.Args != nil || h.OnFailure != "block" {
 		t.Fatalf("claude pre-tool hook = %+v", h)
 	}
 	start := claude.Hooks["SessionStart"]
 	if len(start) != 1 || start[0].Matcher != "startup|resume" || len(start[0].Hooks) != 1 ||
-		start[0].Hooks[0].Command != `bash "${CLAUDE_PROJECT_DIR}/.tripcord/bootstrap.sh" session-start --harness claude` {
+		start[0].Hooks[0].Command != `bash "${CLAUDE_PROJECT_DIR:-.}/.tripcord/bootstrap.sh" session-start --harness claude` {
 		t.Fatalf("claude SessionStart = %+v", start)
 	}
 
@@ -211,7 +222,7 @@ func TestInitWiringInvokesTripcordHook(t *testing.T) {
 		} `json:"hooks"`
 	}
 	mustJSON(t, files[embedded.CursorHooksPath], &cursor)
-	if c := cursor.Hooks["preToolUse"]; cursor.Version != 1 || len(c) != 1 || c[0].Command != `bash "${CURSOR_PROJECT_DIR}/.tripcord/bootstrap.sh" hook --harness cursor --event pre-tool` || !c[0].FailClosed {
+	if c := cursor.Hooks["preToolUse"]; cursor.Version != 1 || len(c) != 1 || c[0].Command != `bash "${CURSOR_PROJECT_DIR}/.tripcord/bootstrap.sh" hook --harness cursor --event pre-tool --on-failure block` || !c[0].FailClosed {
 		t.Fatalf("cursor preToolUse = %+v", c)
 	}
 	if c := cursor.Hooks["sessionStart"]; len(c) != 1 || c[0].Command != `bash "${CURSOR_PROJECT_DIR}/.tripcord/bootstrap.sh" session-start --harness cursor` {
@@ -229,7 +240,7 @@ func TestInitWiringInvokesTripcordHook(t *testing.T) {
 	}
 	mustJSON(t, files[embedded.CopilotHooksPath], &copilot)
 	if c := copilot.Hooks["preToolUse"]; copilot.Version != 1 || len(c) != 1 || c[0].Type != "command" ||
-		c[0].Bash != "bash .tripcord/bootstrap.sh hook --harness copilot --event pre-tool" || c[0].Cwd != "." || c[0].TimeoutSec != 60 {
+		c[0].Bash != "bash .tripcord/bootstrap.sh hook --harness copilot --event pre-tool --on-failure block" || c[0].Cwd != "." || c[0].TimeoutSec != 60 {
 		t.Fatalf("copilot preToolUse = %+v", c)
 	}
 	if c := copilot.Hooks["sessionStart"]; len(c) != 1 || c[0].Bash != "bash .tripcord/bootstrap.sh session-start --harness copilot" || c[0].Cwd != "." || c[0].TimeoutSec != 300 {
@@ -237,7 +248,7 @@ func TestInitWiringInvokesTripcordHook(t *testing.T) {
 	}
 	for _, h := range embedded.HookHarnesses {
 		line := embedded.HookCommandLine(h)
-		if !strings.HasPrefix(line, "bash ") || !strings.Contains(line, embedded.BootstrapPath) || !strings.HasSuffix(line, " hook --harness "+string(h)+" --event pre-tool") {
+		if !strings.HasPrefix(line, "bash ") || !strings.Contains(line, embedded.BootstrapPath) || !strings.HasSuffix(line, " hook --harness "+string(h)+" --event pre-tool --on-failure block") {
 			t.Errorf("HookCommandLine(%s) = %q", h, line)
 		}
 	}
@@ -267,7 +278,7 @@ func TestReleaseGateHookSubcommand(t *testing.T) {
 }
 
 func TestInitHarnessLimitsWiring(t *testing.T) {
-	dir := outsideGit(t)
+	dir := embedRoot(t)
 	if code, _, stderr := runCLI(t, embedArgs("--harness", "claude", dir)...); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
@@ -293,7 +304,7 @@ func TestInitHarnessLimitsWiring(t *testing.T) {
 }
 
 func TestInitMergesExistingFiles(t *testing.T) {
-	dir := outsideGit(t)
+	dir := embedRoot(t)
 	claude := "{\n  \"model\": \"opus\",\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\n        \"matcher\": \"Bash\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"./scripts/lint.sh\"\n          }\n        ]\n      }\n    ]\n  },\n  \"permissions\": {\n    \"deny\": [\n      \"Read(.env)\"\n    ]\n  }\n}\n"
 	writeTestFile(t, dir, embedded.ClaudeSettingsPath, claude)
 	writeTestFile(t, dir, "scripts/lint.sh", "#!/bin/sh\nexit 0\n")
@@ -368,7 +379,7 @@ func TestInitUnmergeableFailsClosed(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			for _, force := range []bool{false, true} {
-				dir := outsideGit(t)
+				dir := embedRoot(t)
 				writeTestFile(t, dir, tc.path, tc.content)
 				before := snapshot(t, dir)
 				args := embedArgs()
@@ -391,7 +402,7 @@ func TestInitConflictsNeedForce(t *testing.T) {
 	for name, tc := range map[string]struct{ path, content, keep string }{
 		"reformat":           {embedded.ClaudeSettingsPath, "{\"model\": \"opus\"}\n", `"model": "opus"`},
 		"install set":        {embedded.CursorEnvironmentPath, "{\n  \"install\": \"npm ci\"\n}\n", "bash .tripcord/bootstrap.sh install && npm ci"},
-		"edited hook":        {embedded.CopilotHooksPath, "{\n  \"version\": 1,\n  \"hooks\": {\n    \"preToolUse\": [\n      {\n        \"type\": \"command\",\n        \"bash\": \"tripcord hook --harness copilot --event pre-tool || true\"\n      }\n    ]\n  }\n}\n", "--event pre-tool\""},
+		"edited hook":        {embedded.CopilotHooksPath, "{\n  \"version\": 1,\n  \"hooks\": {\n    \"preToolUse\": [\n      {\n        \"type\": \"command\",\n        \"bash\": \"tripcord hook --harness copilot --event pre-tool || true\"\n      }\n    ]\n  }\n}\n", "--event pre-tool --on-failure block\""},
 		"disableAllHooks":    {embedded.ClaudeSettingsPath, "{\n  \"disableAllHooks\": true\n}\n", `"disableAllHooks": true`},
 		"own bootstrap":      {embedded.BootstrapPath, "#!/bin/sh\nexit 0\n", "TRIPCORD_VERSION='0.1.0'"},
 		"workflow differs":   {embedded.WorkflowPath, "name: mine\n", embedded.ReusableWorkflow},
@@ -399,7 +410,7 @@ func TestInitConflictsNeedForce(t *testing.T) {
 		"maintenance string": {embedded.DevinBlueprintPath, "maintenance: make tidy\n", "  - make tidy\n  - name: tripcord\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir := outsideGit(t)
+			dir := embedRoot(t)
 			writeTestFile(t, dir, tc.path, tc.content)
 			before := snapshot(t, dir)
 			code, _, stderr := runCLI(t, embedArgs(dir)...)
@@ -445,7 +456,7 @@ func TestInitRefusesSymlinks(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir, outside := outsideGit(t), outsideGit(t)
+			dir, outside := embedRoot(t), outsideGit(t)
 			setup(t, dir, outside)
 			before, beforeOutside := snapshot(t, dir), snapshot(t, outside)
 			code, _, stderr := runCLI(t, embedArgs(dir)...)
@@ -460,7 +471,7 @@ func TestInitRefusesSymlinks(t *testing.T) {
 }
 
 func TestInitDryRun(t *testing.T) {
-	dir := outsideGit(t)
+	dir := embedRoot(t)
 	writeTestFile(t, dir, embedded.CursorEnvironmentPath, "{\n  \"start\": \"make dev\"\n}\n")
 	code, stdout, stderr := runCLI(t, embedArgs("--dry-run", dir)...)
 	if code != 0 {
@@ -505,11 +516,33 @@ func TestInitPathInsideRepository(t *testing.T) {
 	}
 }
 
+// TestInitEmbedNeedsGitRepository: tripcord hook blocks every call when
+// it finds no Git repository, so init --embed refuses to wire one.
+func TestInitEmbedNeedsGitRepository(t *testing.T) {
+	for _, extra := range [][]string{nil, {"--dry-run"}} {
+		t.Run(strings.Join(append([]string{"embed"}, extra...), " "), func(t *testing.T) {
+			dir := outsideGit(t)
+			code, stdout, stderr := runCLI(t, embedArgs(append(extra, dir)...)...)
+			if code != int(exitcode.Config) || stdout != "" || !strings.Contains(stderr, "--embed needs a Git repository") || !strings.Contains(stderr, "nothing was written") {
+				t.Fatalf("exit %d stdout %q stderr %q, want exit 3", code, stdout, stderr)
+			}
+			if files := snapshot(t, dir); len(files) != 0 {
+				t.Fatalf("wrote %v", slices.Sorted(maps.Keys(files)))
+			}
+		})
+	}
+	dir := outsideGit(t)
+	writeTestFile(t, dir, ".git", "gitdir: /elsewhere/.git/worktrees/w\n")
+	if code, _, stderr := runCLI(t, embedArgs("--harness", "claude", dir)...); code != 0 {
+		t.Fatalf("worktree (.git file): exit %d: %s", code, stderr)
+	}
+}
+
 // TestScanReportsRemovedGuard checks TC-CFG-016 end to end against what
 // init writes, including that --harness on scan and the harnesses init
 // selected both limit which wiring is required.
 func TestScanReportsRemovedGuard(t *testing.T) {
-	dir := outsideGit(t)
+	dir := embedRoot(t)
 	if code, _, stderr := runCLI(t, embedArgs("--harness", "claude,copilot", dir)...); code != 0 {
 		t.Fatalf("init: exit %d: %s", code, stderr)
 	}
