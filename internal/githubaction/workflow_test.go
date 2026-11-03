@@ -265,7 +265,9 @@ func actionInputDefaults(t *testing.T) map[string]string {
 	}
 	out := make(map[string]string, len(action.Inputs))
 	for name, input := range action.Inputs {
-		if name == "reviews-file" {
+		// The workflow fills reviews-file itself, and leaves base to the
+		// action's default, the pull request's base commit.
+		if name == "reviews-file" || name == "base" {
 			continue
 		}
 		out[name] = input.Default
@@ -486,7 +488,7 @@ func requirePinnedHookManifest(t *testing.T, root, sha string) {
 	if !gitObjectExists(t, root, sha+":.pre-commit-hooks.yaml") {
 		t.Fatalf("pinned rev %s does not contain .pre-commit-hooks.yaml", sha)
 	}
-	show := exec.Command("git", "--no-pager", "show", sha+":.pre-commit-hooks.yaml")
+	show := exec.Command("git", "--no-pager", "--no-optional-locks", "show", sha+":.pre-commit-hooks.yaml")
 	show.Dir = root
 	body, err := show.Output()
 	if err != nil {
@@ -508,7 +510,7 @@ func requirePinnedHookManifest(t *testing.T, root, sha string) {
 // git binary fails the test; a missing object returns false.
 func gitObjectExists(t *testing.T, root, spec string) bool {
 	t.Helper()
-	cmd := exec.Command("git", "cat-file", "-e", spec)
+	cmd := exec.Command("git", "--no-optional-locks", "cat-file", "-e", spec)
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
 	if err == nil {

@@ -1,0 +1,16 @@
+[
+  {
+    "harness": "generic",
+    "scope": "repo",
+    "path": ".tripcord/embed.json",
+    "sha256": "fd119a91f1ea660e6e4d0fd3ae0570a4d6b3967f419463ecbdd29d18b26e6fb5",
+    "kind": "permissions",
+    "payload": {
+      "harnesses": "cursor",
+      "key": "[\"tripcordGuard\",\"manifest-harnesses\"]",
+      "setting": "tripcordGuard",
+      "state": "dropped",
+      "subject": "manifest-harnesses"
+    }
+  }
+]

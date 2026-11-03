@@ -6,11 +6,13 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,6 +20,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -33,8 +36,10 @@ import (
 	"github.com/vgmartinez/tripcord/internal/adapters/generic"
 	"github.com/vgmartinez/tripcord/internal/adapters/opencode"
 	"github.com/vgmartinez/tripcord/internal/adapters/windsurf"
+	"github.com/vgmartinez/tripcord/internal/embedded"
 	"github.com/vgmartinez/tripcord/internal/exitcode"
 	"github.com/vgmartinez/tripcord/internal/fpkey"
+	"github.com/vgmartinez/tripcord/internal/gitrun"
 	"github.com/vgmartinez/tripcord/internal/indexfiles"
 	"github.com/vgmartinez/tripcord/internal/model"
 	"github.com/vgmartinez/tripcord/internal/output"
@@ -58,6 +63,7 @@ Usage:
   tripcord scan [PATH] [flags]
   tripcord pr-context [flags]
   tripcord preopen <git-url|path> [flags]
+  tripcord init [PATH] [--embed] [--harness h,...] [flags]
 
 scan performs static configuration scanning only. A PATH inside a Git
 repository scans that whole repository from its git root. Monorepo scoping
@@ -78,6 +84,9 @@ preopen clones a repository into a temporary directory without running its
 hooks, filters, LFS, or submodules, scans it like scan, and removes it. It
 takes the scan flags except --since and --scope other than repo, and ignores
 the repository's own .tripcord policy.
+init writes .tripcord/policy.yaml. With --embed it also writes the pinned
+bootstrap script, the pull request workflow, and each harness's hook and
+setup wiring, merging into existing files; see docs/init.md.
 --secrets (v1) and --all (v1) are not available.
 `
 
@@ -100,6 +109,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runPrContext(args[1:], stdout, stderr)
 	case "preopen":
 		return runPreopen(args[1:], stdout, stderr)
+	case "init":
+		return runInit(args[1:], stdout, stderr)
 	default:
 		msg := fmt.Sprintf("tripcord: unknown command %q\n\n%s", args[0], usage)
 		writeString(stderr, msg)
@@ -116,6 +127,7 @@ type scanOptions struct {
 	format      string
 	output      string
 	since       string
+	base        string
 	failOn      string
 	policy      string
 	orgPolicy   string
@@ -157,8 +169,8 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 			writeString(stderr, "tripcord scan: staged scan blocked the commit; bypass only with git commit --no-verify\n")
 			return code
 		}
-		if opts.scope != "repo" || opts.since != "" || opts.policy != "" || opts.orgPolicy != "" {
-			code := target.configError(stderr, errors.New("--staged requires repo scope and index policy, and does not support --since, --policy, or --org-policy"))
+		if opts.scope != "repo" || opts.since != "" || opts.base != "" || opts.policy != "" || opts.orgPolicy != "" {
+			code := target.configError(stderr, errors.New("--staged requires repo scope and index policy, and does not support --since, --base, --policy, or --org-policy"))
 			writeString(stderr, "tripcord scan: staged scan blocked the commit; bypass only with git commit --no-verify\n")
 			return code
 		}
@@ -213,6 +225,7 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 				return code
 			}
 			target.root, target.policyRoot = root, root
+			target.gitRoot = root
 			target.stagedNotes = notes
 			target.stagedSources = sources
 			code := scanTree(ctx, target, opts, stdout, stderr)
@@ -234,9 +247,11 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 		}
 		defer func() { _ = ws.Close() }()
 		target.root, target.policyRoot = ws.Tree(), ws.Tree()
+		target.gitRoot, target.indexFile = root, indexFile
 		target.stagedNotes = notes
 		target.stagedSources = sources
 		target.redactRoot = ws.Tree()
+		target.indexTree = true
 		target.stageMore = func(items []model.ConfigItem) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -255,6 +270,7 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	target.root, target.policyRoot = root, root
+	target.gitRoot = root
 	return scanTree(context.Background(), target, opts, stdout, stderr)
 }
 
@@ -282,6 +298,20 @@ type scanTarget struct {
 	// temporary directory the pre-commit caller never asked about. It
 	// is empty for a normal scan, where root is the repository itself.
 	redactRoot string
+	// indexTree is true when root holds only files of the git index
+	// (the --staged tree), so every file in it is tracked.
+	indexTree bool
+	// gitRoot is the real repository root, for a git query that needs
+	// one even when root is a --staged scan's private materialized
+	// tree (ws.Tree()), which has no .git of its own. It equals root
+	// for every other scan.
+	gitRoot string
+	// indexFile is the --staged scan's proposed commit's index (see
+	// GIT_INDEX_FILE in runScan), passed to a gitRoot query so it sees
+	// that content instead of the stale on-disk .git/index. It is
+	// empty for every other scan, and gitrun.RunIndexed(ctx, gitRoot,
+	// "", ...) then reads gitRoot's ordinary index, same as Run.
+	indexFile string
 }
 
 func (t scanTarget) configError(stderr io.Writer, err error) int {
@@ -313,13 +343,106 @@ func scanTree(ctx context.Context, t scanTarget, opts scanOptions, stdout, stder
 	if err != nil {
 		return t.internalError(stderr, err)
 	}
+	var changed map[string]bool
+	if opts.since != "" {
+		changed, err = changedFiles(root, opts.since)
+		if err != nil {
+			var invoke *gitInvokeError
+			if errors.As(err, &invoke) && invoke.missing {
+				return t.internalError(stderr, err)
+			}
+			return t.configError(stderr, err)
+		}
+	}
+	var baseSHA string
+	if ref := cmp.Or(opts.base, opts.since); ref != "" {
+		if baseSHA, err = resolveBase(ctx, root, ref); err != nil {
+			return t.configError(stderr, err)
+		}
+	}
+	// tracked reports whether root's git index holds rel: for a staged
+	// scan, t.root already holds only index content, so every path in
+	// it is tracked (or about to be committed) by definition.
+	tracked := trackedIn(ctx, root)
+	if t.indexTree {
+		tracked = func(string) bool { return true }
+	}
+	caseVariants := policyLocalCaseVariants(ctx, t.gitRoot, t.indexFile)
 	policyOpts := policy.Options{RepoRoot: t.policyRoot, RepoPolicy: opts.policy, Surface: policy.SurfaceScan, Env: env, Catalog: catalog}
 	if opts.orgPolicy != "" {
 		policyOpts.OrgPolicy = []string{opts.orgPolicy}
 	}
+	// A tracked, or staged, policy.local.yaml is shared configuration,
+	// not personal, and it is a high TC-CFG-016 finding (below) rather
+	// than a decision-maker: committing it would otherwise let the
+	// change relax its own scan, and every scan after that merges, by
+	// weakening a per-checkout layer that is supposed to be each
+	// developer's own. caseVariants also catches a tracked or staged
+	// .tripcord/Policy.local.yaml or .TRIPCORD/policy.local.yaml: git's
+	// own tracking is always byte-exact, but a case-insensitive
+	// checkout (macOS, Windows) resolves policy.LocalFile's exact path
+	// to a differently-cased committed file behind that, so the
+	// decision must treat every case variant the same as an exact
+	// match, on every host, not only ones where it would matter.
+	if opts.policy == "" && (tracked(policy.LocalFile) || len(caseVariants(policy.LocalFile)) > 0) {
+		policyOpts.SkipLocal = true
+	}
+	// Compared with a base, the repository policy is the base's, as in
+	// pr-context: the change under review must not set its own mode,
+	// fail-on, rules, or exceptions. policy.local.yaml is never read.
+	// The change's own policy is loaded only to report how it weakens
+	// the base's (TC-CFG-016).
+	var headPolicy *policy.Effective
+	switch {
+	case baseSHA == "":
+		// below: no base, so no change to compare the head's policy
+		// with. The head's own policy.local.yaml handling above stands.
+	case opts.policy == "":
+		headOpts := policyOpts
+		headOpts.SkipLocal = true
+		if headPolicy, err = policy.Load(headOpts); err != nil {
+			return t.configError(stderr, err)
+		}
+		dir, err := os.MkdirTemp("", "tripcord-base-policy-")
+		if err != nil {
+			return t.internalError(stderr, err)
+		}
+		defer func() { _ = os.RemoveAll(dir) }()
+		if err := materializeBasePolicy(ctx, root, baseSHA, dir, policy.RepoFile, false); err != nil {
+			return t.configError(stderr, err)
+		}
+		policyOpts.RepoRoot, policyOpts.SkipLocal = dir, true
+	default:
+		// An explicit --policy file inside the repository is read from
+		// the base the same way: the change under review must not be
+		// able to pick its own, weaker, explicit policy either. A path
+		// outside the repository (a shared, machine-local, or managed
+		// file) is used as given, the same as without a base.
+		if rel, ok := policyPathInRepo(root, opts.policy); ok {
+			dir, err := os.MkdirTemp("", "tripcord-base-policy-")
+			if err != nil {
+				return t.internalError(stderr, err)
+			}
+			defer func() { _ = os.RemoveAll(dir) }()
+			if err := materializeBasePolicy(ctx, root, baseSHA, dir, rel, true); err != nil {
+				return t.configError(stderr, err)
+			}
+			policyOpts.RepoPolicy, policyOpts.SkipLocal = filepath.Join(dir, filepath.FromSlash(rel)), true
+		}
+	}
 	effective, err := policy.Load(policyOpts)
 	if err != nil {
 		return t.configError(stderr, err)
+	}
+	var weakened []model.ConfigItem
+	if headPolicy != nil {
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(policy.RepoFile)))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return t.configError(stderr, err)
+		}
+		if weakened, err = embedded.PolicyWeakened(policy.Weakened(effective, headPolicy, catalog), raw); err != nil {
+			return t.internalError(stderr, err)
+		}
 	}
 	if opts.failOn != "" {
 		sev, err := model.ParseSeverity(opts.failOn)
@@ -411,20 +534,21 @@ func scanTree(ctx context.Context, t scanTarget, opts scanOptions, stdout, stder
 		if err := scriptcheck.Annotate(root, items); err != nil {
 			return t.internalError(stderr, fmt.Errorf("hook scripts: %w", err))
 		}
+		check := embedded.CheckOptions{Only: requested, Tracked: tracked, TrackedCaseVariants: caseVariants, IndexTree: t.indexTree}
+		if baseSHA != "" {
+			check.Base = baseReader(ctx, root, baseSHA)
+		}
+		guards, err := embedded.Check(root, check)
+		if err != nil {
+			return t.internalError(stderr, fmt.Errorf("embedded guard: %w", err))
+		}
+		items = append(items, guards...)
 	}
 	if opts.stagedFiles != nil {
 		applyStagedSources(items, t.stagedSources)
 	}
 	diagnostics = adapters.DedupeEscapingSymlinkDiagnostics(diagnostics)
 	if opts.since != "" {
-		changed, err := changedFiles(root, opts.since)
-		if err != nil {
-			var invoke *gitInvokeError
-			if errors.As(err, &invoke) && invoke.missing {
-				return t.internalError(stderr, err)
-			}
-			return t.configError(stderr, err)
-		}
 		items = slices.DeleteFunc(items, func(item model.ConfigItem) bool {
 			return item.Scope != model.ScopeRepo || !changed[item.Path]
 		})
@@ -432,6 +556,7 @@ func scanTree(ctx context.Context, t scanTarget, opts scanOptions, stdout, stder
 			return d.Scope == model.ScopeRepo && d.Path != "" && !changed[d.Path]
 		})
 	}
+	items = append(items, weakened...)
 	engine := rules.NewEngine(env, catalog.Rules(), rules.WithFilter(effective.RuleFilter()))
 	if ctx.Err() != nil {
 		return int(exitcode.Config)
@@ -553,6 +678,7 @@ func parseCommandFlags(cmd flagCommand, args []string, stdout io.Writer) (scanOp
 	flags.StringVar(&opts.format, "format", "text", "text, json, sarif, md, or gha")
 	flags.StringVar(&opts.output, "output", "-", "output path or - for stdout")
 	flags.StringVar(&opts.since, "since", "", "files changed between the ref and HEAD; requires git")
+	flags.StringVar(&opts.base, "base", "", "base revision of a change: also report a Tripcord embed the change removes or weakens (TC-CFG-016); requires git. --since implies it")
 	flags.StringVar(&opts.failOn, "fail-on", "", "low, medium, high, or critical")
 	flags.StringVar(&opts.policy, "policy", "", "policy file")
 	flags.StringVar(&opts.orgPolicy, "org-policy", "", "organization policy file")
@@ -588,6 +714,14 @@ func parseCommandFlags(cmd flagCommand, args []string, stdout io.Writer) (scanOp
 			return scanOptions{}, err
 		}
 	}
+	if opts.base != "" {
+		if strings.HasPrefix(opts.base, "-") || strings.ContainsAny(opts.base, "\x00\n\r") {
+			return scanOptions{}, fmt.Errorf("--base %q: git ref must not start with '-' or contain a control character", opts.base)
+		}
+		if opts.since != "" && opts.since != opts.base {
+			return scanOptions{}, errors.New("--base and --since name different revisions; --since alone compares with its ref")
+		}
+	}
 	switch {
 	case cmd == preopenCommand && flags.NArg() != 1:
 		return opts, errors.New("preopen takes exactly one git URL or local path")
@@ -620,14 +754,15 @@ func parseCommandFlags(cmd flagCommand, args []string, stdout io.Writer) (scanOp
 // from sources (indexfiles.Plan.Sources, keyed by item.Path) and from the
 // scripts or checksum files a rule reads from it (see
 // scriptcheck.ItemReferencedPaths, which names a referenced path whether
-// or not it resolved, so a staged deletion of one still matches).
+// or not it resolved, so a staged deletion of one still matches), kept
+// alongside any SourcePaths the item was built with (embedded.Check).
 func applyStagedSources(items []model.ConfigItem, sources map[string][]string) {
 	for i := range items {
 		item := &items[i]
 		if item.Scope != model.ScopeRepo {
 			continue
 		}
-		var extra []string
+		extra := append([]string(nil), item.SourcePaths...)
 		extra = append(extra, sources[item.Path]...)
 		extra = append(extra, scriptcheck.ItemReferencedPaths(*item)...)
 		if len(extra) == 0 {
@@ -725,7 +860,7 @@ func repoRoot(dir string) bool {
 
 func normalizeScanArgs(args []string) ([]string, error) {
 	valueFlags := map[string]bool{
-		"harness": true, "format": true, "output": true, "since": true,
+		"harness": true, "format": true, "output": true, "since": true, "base": true,
 		"fail-on": true, "policy": true, "org-policy": true, "scope": true,
 	}
 	var flags []string
@@ -751,6 +886,111 @@ func normalizeScanArgs(args []string) ([]string, error) {
 		}
 	}
 	return append(append(flags, "--"), positionals...), nil
+}
+
+// resolveBase resolves ref to the full SHA of a commit of root.
+func resolveBase(ctx context.Context, root, ref string) (string, error) {
+	out, err := gitrun.Run(ctx, root, "--no-pager", "--no-optional-locks", "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("base %q is not a commit of this repository", ref)
+	}
+	sha := strings.TrimSpace(string(out))
+	if !fullSHA(sha) {
+		return "", fmt.Errorf("base %q did not resolve to a commit", ref)
+	}
+	return sha, nil
+}
+
+// baseReader reads files of commit sha of root for embedded.Check. A
+// path the commit does not have is fs.ErrNotExist.
+func baseReader(ctx context.Context, root, sha string) func(string) ([]byte, error) {
+	return func(rel string) ([]byte, error) {
+		data, err := gitShowBlob(ctx, root, sha, rel)
+		if errors.Is(err, errBaseUnavailable) {
+			return nil, fmt.Errorf("base %s is not available", sha)
+		}
+		return data, err
+	}
+}
+
+// policyPathInRepo resolves an explicit --policy path (given, like any
+// other file argument, relative to the working directory, not
+// necessarily root) and reports the repository-relative path when it
+// resolves inside root. Only a path inside the repository is read from
+// the base revision instead of the working tree; one outside it (a
+// shared, machine-local, or managed file) is used as given.
+func policyPathInRepo(root, policyPath string) (string, bool) {
+	abs, err := filepath.Abs(policyPath)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil {
+		return "", false
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", false
+	}
+	return rel, true
+}
+
+// trackedIn reports whether root's git index holds rel. Outside a git
+// work tree nothing is tracked.
+func trackedIn(ctx context.Context, root string) func(string) bool {
+	return func(rel string) bool {
+		out, err := gitrun.Run(ctx, root, "--no-pager", "--no-optional-locks", "--literal-pathspecs", "ls-files", "-z", "--", rel)
+		return err == nil && len(out) > 0
+	}
+}
+
+// policyLocalCaseVariants returns a function that lists every path
+// gitRoot's git index holds (the proposed commit's index, when
+// indexFile names one; see gitrun.RunIndexed) whose repository-relative
+// path matches rel except for ASCII/Unicode case: the shape a
+// case-insensitive checkout (macOS, Windows) would also resolve rel to,
+// even though git's own tracking, and a Linux checkout, never folds
+// case. It lists the whole index once, rather than asking git about
+// rel's own exact path (as trackedIn does), because a case-insensitive
+// match is a different index entry entirely; --literal-pathspecs is not
+// needed since no pathspec is passed. A tracked rel itself is included,
+// so this alone replaces trackedIn's exact match once the caller also
+// needs case variants (see policyLocal's use in TC-CFG-016).
+func policyLocalCaseVariants(ctx context.Context, gitRoot, indexFile string) func(rel string) []string {
+	var once sync.Once
+	var paths []string
+	var runErr error
+	return func(rel string) []string {
+		once.Do(func() {
+			out, err := gitrun.RunIndexed(ctx, gitRoot, indexFile, "--no-pager", "--no-optional-locks", "ls-files", "-z")
+			runErr = err
+			if err == nil {
+				paths = splitNUL(out)
+			}
+		})
+		if runErr != nil {
+			return nil
+		}
+		var out []string
+		for _, p := range paths {
+			if strings.EqualFold(p, rel) {
+				out = append(out, p)
+			}
+		}
+		sort.Strings(out)
+		return out
+	}
+}
+
+// splitNUL splits a NUL-terminated list (git ls-files -z's output) into
+// its entries, dropping the trailing empty element a final terminator
+// leaves.
+func splitNUL(b []byte) []string {
+	s := strings.TrimSuffix(string(b), "\x00")
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\x00")
 }
 
 func validateSinceRef(ref string) error {

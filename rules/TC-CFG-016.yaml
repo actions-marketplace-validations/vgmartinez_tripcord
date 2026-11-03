@@ -1,5 +1,5 @@
-# A hook-based guard, including one Tripcord itself registers once its
-# own hook mode ships (see docs/README.md), only runs when the harness
+# A hook-based guard, including the one `tripcord init --embed`
+# registers, only runs when the harness
 # actually invokes hooks at all. A shared setting that turns every hook
 # off defeats that regardless of which hook is the guard, so it is a
 # precondition worth flagging on its own, before Tripcord has any hook
@@ -11,38 +11,187 @@
 # hooks by id and is not read here, the same way this pack does not try
 # to tell which hook a partial disable targets).
 #
-# Cursor and Windsurf are not in harness: neither documents a
+# Cursor and Windsurf have no disable-all clause: neither documents a
 # file-level key that turns every hook off. Cursor's only global hooks
 # option is version; Windsurf's Cascade handler fields have no such
-# key. See docs/rules/TC-CFG-016.md. No key is guessed here.
+# key. See docs/rules/TC-CFG-016.md. No key is guessed here. Cursor is
+# in harness for the embed clause below only.
 #
-# What this rule does not do: tell whether a hook that used to be
-# present (Tripcord's own, once it registers one, or any other) was
-# removed. That needs a base tree to diff against, which a single scan
-# of one tree does not have; see docs/rules/TC-CFG-016.md.
+# The other clauses are the Tripcord embed (issue #39). When the
+# repository holds a Tripcord embed (.tripcord/bootstrap.sh or
+# .tripcord/embed.json), internal/embedded checks every file and hook
+# `tripcord init --embed` writes and reports each one that is not
+# intact as a permissions item with setting tripcordGuard. A leftover
+# piece of an embed without either file (a hook entry that runs
+# .tripcord/bootstrap.sh hook, or .github/workflows/tripcord.yml) is
+# checked for what it implies only: the two missing files plus that
+# harness's hooks, or the workflow. Its state picks the clause:
 #
-# settings.local.json is personal and is not part of this rule's files,
-# the same exclusion TC-CFG-004 and TC-CFG-005 make for Claude Code.
+#   missing     the file, hook, or Copilot setup step is not there.
+#   changed     it differs both from what init renders for the pin
+#               recorded in embed.json and from the SHA-256 embed.json
+#               records. bootstrap.sh and tripcord.yml are re-rendered
+#               from the pin, so an embed.json whose digests were edited
+#               to match a tampered bootstrap.sh still reports changed.
+#               A symlinked .tripcord or bootstrap.sh is changed too.
+#               Files are hashed with CRLF normalized to LF.
+#   stale       it matches the SHA-256 embed.json records but not what
+#               this build of init renders: an older Tripcord wrote it.
+#   unreadable  the file cannot be read or does not parse.
+#
+# With a base revision (scan --since or --base, which the reusable
+# workflow passes on pull requests) a change is also compared with the
+# base when the base had an embed:
+#
+#   removed     the base had the file or a Tripcord hook and the change
+#               removes it, including removing the whole embed.
+#   dropped     the change drops a harness from embed.json.
+#   repinned    the change changes the pinned version or a checksum. A
+#               consistent re-pin of embed.json and bootstrap.sh is the
+#               one bootstrap edit the head tree alone cannot tell from
+#               a release update, so it needs review.
+#   weakened    the change's .tripcord/policy.yaml (and what it extends)
+#               reports or fails on less than the base's: a weaker mode,
+#               a higher fail-on, a dropped harness or rule, a lower
+#               severity override, a new exception, or a removed custom
+#               rule or lock. With a base, scan loads the repository
+#               policy from the base, as pr-context does, and never
+#               reads policy.local.yaml, so the change cannot relax the
+#               scan of itself. This one applies whether or not the
+#               repository is embedded.
+#
+# .gitattributes carries the text eol=lf lines init writes for
+# bootstrap.sh, embed.json, tripcord.yml, and the Copilot hook file (see
+# "Files are hashed with CRLF normalized to LF" above): without them, a
+# later line for the same pattern (-text, eol=crlf), or the line itself
+# being gone, lets a CR survive in a file the check would otherwise
+# normalize away, while bash still sees it. The missing, changed,
+# removed, and unreadable states above apply to .gitattributes itself
+# the same way they apply to bootstrap.sh and the workflow.
+#
+# settings.local.json is personal, the same exclusion TC-CFG-004 and
+# TC-CFG-005 make for Claude Code, so the disableAllHooks clause skips
+# it. Claude Code and Copilot CLI apply it over the shared settings,
+# though, so one the repository tracks is shared configuration. Both
+# harnesses merge hooks across files rather than letting a local one
+# replace the shared file's for the same event, so only disableAllHooks
+# is checked. In an embedded repository, and with a base revision,
+# internal/embedded checks each tracked settings.local.json:
+#
+#   local-disabled  it sets disableAllHooks: true.
+#
+# A settings.local.json git does not track stays personal and is not
+# reported.
+#
+# .tripcord/policy.local.yaml is the same kind of per-checkout layer:
+# scan.md documents it as never read for a head compared with a base,
+# and tripcord init --embed gitignores it, so it is meant to stay
+# personal too. A copy the repository tracks, or a staged change
+# stages, overrides the effective policy for everyone who checks the
+# branch out, not only the person who committed it, the opposite of
+# what a local layer is for, and the scan does not load it (so it
+# cannot relax the decision on itself, including on this clause).
+# internal/embedded reports it, in an embedded repository or with a
+# base revision, the same gate as settings.local.json:
+#
+#   local-policy  the repository tracks, or a staged change stages,
+#                 .tripcord/policy.local.yaml.
 id: TC-CFG-016
 pack: tripcord/core
 title: "Shared config turns off every hook"
 severity: high
-harness: [claude, copilot, gemini]
+harness: [claude, copilot, cursor, gemini, generic]
 files:
   - "**/.claude/settings.json"
   - "**/.github/copilot/settings.json"
   - "**/.github/hooks/*.json"
   - "**/.gemini/settings.json"
+  - "**/.cursor/hooks.json"
+  - "**/.tripcord/bootstrap.sh"
+  - "**/.tripcord/embed.json"
+  - "**/.github/workflows/tripcord.yml"
+  - "**/.github/workflows/copilot-setup-steps.yml"
+  - "**/.claude/settings.local.json"
+  - "**/.github/copilot/settings.local.json"
+  - "**/.tripcord/policy.yaml"
+  - "**/.tripcord/policy.local.yaml"
+  # Case-insensitive: internal/embedded's policyLocal reports a case
+  # variant of .tripcord/policy.local.yaml (e.g. .tripcord/Policy.local.yaml
+  # or .TRIPCORD/policy.local.yaml) at its own real, differently-cased
+  # path, the shape a case-insensitive checkout (macOS, Windows) resolves
+  # the policy loader's own file read to behind git's back. doublestar
+  # globs match case-exactly, so the plain .tripcord/policy.local.yaml
+  # glob above never matches that reported path; this glob, built from a
+  # [Xx] character class per letter, does, on every host, Linux included.
+  - "**/.[tT][rR][iI][pP][cC][oO][rR][dD]/[pP][oO][lL][iI][cC][yY].[lL][oO][cC][aA][lL].[yY][aA][mM][lL]"
+  - "**/.gitattributes"
 when: |
-  config.kind == "permissions" && config.scope == "repo" && has(payload.setting) && (
-    (config.harness in ["claude", "copilot"] && payload.setting == "disableAllHooks" &&
-      has(payload.value) && payload.value == true) ||
-    (config.harness == "gemini" && payload.setting == "hooksConfig" &&
-      has(payload.value) && type(payload.value) == map &&
-      has(payload.value.enabled) && payload.value.enabled == false))
-fix: "Remove disableAllHooks (Claude Code, Copilot) or hooksConfig.enabled: false (Gemini CLI) from the shared file. Disabling every hook also disables any hook-based guard the harness would otherwise run, including Tripcord's own once it registers one; to pause a single hook, remove that hook's own entry or use the harness's managed-hooks allow list instead of a blanket switch."
+  config.kind == "permissions" && config.scope == "repo" && has(payload.setting)
+severity_when:
+  - severity: high
+    when: |
+      has(payload.setting) && !config.path.matches(r'''(?i)(^|/)settings\.local\.json$''') && (
+        (config.harness in ["claude", "copilot"] && payload.setting == "disableAllHooks" &&
+          has(payload.value) && payload.value == true) ||
+        (config.harness == "gemini" && payload.setting == "hooksConfig" &&
+          has(payload.value) && type(payload.value) == map &&
+          has(payload.value.enabled) && payload.value.enabled == false))
+  - severity: high
+    title: "Tripcord embed is missing part of its guard"
+    when: |
+      has(payload.setting) && payload.setting == "tripcordGuard" && has(payload.state) && payload.state == "missing"
+    fix: "Restore the missing file, hook, or setup step with `tripcord init --embed --force` using the version and --sha256 pins recorded in .tripcord/embed.json. To stop using a harness, remove it from the harnesses list in .tripcord/embed.json in a reviewed change instead of deleting its hook."
+  - severity: high
+    title: "Tripcord guard was edited"
+    when: |
+      has(payload.setting) && payload.setting == "tripcordGuard" && has(payload.state) && payload.state == "changed"
+    fix: "Restore the file with `tripcord init --embed --force` using the pins recorded in .tripcord/embed.json, and review who changed it. bootstrap.sh, tripcord.yml, the Copilot setup step, and the hook entries must stay exactly as init writes them; edits to embed.json's digests do not make an edited file pass."
+  - severity: high
+    title: "Tripcord guard was written by an older Tripcord"
+    when: |
+      has(payload.setting) && payload.setting == "tripcordGuard" && has(payload.state) && payload.state == "stale"
+    fix: "Rerun `tripcord init --embed --force` with the same --version and --sha256 pins to rewrite the guard in this release's form, and commit the result."
+  - severity: high
+    title: "Tripcord guard file cannot be read"
+    when: |
+      has(payload.setting) && payload.setting == "tripcordGuard" && has(payload.state) && payload.state == "unreadable"
+    fix: "Make the file a regular file inside the repository that parses again (JSON, JSONC for Cursor, or YAML), then rerun `tripcord init --embed --force` with the pins recorded in .tripcord/embed.json."
+  - severity: high
+    title: "This change removes Tripcord's guard"
+    when: |
+      has(payload.setting) && payload.setting == "tripcordGuard" && has(payload.state) && payload.state == "removed"
+    fix: "Keep the Tripcord embed: restore the removed file or hook from the base branch, or rerun `tripcord init --embed --force` with the base's pins. Removing the embed on purpose needs its own reviewed change with a code owner's approval."
+  - severity: high
+    title: "This change drops a harness from the Tripcord embed"
+    when: |
+      has(payload.setting) && payload.setting == "tripcordGuard" && has(payload.state) && payload.state == "dropped"
+    fix: "Keep the harness in .tripcord/embed.json and its hook in place unless the repository no longer uses that harness; dropping it turns off Tripcord's guard for that harness."
+  - severity: high
+    title: "This change re-pins Tripcord"
+    when: |
+      has(payload.setting) && payload.setting == "tripcordGuard" && has(payload.state) && payload.state == "repinned"
+    fix: "Check that the new version and every --sha256 match a published Tripcord release, then approve. A re-pin rewrites the binary every hook runs, so it needs the same review as a dependency update."
+  - severity: high
+    title: "This change weakens the Tripcord policy"
+    when: |
+      has(payload.setting) && payload.setting == "tripcordGuard" && has(payload.state) && payload.state == "weakened"
+    fix: "Keep the base branch's mode, fail-on, harnesses, rules.include, severity overrides, exceptions, custom rules, and locks in .tripcord/policy.yaml and what it extends. This scan used the base's policy, not the change's; relaxing it needs its own reviewed change with a code owner's approval."
+  - severity: high
+    title: "Committed settings.local.json turns off every hook"
+    when: |
+      has(payload.setting) && payload.setting == "tripcordGuard" && has(payload.state) && payload.state == "local-disabled"
+    fix: "Remove the file from the repository with `git rm --cached` and add it to .gitignore. settings.local.json is personal; Claude Code and Copilot CLI apply it over the shared settings, so a committed disableAllHooks turns off Tripcord's guard for everyone who checks out the branch."
+  - severity: high
+    title: "A committed policy.local.yaml overrides everyone's policy"
+    when: |
+      has(payload.setting) && payload.setting == "tripcordGuard" && has(payload.state) && payload.state == "local-policy"
+    fix: "Remove the file from the repository with `git rm --cached`; `tripcord init --embed` adds it to .gitignore. policy.local.yaml is a per-checkout layer; a committed, or staged, copy overrides the effective policy for everyone who checks out the branch, not only the person who added it, and the scan does not use it to decide its own outcome."
+fix: "Remove disableAllHooks (Claude Code, Copilot) or hooksConfig.enabled: false (Gemini CLI) from the shared file. Disabling every hook also disables any hook-based guard the harness would otherwise run, including Tripcord's own; to pause a single hook, remove that hook's own entry or use the harness's managed-hooks allow list instead of a blanket switch."
 refs:
   - https://code.claude.com/docs/en/hooks
+  - https://code.claude.com/docs/en/settings
   - https://docs.github.com/en/copilot/reference/hooks-reference
+  - https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference
   - https://geminicli.com/docs/
+  - https://cursor.com/docs/hooks
   - https://novee.security/blog/breaking-ai-agent-sandboxes/

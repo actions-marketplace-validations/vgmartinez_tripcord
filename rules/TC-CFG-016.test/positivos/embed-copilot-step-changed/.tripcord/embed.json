@@ -1,0 +1,39 @@
+{
+  "schema": "tripcord.embed/v1",
+  "version": "0.1.0",
+  "sha256": {
+    "linux-x64": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "harnesses": [
+    "copilot"
+  ],
+  "files": [
+    {
+      "path": ".tripcord/bootstrap.sh",
+      "sha256": "7d1a978ee7315ce6cdf48d5f28fa2c913e3ecfe831549f3baf3830a6fb11df77"
+    },
+    {
+      "path": ".github/workflows/tripcord.yml",
+      "sha256": "de28ae793bb4bb4945dc4b54f7afba5675bb407f98d2fafff6724ea536aff2ba"
+    },
+    {
+      "path": ".github/workflows/copilot-setup-steps.yml",
+      "step": "Tripcord bootstrap",
+      "sha256": "591047426ca45077ff170cb8c7b8bb8d7b5d722679189ce064ba23236df25a73"
+    }
+  ],
+  "hooks": [
+    {
+      "harness": "copilot",
+      "path": ".github/hooks/tripcord.json",
+      "event": "sessionStart",
+      "sha256": "f5d43cbc60daa916c8625aca341397decf39f554067a2e2c617667de096dac2d"
+    },
+    {
+      "harness": "copilot",
+      "path": ".github/hooks/tripcord.json",
+      "event": "preToolUse",
+      "sha256": "162e8cb9c8b2cda4fdecf270ed3040da649e788761d0feee700189c6aa5b6fe0"
+    }
+  ]
+}
