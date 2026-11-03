@@ -3,6 +3,7 @@ package githubaction_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -455,6 +456,87 @@ func TestPreCommitHookContract(t *testing.T) {
 	}
 	if !strings.HasPrefix(match[1], match[2]) {
 		t.Fatalf("docs pin %s does not match comment %s", match[1], match[2])
+	}
+	// The pin must be a commit that actually ships the hook. 6944e28 is
+	// in history and has no .pre-commit-hooks.yaml, so this fails closed
+	// on that old pin. A local shallow clone that does not have the
+	// commit object skips. CI must fail instead, so a depth-1 checkout
+	// cannot hide a stale pin.
+	requirePinnedHookManifest(t, filepath.Join("..", ".."), match[1])
+}
+
+// ciRequiresPinnedObject reports whether a missing pin must fail the
+// test. GitHub Actions sets CI and GITHUB_ACTIONS; either being
+// non-empty means this is CI, and the checkout needs fetch-depth: 0.
+func ciRequiresPinnedObject(getenv func(string) string) bool {
+	return getenv("CI") != "" || getenv("GITHUB_ACTIONS") != ""
+}
+
+// requirePinnedHookManifest checks that sha's tree contains
+// .pre-commit-hooks.yaml and that the manifest declares tripcord-config.
+// A missing commit object skips on a local run and fails in CI.
+func requirePinnedHookManifest(t *testing.T, root, sha string) {
+	t.Helper()
+	if !gitObjectExists(t, root, sha) {
+		if ciRequiresPinnedObject(os.Getenv) {
+			t.Fatalf("pinned rev %s is not in the local git object database; the checkout needs fetch-depth: 0", sha)
+		}
+		t.Skipf("pinned rev %s is not in the local git object database; skipping the .pre-commit-hooks.yaml check (shallow clone)", sha)
+	}
+	if !gitObjectExists(t, root, sha+":.pre-commit-hooks.yaml") {
+		t.Fatalf("pinned rev %s does not contain .pre-commit-hooks.yaml", sha)
+	}
+	show := exec.Command("git", "--no-pager", "show", sha+":.pre-commit-hooks.yaml")
+	show.Dir = root
+	body, err := show.Output()
+	if err != nil {
+		t.Fatalf("git show %s:.pre-commit-hooks.yaml: %v", sha, err)
+	}
+	var hooks []map[string]any
+	if err := yaml.Unmarshal(body, &hooks); err != nil {
+		t.Fatalf("pinned .pre-commit-hooks.yaml: %v", err)
+	}
+	for _, hook := range hooks {
+		if fmt.Sprint(hook["id"]) == "tripcord-config" {
+			return
+		}
+	}
+	t.Fatalf("pinned rev %s .pre-commit-hooks.yaml has no tripcord-config hook", sha)
+}
+
+// gitObjectExists reports whether git cat-file -e accepts spec. A missing
+// git binary fails the test; a missing object returns false.
+func gitObjectExists(t *testing.T, root, spec string) bool {
+	t.Helper()
+	cmd := exec.Command("git", "cat-file", "-e", spec)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return true
+	}
+	if _, ok := err.(*exec.ExitError); ok {
+		return false
+	}
+	t.Fatalf("git cat-file -e %s: %v\n%s", spec, err, out)
+	return false
+}
+
+func TestCIRequiresPinnedObject(t *testing.T) {
+	getenv := func(string) string { return "" }
+	if ciRequiresPinnedObject(getenv) {
+		t.Fatal("empty environment wants a local skip")
+	}
+	for _, key := range []string{"CI", "GITHUB_ACTIONS"} {
+		set := key
+		getenv = func(got string) string {
+			if got == set {
+				return "true"
+			}
+			return ""
+		}
+		if !ciRequiresPinnedObject(getenv) {
+			t.Fatalf("%s non-empty wants the checkout to fail", key)
+		}
 	}
 }
 
