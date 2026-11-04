@@ -99,7 +99,16 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdout, stderr io.Writer) (code int) {
+	// A panic is an internal error, exit 4, as in hook mode: the Go
+	// runtime's own report would print the panic value, which can quote
+	// configuration, and a stack trace.
+	defer func() {
+		if p := recover(); p != nil {
+			writeString(stderr, "tripcord: "+errInternal.Error()+"\n")
+			code = int(exitcode.Internal)
+		}
+	}()
 	if len(args) == 0 {
 		return writeString(stdout, usage)
 	}
@@ -119,8 +128,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "hook":
 		return runHook(args[1:], stdout, stderr)
 	default:
-		msg := fmt.Sprintf("tripcord: unknown command %q\n\n%s", args[0], usage)
-		writeString(stderr, msg)
+		// Redact the raw command before quoting it: %q escapes a
+		// control byte such as a line continuation's newline into the
+		// two literal characters "\n", which no longer matches the
+		// redactor's line-continuation pattern, letting a value after
+		// one leak. output.Message, applied first, sees the actual
+		// byte and redacts it.
+		command := output.Message(foldHome(args[0]))
+		writeString(stderr, fmt.Sprintf("tripcord: unknown command %q\n\n%s", command, usage))
 		return int(exitcode.Config)
 	}
 }
@@ -332,14 +347,15 @@ func (t scanTarget) internalError(stderr io.Writer, err error) int {
 }
 
 // redactError renders err the way configError and internalError do: the
-// user's home directory folded to "~", and, for a --staged scan, the
-// private staged tree's absolute path folded to ".".
+// user's home directory folded to "~", for a --staged scan the private
+// staged tree's absolute path folded to ".", then redacted and capped
+// like errorText.
 func (t scanTarget) redactError(err error) string {
-	msg := redactHomeFromError(err)
+	msg := foldHome(err.Error())
 	if t.redactRoot != "" {
 		msg = strings.ReplaceAll(msg, t.redactRoot, ".")
 	}
-	return msg
+	return output.Message(msg)
 }
 
 // scanTree scans t.root with opts, writes the findings, and returns the
@@ -440,6 +456,11 @@ func scanTree(ctx context.Context, t scanTarget, opts scanOptions, stdout, stder
 	effective, err := policy.Load(policyOpts)
 	if err != nil {
 		return t.configError(stderr, err)
+	}
+	if !effective.Redact {
+		if code := warnRedactFalse(stderr, t.prog, effective.Provenance["privacy.redact"].Source); code != int(exitcode.OK) {
+			return code
+		}
 	}
 	var weakened []model.ConfigItem
 	if headPolicy != nil {
@@ -836,7 +857,14 @@ func scanRoot(scanPath string) (string, error) {
 	}
 	info, err := os.Stat(absolute)
 	if err != nil {
-		return "", fmt.Errorf("scan path: %w", err)
+		// Name the argument as given, redacted, not the error's own
+		// path: filepath.Abs cleans "https://u:pw@h" into "https:/u:pw@h",
+		// which no URL userinfo pattern matches any more.
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			err = pathErr.Err
+		}
+		return "", fmt.Errorf("scan path %q: %w", output.Message(foldHome(scanPath)), err)
 	}
 	if !info.IsDir() {
 		absolute = filepath.Dir(absolute)
@@ -1143,7 +1171,7 @@ func sanitizeGitStderr(stderr []byte) string {
 		msg = pathx.TildeHome(home, msg)
 	}
 	msg = strings.ReplaceAll(msg, "\n", "; ")
-	return truncateUTF8(msg, maxGitStderrBytes)
+	return truncateUTF8(output.DefaultRedactor(msg), maxGitStderrBytes)
 }
 
 // truncateUTF8 caps value at limit bytes, cutting on a UTF-8 rune
@@ -1314,16 +1342,31 @@ var loadRules = func(limits rules.Limits) (*rules.Env, *rules.Catalog, error) {
 	return env, catalog, nil
 }
 
-// redactHomeFromError rewrites the running user's home directory to "~"
-// in err's message, the same way sanitizeGitStderr already does for
-// git's own diagnostics. scanTarget's configError and internalError are
-// the only two paths every scan error passes through (--output's
-// output.PathError, --policy/--org-policy's policy.Error, and the scan
-// PATH argument's wrapped os.Stat/filepath.Abs failures among them), so
-// redacting here covers all of them without each caller needing to
-// remember to do it itself.
-func redactHomeFromError(err error) string {
-	msg := err.Error()
+// errorText is err's message as the CLI prints it: the running user's
+// home directory rewritten to "~", the same way sanitizeGitStderr does
+// for git's own diagnostics, then redacted and capped by output.Message.
+// An error can quote configuration, a hook event, or a URL (a CEL
+// error quotes the value it failed on), so every error the CLI writes
+// goes through here: scanTarget's configError and internalError, init,
+// preopen, pr-context, and hook.
+func errorText(err error) string {
+	return output.Message(foldHome(err.Error()))
+}
+
+// warnRedactFalse writes, once per run and only to stderr, never
+// stdout (a harness may parse hook stdout as its own output; scan and
+// init have no such reader), the notice that a policy layer's
+// privacy.redact: false has no effect: it is kept as a reserved key
+// (see docs/privacy.md) and every surface still redacts regardless of
+// it in v0. source names the file that set it, so the person who wrote
+// it, or whoever owns the org policy that did, can find it.
+func warnRedactFalse(stderr io.Writer, prog, source string) int {
+	return writeString(stderr, prog+": privacy.redact is false in "+output.Message(foldHome(source))+
+		", but v0 always redacts; the key is reserved for a later release and has no effect\n")
+}
+
+// foldHome rewrites the running user's home directory in msg to "~".
+func foldHome(msg string) string {
 	home, homeErr := os.UserHomeDir()
 	if homeErr != nil || home == "" {
 		return msg

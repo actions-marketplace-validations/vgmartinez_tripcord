@@ -40,7 +40,7 @@ var secretPatterns = []shapePattern{
 	{regexp.MustCompile(`ya29\.[A-Za-z0-9._-]{20,}`), []string{"ya29."}, false},
 	{regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`), []string{"AIza"}, false},
 	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`), []string{"eyJ"}, false},
-	{regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}=*`), []string{"bearer"}, true},
+	{regexp.MustCompile(`(?i)\bbearer(?:\s|` + lineContinuation + `)+[A-Za-z0-9._~+/-]{20,}=*`), []string{"bearer"}, true},
 	{regexp.MustCompile(`https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]+`), []string{"https://hooks.slack.com/"}, false},
 }
 
@@ -77,7 +77,9 @@ func (p shapePattern) mayMatch(value, lower string) bool {
 // make the URL's own scheme and host unreadable).
 // The password part runs to the LAST "@" before the host, the same way
 // net/url splits userinfo, so "https://user:p@ss@host" does not leak "ss".
-var urlUserinfoPattern = regexp.MustCompile(`(://)([^/\s:@]+:[^/?#\s]*)(@)`)
+// The username may be empty ("redis://:pw@h", "postgresql://:pw@db"): a
+// scheme that carries only a password still carries a credential.
+var urlUserinfoPattern = regexp.MustCompile(`(://)([^/\s:@]*:[^/?#\s]*)(@)`)
 
 // urlUserinfoSlashPattern is urlUserinfoPattern for a password that
 // contains "/" ("https://user:pa/ss@host"), which net/url cannot parse
@@ -85,7 +87,7 @@ var urlUserinfoPattern = regexp.MustCompile(`(://)([^/\s:@]+:[^/?#\s]*)(@)`)
 // "@". RedactURLUserinfo skips a match whose text before the first "/"
 // is all digits: that is a port and a path ("https://host:8080/x@y"),
 // not a password.
-var urlUserinfoSlashPattern = regexp.MustCompile(`(://)([^/\s:@]+:([^\s@?#]*/[^\s@?#]*))(@)`)
+var urlUserinfoSlashPattern = regexp.MustCompile(`(://)([^/\s:@]*:([^\s@?#]*/[^\s@?#]*))(@)`)
 
 // quotedOrBareValue is one assignment value: a double-quoted string that
 // correctly skips an escaped quote (\"), so {"password":"a\"b"} redacts
@@ -95,6 +97,33 @@ var urlUserinfoSlashPattern = regexp.MustCompile(`(://)([^/\s:@]+:([^\s@?#]*/[^\
 // unquoted run, which the two assignmentPattern variants below bound
 // differently.
 const quotedValue = `"(?:[^"\\\n]|\\.)*"|'[^'\n]*'`
+
+// lineContinuation is a shell backslash-newline. The shell deletes it,
+// so in "--token \<newline>  x" the token is x, not the backslash.
+const lineContinuation = `\\\r?\n`
+
+// equalsSeparator and spaceSeparator are the separators between a flag
+// and its value, either of which may continue onto the next line. A
+// space separator needs one blank that is not a continuation's newline:
+// "--token\<newline>x" is the shell word "--tokenx", not a flag and a
+// value.
+const (
+	equalsSeparator = `=(?:` + lineContinuation + `)*`
+	spaceSeparator  = `(?:` + lineContinuation + `)*\s(?:\s|` + lineContinuation + `)*`
+)
+
+// continuationLen returns the length of the lineContinuation at the
+// start of s, or 0.
+func continuationLen(s string) int {
+	switch {
+	case strings.HasPrefix(s, "\\\n"):
+		return 2
+	case strings.HasPrefix(s, "\\\r\n"):
+		return 3
+	default:
+		return 0
+	}
+}
 
 // A shell-style KEY=value assignment is redacted when its key is a
 // credential name (see CredentialName), as in GITHUB_TOKEN,
@@ -111,7 +140,7 @@ var assignmentEqualsValue = regexp.MustCompile(`^(?:` + quotedValue + `|` + unqu
 // assignmentHead is a candidate "name=" or "name:" found by
 // nextAssignmentHead: the name holds a credential stem, may be quoted,
 // and is followed by optional whitespace, the separator, and optional
-// whitespace.
+// whitespace and line continuations.
 type assignmentHead struct {
 	start                 int // the name, or the quote right before it
 	nameEnd               int
@@ -214,8 +243,14 @@ func nextAssignmentHead(value string, scan *stemScanner, pos int, sep byte) (ass
 			continue
 		}
 		j++
-		for j < len(value) && isRegexpSpace(value[j]) {
-			j++
+		for j < len(value) {
+			if n := continuationLen(value[j:]); n > 0 {
+				j += n
+			} else if isRegexpSpace(value[j]) {
+				j++
+			} else {
+				break
+			}
 		}
 		h.sep, h.valStart = value[sepStart:j], j
 		return h, true
@@ -329,7 +364,7 @@ const colonValueEnd = ";&|\"'\n)}"
 // Bearer, Basic, or token scheme, in both header ("Authorization: Bearer x")
 // and quoted/JSON ("Authorization":"Bearer x") spellings. The value is not
 // length-limited, and a closing quote is never consumed.
-var authorizationPattern = regexp.MustCompile(`(?i)(authorization["']?\s*:\s*["']?(?:bearer|basic|token)\s+)([^\s;&|"']+)`)
+var authorizationPattern = regexp.MustCompile(`(?i)(authorization["']?\s*:\s*["']?(?:bearer|basic|token)(?:\s|` + lineContinuation + `)+)([^\s;&|"']+)`)
 
 // SecretFlags lists the long-flag spellings whose value is a credential:
 // the --token/--secret/--password/--api-key family and a few common
@@ -409,7 +444,7 @@ func LooksLikeUserPass(value string) bool {
 // "--token --verbose" does not eat the next flag; an "=" value may
 // ("--token=-abc"), since "=" unambiguously ends the flag name.
 var (
-	secretFlagHead       = regexp.MustCompile(`(?i)^(["']?)(` + SecretFlagAlternation() + `)(["']?)(=|\s+)`)
+	secretFlagHead       = regexp.MustCompile(`(?i)^(["']?)(` + SecretFlagAlternation() + `)(["']?)(` + equalsSeparator + `|` + spaceSeparator + `)`)
 	secretFlagEqualValue = regexp.MustCompile(`^(?:` + quotedValue + `|` + unquotedCommandValue + `*)`)
 	secretFlagSpaceValue = regexp.MustCompile(`^(?:` + quotedValue + `|[^-\s;&|"'\n)` + "`" + `]` + unquotedCommandValue + `*)`)
 )
@@ -501,7 +536,7 @@ func unquote(value string) string {
 // curl's documented short form). Groups: flag, separator, value.
 // RedactUserFlags tries it only at a "-" that starts the text or follows
 // whitespace.
-var userFlagPattern = regexp.MustCompile(`(?i)^(` + UserFlagAlternation + `)(=|\s+|)(` + quotedValue + `|` + unquotedCommandValue + `*)`)
+var userFlagPattern = regexp.MustCompile(`(?i)^(` + UserFlagAlternation + `)(` + equalsSeparator + `|` + spaceSeparator + `|)(` + quotedValue + `|` + unquotedCommandValue + `*)`)
 
 // RedactUserFlags replaces the value of a curl-style -u/--user/-user flag
 // with [REDACTED] when it has "user:pass" shape, and returns the raw
@@ -638,20 +673,61 @@ func redactColonAssignments(value string, removed *[]string) string {
 	var spans literalSpans
 	spansFound := false
 	imageRefs := findContainerImageSpans(value)
+	lines := newLineIndex(value)
+	commentGaps := newCommentGapIndex(value)
 	pos := 0
 	for {
 		h, found := nextAssignmentHead(value, scan, pos, ':')
 		if !found {
 			break
 		}
-		body := ""
 		ok := (h.start == 0 || !isAlnum(value[h.start-1])) && CredentialName(h.name) &&
 			!imageRefs.contains(h.start)
 		if ok && !spansFound {
 			spans, spansFound = findLiteralSpans(value), true
 		}
-		if ok = ok && !spans.contains(h.start); ok {
-			body = colonValue(value[h.valStart:], colonValueStop(value, h.start, h.openQuote, h.closeQuote, h.sep))
+		ok = ok && !spans.contains(h.start)
+		if ok {
+			// A block scalar ("api_key: |") or a nested mapping
+			// ("token:\n  pw: x") is the key's value even when the key is
+			// quoted ("'api_key': |"), so both are checked before
+			// colonValueStop's mapping stops apply. Each test is
+			// strict before it asks lines for the key's column, so a
+			// near miss ("api_key: |x") costs no line lookup.
+			blockStart, isBlock := blockScalarHeader(value, h.valStart, lines)
+			bodyStart := blockStart
+			if !isBlock {
+				blockStart, isBlock = nestedMappingStart(value, h)
+				bodyStart = blockStart
+			}
+			if !isBlock {
+				blockStart, bodyStart, isBlock = commentGapStart(value, h, lines, commentGaps)
+			}
+			if isBlock {
+				bodyEnd := blockBodyEnd(value, bodyStart, lines.column(h.start))
+				if bodyEnd > blockStart {
+					b.WriteString(value[pos:blockStart])
+					*removed = append(*removed, value[blockStart:bodyEnd])
+					b.WriteString(redactedBlockScalarBody(value[blockStart:bodyEnd]))
+					pos = bodyEnd
+					continue
+				}
+				// An empty block scalar, or a "nested" key that is a
+				// sibling at the key's own indentation ("token:\npw: x"):
+				// h has no value; the loop goes on to that next key.
+				end := max(blockStart, h.valStart)
+				b.WriteString(value[pos:end])
+				pos = end
+				continue
+			}
+		}
+		stop := ""
+		if ok {
+			stop = colonValueStop(value, h.start, h.openQuote, h.closeQuote, h.sep)
+		}
+		body := ""
+		if ok {
+			body = colonValue(value[h.valStart:], stop)
 		}
 		b.WriteString(value[pos:h.valStart])
 		pos = h.valStart
@@ -664,6 +740,124 @@ func redactColonAssignments(value string, removed *[]string) string {
 	}
 	b.WriteString(value[pos:])
 	return b.String()
+}
+
+// blockScalarHeader recognizes a YAML block scalar header starting at
+// valStart: "|" or ">", an optional chomping indicator ("-" or "+") and
+// a single-digit indentation indicator, in either order, then nothing
+// but blanks or a "#" comment to the end of the line ("api_key: |-",
+// "api_key: >2", "api_key: |2-"). headerEnd is the offset just past the
+// header's line, where the block's content starts. ok is false for
+// anything else, including "|x", so the caller falls back to colonValue.
+func blockScalarHeader(value string, valStart int, lines *lineIndex) (headerEnd int, ok bool) {
+	if valStart >= len(value) || (value[valStart] != '|' && value[valStart] != '>') {
+		return 0, false
+	}
+	i := valStart + 1
+	for n := 0; n < 2 && i < len(value) && isBlockScalarIndicator(value[i]); n++ {
+		i++
+	}
+	for i < len(value) && (value[i] == ' ' || value[i] == '\t') {
+		i++
+	}
+	if i < len(value) && value[i] == '#' {
+		i = lines.lineEnd(i)
+	}
+	if i < len(value) && value[i] == '\r' {
+		i++
+	}
+	if i < len(value) && value[i] != '\n' {
+		return 0, false
+	}
+	if i < len(value) {
+		i++
+	}
+	return i, true
+}
+
+func isBlockScalarIndicator(c byte) bool {
+	return c == '-' || c == '+' || (c >= '1' && c <= '9')
+}
+
+// blockBodyEnd returns the offset past the block value starting at
+// start: every following line that is blank or indented more than
+// keyIndent, the key's own column. It reads each body line once and
+// only the indentation of the line that ends the block, so the caller,
+// which resumes after the block, stays linear.
+func blockBodyEnd(value string, start, keyIndent int) int {
+	i := start
+	for i < len(value) {
+		j := i
+		for j < len(value) && (value[j] == ' ' || value[j] == '\t') {
+			j++
+		}
+		if j < len(value) && value[j] != '\n' && value[j] != '\r' && j-i <= keyIndent {
+			break
+		}
+		if k := strings.IndexByte(value[j:], '\n'); k >= 0 {
+			i = j + k + 1
+		} else {
+			i = len(value)
+		}
+	}
+	return i
+}
+
+// lineIndex answers line questions about value for positions that only
+// move forward, in amortized constant time: scanning back to the start
+// of the line, or ahead to its end, once per candidate would make a
+// long line of candidates ("api_key: |x api_key: |x ...") quadratic.
+type lineIndex struct {
+	value     string
+	scanned   int // value[:scanned] has been searched for line starts
+	lineStart int // the start of the line holding scanned
+	nextNL    int // the first '\n' at or after the last lineEnd query
+}
+
+func newLineIndex(value string) *lineIndex { return &lineIndex{value: value, nextNL: -1} }
+
+// column returns pos's offset from the start of its line: every byte
+// before it on that line, blank or not, so a key after "- " or after
+// other text on its line ("x api_key: |") counts that text too. That
+// is the indentation YAML compares a block's content against.
+func (l *lineIndex) column(pos int) int {
+	if pos < l.scanned {
+		return pos - (strings.LastIndexByte(l.value[:pos], '\n') + 1)
+	}
+	if i := strings.LastIndexByte(l.value[l.scanned:pos], '\n'); i >= 0 {
+		l.lineStart = l.scanned + i + 1
+	}
+	l.scanned = pos
+	return pos - l.lineStart
+}
+
+// lineEnd returns the offset of the first '\n' at or after pos, or
+// len(value) when there is none.
+func (l *lineIndex) lineEnd(pos int) int {
+	if l.nextNL < pos {
+		if i := strings.IndexByte(l.value[pos:], '\n'); i >= 0 {
+			l.nextNL = pos + i
+		} else {
+			l.nextNL = len(l.value)
+		}
+	}
+	return l.nextNL
+}
+
+// redactedBlockScalarBody is a YAML block scalar's content, replaced by
+// one [REDACTED] line at the first line's own indentation, so a secret
+// split across lines by "|" or ">" is not left in the output the way a
+// single-line value would catch it.
+func redactedBlockScalarBody(body string) string {
+	indent := 0
+	for indent < len(body) && (body[indent] == ' ' || body[indent] == '\t') {
+		indent++
+	}
+	nl := ""
+	if strings.HasSuffix(body, "\n") {
+		nl = "\n"
+	}
+	return body[:indent] + redactedMarker + nl
 }
 
 // findContainerImageSpans returns tag-shaped image arguments in the only
@@ -733,6 +927,151 @@ func imageTag(value string) bool {
 		return false
 	}
 	return true
+}
+
+// nestedMappingStart reports whether h, a key whose colon is followed by
+// nothing but a newline, holds a nested mapping ("token:\n  pw: x",
+// "token:\n  \"pw\": x", "token:\n  \"pw\":x") rather than a plain scalar
+// wrapped onto the next line ("token:\n  opaque-value",
+// "api_key:\n  sk:X"). start is the offset of the line holding the
+// nested key, where the mapping starts. A nested key is a name,
+// optionally quoted, optional blanks, and a ":". An unquoted key needs
+// a space, tab, CR, LF, or the end of value after that colon, as in
+// YAML: a glued "sk:X" or a URL ("https://...") is a scalar, not a key.
+// A quoted key is a key even when its value is glued on ("\"pw\":X"),
+// because the quotes already ended the name.
+func nestedMappingStart(value string, h assignmentHead) (start int, ok bool) {
+	nl := strings.LastIndexByte(h.sep, '\n')
+	if nl < 0 {
+		return 0, false
+	}
+	pos := h.valStart
+	quoted := false
+	if pos < len(value) && (value[pos] == '"' || value[pos] == '\'') {
+		quoted = true
+		quote := value[pos]
+		pos++
+		for pos < len(value) && value[pos] != quote && value[pos] != '\n' {
+			pos++
+		}
+		if pos == len(value) || value[pos] != quote {
+			return 0, false
+		}
+		pos++
+	} else {
+		nameStart := pos
+		for pos < len(value) && isNameByte(value[pos]) {
+			pos++
+		}
+		if pos == nameStart {
+			return 0, false
+		}
+	}
+	for pos < len(value) && (value[pos] == ' ' || value[pos] == '\t') {
+		pos++
+	}
+	if pos == len(value) || value[pos] != ':' {
+		return 0, false
+	}
+	if pos++; !quoted && pos < len(value) {
+		switch value[pos] {
+		case ' ', '\t', '\r', '\n':
+		default:
+			return 0, false
+		}
+	}
+	return h.valStart - len(h.sep) + nl + 1, true
+}
+
+// commentGapStart reports whether h's value is more-indented content
+// after a YAML comment, which colonValue cannot see because it stops at
+// the first newline: "token: # c\n  X" and "token:\n  # c\n  X".
+// redactStart is h's value start, including every header or gap comment;
+// bodyStart is the first line of content whose indentation decides where
+// the value ends. A "#" with nothing indented after it is the value itself
+// ("token: #secret"), so this returns false and colonValue redacts it.
+func commentGapStart(value string, h assignmentHead, lines *lineIndex, gaps *commentGapIndex) (redactStart, bodyStart int, ok bool) {
+	i := h.valStart
+	for i < len(value) && (value[i] == ' ' || value[i] == '\t') {
+		i++
+	}
+	if i >= len(value) || value[i] != '#' {
+		return 0, 0, false
+	}
+	bodyStart = gaps.afterRun(i)
+	if bodyStart >= len(value) {
+		return 0, 0, false
+	}
+	keyIndent := lines.column(h.start)
+	first := bodyStart
+	for first < len(value) && (value[first] == ' ' || value[first] == '\t') {
+		first++
+	}
+	if first == len(value) || first-bodyStart <= keyIndent {
+		return 0, 0, false
+	}
+	return h.valStart, bodyStart, true
+}
+
+// commentGapIndex caches where each run of comment and blank lines ends.
+// It is separate from lineIndex: a later header can occur before that
+// run's cached end, so sharing a single forward line-end cache lets that
+// later header mistake a later line for the end of its own line. Heads
+// are scanned in source order, so a later head inside the most recent
+// run reuses its endpoint. That keeps "# token: #\n" repeated N times
+// linear: the first candidate scans the run and the rest look it up.
+type commentGapIndex struct {
+	value string
+	runs  []commentGapRun
+}
+
+func newCommentGapIndex(value string) *commentGapIndex {
+	return &commentGapIndex{value: value}
+}
+
+// afterRun returns the first non-comment, nonblank line after the
+// comment starting at start, or len(value) when there is none.
+func (c *commentGapIndex) afterRun(start int) int {
+	if n := len(c.runs); n > 0 {
+		last := c.runs[n-1]
+		if start >= last.start && start < last.end {
+			return last.end
+		}
+	}
+	i := start
+	for i < len(c.value) {
+		line := i
+		for i < len(c.value) && (c.value[i] == ' ' || c.value[i] == '\t') {
+			i++
+		}
+		switch {
+		case i == len(c.value):
+			c.cache(start, i)
+			return i
+		case c.value[i] == '#':
+			if end := strings.IndexByte(c.value[i:], '\n'); end >= 0 {
+				i += end + 1
+				continue
+			}
+			c.cache(start, len(c.value))
+			return len(c.value)
+		case c.value[i] == '\n':
+			i++
+		case c.value[i] == '\r' && i+1 < len(c.value) && c.value[i+1] == '\n':
+			i += 2
+		default:
+			c.cache(start, line)
+			return line
+		}
+	}
+	c.cache(start, len(c.value))
+	return len(c.value)
+}
+
+type commentGapRun struct{ start, end int }
+
+func (c *commentGapIndex) cache(start, end int) {
+	c.runs = append(c.runs, commentGapRun{start: start, end: end})
 }
 
 // colonValue returns the "key: value" value at the start of rest: a
@@ -826,6 +1165,14 @@ func placeholderSecret(value string) bool {
 	default:
 		return false
 	}
+}
+
+// PublishFinding returns finding as a sink publishes it, for a caller
+// that renders a finding itself: every string except the closed
+// vocabularies and the fingerprint redacted with redact, then capped at
+// MaxFieldBytes.
+func PublishFinding(finding model.Finding, redact Redactor) model.Finding {
+	return capFinding(redactFinding(finding, redact))
 }
 
 // redactFinding returns a deep copy of finding with redact applied to every

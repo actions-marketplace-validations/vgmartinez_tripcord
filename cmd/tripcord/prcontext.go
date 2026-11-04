@@ -17,6 +17,7 @@ import (
 	"github.com/vgmartinez/tripcord/internal/exitcode"
 	"github.com/vgmartinez/tripcord/internal/gitrun"
 	"github.com/vgmartinez/tripcord/internal/model"
+	"github.com/vgmartinez/tripcord/internal/output"
 	"github.com/vgmartinez/tripcord/internal/policy"
 	"github.com/vgmartinez/tripcord/internal/prcontext"
 )
@@ -128,7 +129,7 @@ func runPrContext(args []string, stdout, stderr io.Writer) int {
 	commits, warnings, readErr := prcontext.ReadCommits(context.Background(), repo, ev.Base, ev.Head)
 	if readErr != nil {
 		commits = nil
-		warnings = append(warnings, "commits and notes were not read: "+oneLineError(redactHomeFromError(readErr)))
+		warnings = append(warnings, "commits and notes were not read: "+oneLineError(errorText(readErr)))
 	}
 	result := prcontext.Detect(prcontext.Input{
 		PRLogin:      ev.Login,
@@ -225,7 +226,7 @@ func runPrContext(args []string, stdout, stderr io.Writer) int {
 		}
 		return int(exitcode.OK)
 	case cfg014.StatusIncomplete:
-		writeString(stderr, "tripcord pr-context: TC-CFG-014 incomplete: "+outcome.Reason+"\n")
+		writeString(stderr, "tripcord pr-context: TC-CFG-014 incomplete: "+output.Message(foldHome(outcome.Reason))+"\n")
 		return int(exitcode.Config)
 	default:
 		panic("pr-context: unhandled TC-CFG-014 status " + string(outcome.Status))
@@ -286,6 +287,7 @@ func parsePrContextFlags(args []string, stdout io.Writer) (prContextOptions, err
 }
 
 func renderPrContext(format string, result prcontext.Result, outcome cfg014.Outcome) (string, error) {
+	result, outcome = publishedPrContext(result, outcome)
 	switch format {
 	case "text", "gha":
 		return prcontext.FormatText(result) + formatCfg014Text(outcome), nil
@@ -301,6 +303,43 @@ func renderPrContext(format string, result prcontext.Result, outcome cfg014.Outc
 	default:
 		panic("prcontext: unhandled format " + format)
 	}
+}
+
+// publishedPrContext returns copies of result and outcome with every
+// string that comes from the pull request (a branch name, a login, a
+// trailer, a warning quoting git, a changed path) folded, redacted, and
+// capped like an error. The agent ids and statuses are closed
+// vocabularies, and GITHUB_OUTPUT carries only those.
+func publishedPrContext(result prcontext.Result, outcome cfg014.Outcome) (prcontext.Result, cfg014.Outcome) {
+	text := func(s string) string { return output.Message(foldHome(s)) }
+	signals := make([]prcontext.Signal, len(result.Signals))
+	for i, s := range result.Signals {
+		s.Value, s.Source = text(s.Value), text(s.Source)
+		signals[i] = s
+	}
+	if result.Signals != nil {
+		result.Signals = signals
+	}
+	if result.Warnings != nil {
+		warnings := make([]string, len(result.Warnings))
+		for i, w := range result.Warnings {
+			warnings[i] = text(w)
+		}
+		result.Warnings = warnings
+	}
+	outcome.Reason = text(outcome.Reason)
+	if outcome.Paths != nil {
+		paths := make([]string, len(outcome.Paths))
+		for i, p := range outcome.Paths {
+			paths[i] = text(p)
+		}
+		outcome.Paths = paths
+	}
+	if outcome.Finding != nil {
+		finding := output.PublishFinding(*outcome.Finding, output.DefaultRedactor)
+		outcome.Finding = &finding
+	}
+	return result, outcome
 }
 
 func formatCfg014Text(outcome cfg014.Outcome) string {
@@ -755,6 +794,6 @@ func prContextFail(stderr io.Writer, err error, config bool) int {
 	if errors.Is(err, gitrun.ErrNotInstalled) {
 		code = exitcode.Internal
 	}
-	writeString(stderr, "tripcord pr-context: "+redactHomeFromError(err)+"\n")
+	writeString(stderr, "tripcord pr-context: "+errorText(err)+"\n")
 	return int(code)
 }

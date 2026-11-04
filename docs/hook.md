@@ -98,7 +98,9 @@ both.
 
 The reason names the rules that decided, for example `tripcord blocked
 this tool call: ACME-001 (high): piping a download into a shell is not
-allowed`. It never includes the command or the input.
+allowed`. It never includes the command or the input. A custom rule's
+`message`, and every error below, is redacted, has the home directory
+shown as `~`, and is cut at 4096 bytes; see [privacy.md](privacy.md).
 
 ## Failures
 
@@ -108,11 +110,14 @@ A run that cannot decide is one of:
 - input that is empty, malformed, not a JSON object, for another event,
   or over the stdin limit;
 - no Git repository at or above the project directory;
-- an invalid policy, including a `custom` rule that does not compile;
+- an invalid policy, including a `custom` rule that does not compile
+  (exit 3, like the two failures above); a read failure, such as a
+  policy file this process cannot open, exits 4 instead;
 - an evaluation error, an exhausted CEL budget, or a normalized event
-  over its cap;
+  over its cap: these exit 4, the same as the internal error below, not
+  3, even though they come from the policy's own rules;
 - an internal error, including a panic, which is reported as
-  `internal error: <value>` without a stack trace;
+  `internal error`, without the panic value or a stack trace;
 - no decision within the deadline.
 
 By default (`--on-failure error`) it writes `tripcord hook: <error>` on
@@ -156,8 +161,8 @@ hook` process per event exceeds 25 ms.
 | --- | --- |
 | 0 | Allowed: allow, ask, warn, or audit. `--help` also exits 0. |
 | 2 | Blocked: deny, or any failure with `--on-failure block`. |
-| 3 | Invalid flags, input, or policy. |
-| 4 | Internal error, a policy read error, or no decision within the deadline. |
+| 3 | Invalid flags, input (including no Git repository), or an invalid policy (such as a `custom` rule that does not compile). |
+| 4 | A CEL evaluation error, an exhausted CEL budget, a normalized event over its cap, a policy read error, an internal error, or no decision within the deadline. |
 
 ## With `init --embed`
 
