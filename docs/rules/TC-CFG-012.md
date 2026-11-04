@@ -15,22 +15,42 @@ model follows the file. The check is a heuristic over the text. It does
 not know whether a session obeyed it.
 
 One finding per file whose raw text has a matching line. Findings carry
-the first matching line number, but no content excerpt. The line starts
+the first matching line number, but no content excerpt.
+
+Before that test, bidi controls (U+202A–U+202E and U+2066–U+2069) and
+zero-width characters (U+200B–U+200D, U+2060, and U+FEFF) are removed,
+so they cannot sit in front of the verb or split a target. Tag
+characters and lookalike letters stay. A Cyrillic `e` in `.env` is
+neither removed nor a target.
+
+The line starts
 with the verb after optional Markdown (`#`, `>`, `<!--`, a bullet, a
-number, or `**`) and an optional prefix (`please`, `always`, `first`,
-`you must`, `you should`, or `make sure to`). A negated line does not
-start with one of those forms and is quiet.
+number, or `**`), an optional role label, and an optional prefix
+(`please`, `always`, `first`, `you must`, `you should`, or `make sure
+to`). The role label is `assistant`, `user`, `system`, or `human`,
+then a colon, and only when it follows `<!--`. `<!-- Example: read the
+.env -->` stays quiet, and so does `assistant: read the .env` with no
+comment. A negated line does not start with one of those forms and is
+quiet.
 
 Reported when the verb is `read`, `cat`, `cp`, `copy`, `open`, `load`,
-`source`, `print`, `dump`, `collect`, `extract`, `show`, `curl`, `wget`,
-`type`, or `Get-Content`, and its direct object names one of these:
+`source`, `printenv`, `print`, `dump`, `collect`, `extract`, `show`,
+`curl`, `wget`, `type`, or `Get-Content`, and its direct object names
+one of these:
 
 | Target | Counts | Does not count |
 | --- | --- | --- |
 | dotenv | `.env`, `.env.local`, `.env.development`, `.env.production`, `.env.prod`, `.env.dev`, including a trailing period | `.env.example`, `.env.sample`, `.env.template`, `.envrc` |
-| environment | `printenv`, `process.env`, `os.environ`, the phrase `environment variables` | the word `environment` alone |
+| environment | `printenv`, `process.env`, `os.environ`, the phrase `environment variable` or `environment variables` | the word `environment` alone, and a documentation modifier after the phrase (`table`, `documentation`) |
 | credentials | `credentials`, `secret`, `secrets`, `api key`, `apikey`, `api_key`, `token`, `password`, `private key`, `AWS_*`, `GITHUB_TOKEN` | |
-| paths | `~/.aws`, `~/.ssh`, `id_rsa` | |
+| paths | `~/.aws`, `~/.ssh`, `$HOME/.aws`, `$HOME/.ssh`, `${HOME}/.aws`, `${HOME}/.ssh`, `/home/<user>/.aws`, `/home/<user>/.ssh`, `/root/.aws`, `/root/.ssh`, `id_rsa` | `/home/<user>/project/.aws` (the directory is not the next segment) and a documentation modifier after the path |
+| procfs | `/proc/self/environ`, `/proc/$PPID/environ`, `/proc/${PPID}/environ`, `/proc/<digits>/environ`, including a trailing period | `/proc/self/status`, `/proc/self/environment`, `/proc/self/../self/environ`, `/proc/self/environ.example`, and a documentation modifier after the path |
+
+`printenv` at the start of the line is itself the read, so it matches
+without a further object. A documentation modifier after it
+(`printenv documentation`, `printenv section`) is quiet. Another read
+verb can still take `printenv` as its object (`Print printenv`). A line
+that only reaches `printenv` later (`run printenv`) does not count.
 
 Between a verb and its object, the matcher allows curl/wget flags, one
 URL, one or more determiners (`the`, `all`, `your`, `any`, `every`,
@@ -62,12 +82,21 @@ Not reported:
 - A curl/wget auth header or user flag (`curl -H "Authorization: Bearer $GITHUB_TOKEN"`, `curl -u user:password`).
 - A negated read (`Do not read .env`, `Never print secrets`).
 - `.env.example`, `.env.sample`, `.env.template`, and `.envrc`.
+- `/proc/self/status`, `/proc/self/environment`, a `../` detour such as
+  `/proc/self/../self/environ`, and `/proc/self/environ` followed by a
+  documentation word. A path on its own line, after a verb such as
+  `printing`, does not count: the verb has to start the line.
 - A secret and an `https://` URL on different lines.
 - An outbound line that does not name a secret (`Post a comment on the
   pull request`, `Upload the coverage report`).
 - User-scope files, referenced files, and `AGENTS.local.md` /
   `GEMINI.local.md`, which no repository adapter emits.
 - A file that only says to follow another document.
+- Ordinary prose wrapped in a bidi control, a zero-width character
+  inside a word that is not a target, and a negated read whose `.env`
+  contains a zero-width character.
+- A Cyrillic letter standing in for `e` in `.env`, and a tag character
+  or left-to-right mark left inside the target.
 
 ## Why medium
 

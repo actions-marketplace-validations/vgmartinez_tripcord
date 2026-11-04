@@ -6,15 +6,16 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/vgmartinez/tripcord/internal/hiddenchar"
 	"github.com/vgmartinez/tripcord/internal/model"
 )
 
 var (
-	instructionPrefix    = regexp.MustCompile(`(?i)^[ \t]*(?:(?:#{1,6}|>+|<!--)[ \t]*|(?:[-*+]|\d+[.)])[ \t]+|\*\*[ \t]*)*(?:(?:please|always|first|you[ \t]+(?:must|should)|make[ \t]+sure[ \t]+to)[,:; \t]+)*`)
-	instructionRead      = regexp.MustCompile(`(?i)\b(?:read|cat|cp|copy|open|load|source|print|dump|collect|extract|show|curl|wget|type|get-content)\b`)
+	instructionPrefix    = regexp.MustCompile(`(?i)^[ \t]*(?:(?:#{1,6}|>+|<!--[ \t]*(?:(?:assistant|user|system|human):[ \t]+)?)[ \t]*|(?:[-*+]|\d+[.)])[ \t]+|\*\*[ \t]*)*(?:(?:please|always|first|you[ \t]+(?:must|should)|make[ \t]+sure[ \t]+to)[,:; \t]+)*`)
+	instructionRead      = regexp.MustCompile(`(?i)\b(?:read|cat|cp|copy|open|load|source|printenv|print|dump|collect|extract|show|curl|wget|type|get-content)\b`)
 	instructionOpenPR    = regexp.MustCompile(`(?i)^[ \t]+(?:a[ \t]+)?(?:pull[ \t]+request|pr)\b`)
 	instructionSend      = regexp.MustCompile(`(?i)\b(?:send|post|upload|email|exfiltrate|transmit|forward)\b`)
-	instructionSecret    = regexp.MustCompile(`(?i)(?:\.env(?:\.(?:local|production|development|prod|dev))?(?:\.?(?:[^\w.]|$)|$)|\bprintenv\b|\bprocess\.env\b|\bos\.environ\b|environment variables|\bcredentials\b|\bsecrets?\b|api[_ ]?keys?\b|\btokens?\b|\bpasswords?\b|private key|~/\.aws|~/\.ssh|\bid_rsa\b|\b(?:aws_[a-z0-9_]+|github_token)\b)`)
+	instructionSecret    = regexp.MustCompile(`(?i)(?:\.env(?:\.(?:local|production|development|prod|dev))?(?:\.?(?:[^\w.]|$)|$)|\bprintenv\b|\bprocess\.env\b|\bos\.environ\b|environment variables?|\bcredentials\b|\bsecrets?\b|api[_ ]?keys?\b|\btokens?\b|\bpasswords?\b|private key|(?:~|\$HOME|\$\{HOME\}|/root|/home/[^\s/]+)/\.(?:aws|ssh)|/proc/(?:self|\$(?:\{PPID\}|PPID)|\d+)/environ(?:\.?(?:[^\w.]|$)|$)|\bid_rsa\b|\b(?:aws_[a-z0-9_]+|github_token)\b)`)
 	instructionObject    = regexp.MustCompile(`(?i)^[ \t]*(?:(?:--?[a-z][a-z0-9-]*(?:[= ][^ \t]*)?[ \t]+))*?(?:https?://[^ \t]+[ \t]+)?(?:(?:the|all|your|my|our|this|these|any|every|each|its|their|those)[ \t]+)*(?:(?:contents?|values?)[ \t]+of[ \t]+)?(?:\$env:)?(?:[` + "`" + `'"@][ \t]*)?`)
 	instructionModifier  = regexp.MustCompile(`(?i)^[ \t]*(?:-[a-z]|(?:sections?|polic(?:y|ies)|flows?|counts?|usage|budgets?|docs?|documentation|readme|tables?|runbooks?|design|handling|management|templates?|reset|fields?|requirements?|pages?|code|rotation|formats?|limits?|rules?|guides?|examples?|scopes?|refresh|expiry|expiration|validation|forms?)\b)`)
 	instructionClauseEnd = regexp.MustCompile(`[;]|(?:\.(?:[ \t]|$))`)
@@ -33,6 +34,7 @@ var (
 // the line text: findings expose only this coordinate.
 func instructionMatchLine(content string) int {
 	for line, text := range strings.Split(content, "\n") {
+		text = stripInstructionHidden(text)
 		prefix := instructionPrefix.FindStringIndex(text)
 		if prefix == nil {
 			continue
@@ -44,6 +46,14 @@ func instructionMatchLine(content string) int {
 					continue
 				}
 				verb := strings.ToLower(rest[read[0]:read[1]])
+				// printenv is the read: it names no further object. A
+				// documentation modifier ("printenv documentation") is quiet.
+				if verb == "printenv" {
+					if instructionModifier.MatchString(rest[read[1]:]) {
+						continue
+					}
+					return line + 1
+				}
 				if (verb == "curl" || verb == "wget") && instructionSecret.MatchString(instructionCurlNoise.ReplaceAllString(instructionClause(rest[read[1]:]), " ")) {
 					return line + 1
 				}
@@ -67,6 +77,20 @@ func instructionMatchLine(content string) int {
 		}
 	}
 	return 0
+}
+
+// stripInstructionHidden drops bidi controls and zero-width characters
+// so they cannot sit in front of a verb or split a target. Tag
+// characters and other letters, including homoglyphs, stay.
+func stripInstructionHidden(text string) string {
+	return strings.Map(func(r rune) rune {
+		switch hiddenchar.Class(r) {
+		case hiddenchar.Bidi, hiddenchar.ZeroWidth:
+			return -1
+		default:
+			return r
+		}
+	}, text)
 }
 
 func instructionDirectSecret(text string) bool {

@@ -18,18 +18,35 @@
 # The match is on the raw whole file, including frontmatter. The raw view
 # is evaluation-only; findings contain only the line number, never text.
 #
+# Bidi controls (U+202A-U+202E, U+2066-U+2069) and zero-width characters
+# (U+200B-U+200D, U+2060, U+FEFF) are removed before the match, so they
+# cannot sit in front of a verb or split a target. Tag characters and
+# lookalike letters, including a Cyrillic e in .env, stay and do not match.
 # A line matches when a verb follows optional Markdown (#, >, <!--,
-# bullet, number, or **) and an optional prefix (please, always, first, you
-# must/should, make sure to), and then directly names a secret target.
+# bullet, number, or **), an optional role label after <!-- only
+# (assistant, user, system, or human, then a colon), and an optional
+# prefix (please, always, first, you must/should, make sure to), and
+# then directly names a secret target. A label such as "Example:" is
+# not a role, and a role label without the comment is not stripped.
 # The read verbs are read, cat, cp, copy, open,
-# load, source, print, dump, collect, extract, show, curl, wget, type,
-# and Get-Content. The targets are .env (also .env.local,
+# load, source, printenv, print, dump, collect, extract, show, curl,
+# wget, type, and Get-Content. printenv matches on its own unless a
+# documentation modifier follows, and it remains a target after another
+# read verb. The targets are .env (also .env.local,
 # .env.development, .env.production, .env.prod, and .env.dev),
-# printenv, process.env, os.environ, "environment variables",
-# credentials, secret(s), api key, token, password, private key,
-# ~/.aws, ~/.ssh, id_rsa, and AWS_*/GITHUB_TOKEN-style environment
-# variables. .env.example, .env.sample, .env.template, and .envrc do
-# not count.
+# printenv, process.env, os.environ, "environment variable" or
+# "environment variables", credentials, secret(s), api key, token,
+# password, private key,
+# ~/.aws, ~/.ssh, $HOME/.aws, $HOME/.ssh, ${HOME}/.aws, ${HOME}/.ssh,
+# /home/<user>/.aws, /home/<user>/.ssh, /root/.aws, /root/.ssh, id_rsa,
+# and AWS_*/GITHUB_TOKEN-style environment
+# variables. A home path needs the directory in the next segment, so
+# /home/<user>/project/.aws does not count. /proc/self/environ,
+# /proc/$PPID/environ,
+# /proc/${PPID}/environ, and /proc/<digits>/environ are targets.
+# /proc/self/status, /proc/self/environment, /proc/self/../self/environ,
+# and /proc/self/environ.example are not. .env.example, .env.sample,
+# .env.template, and .envrc do not count.
 # Between the verb and target, only curl/wget flags, one URL, one or
 # more determiners (the/all/your/any/every/each/its/their/those and the
 # rest), "contents/values of", and one quote, backtick, @, or
