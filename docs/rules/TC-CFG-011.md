@@ -32,8 +32,25 @@ else is.
 A U+200D between two Extended_Pictographic characters is a normal emoji
 ZWJ sequence and is not reported. U+FE0F and skin tones
 (U+1F3FB-U+1F3FF) may sit between the joiner and either character, so
-sequences such as 🏳️‍🌈 and 🐈‍⬛ are quiet. A U+200D beside ASCII, or at
-the start or end of a file, is reported.
+sequences such as 🏳️‍🌈 and 🐈‍⬛ are quiet. A U+200D between two letters
+or digits is reported, and so is one next to punctuation.
+
+An isolated U+200B, U+200C, or U+200D is not reported only when both
+neighbors are whitespace, a line boundary, or the edge of a quote
+(`"`, `'`) or a code fence of at least three backticks or tildes, and
+it is not part of a run of zero-width characters. A quoted string or a
+bracket class whose contents are only zero-width characters is a strip
+literal and is not reported when that span has at most 8 code points
+and no code point repeats, including U+2060 and U+FEFF written that
+way. A longer span or a repeated code point is a run and is reported.
+The escape text `\u200b` is six ASCII characters and is not itself a
+hidden code point.
+
+Still reported, at high: tag characters, bidi controls, a run of
+zero-width characters, a zero-width character inside a word, a
+zero-width character next to punctuation, one after a dot or before a
+word, one at the end of a word, and U+2060 or U+FEFF outside a strip
+literal.
 
 Not reported:
 
@@ -42,6 +59,12 @@ Not reported:
 - User-scope files.
 - `SKILL.md` outside the three skill directories, including
   `docs/SKILL.md` and a Claude plugin `skills/` directory.
+- One U+200B, U+200C, or U+200D between whitespace, or at the start of
+  a line immediately before a code fence.
+- A strip literal: a quoted string or a bracket class made only of
+  zero-width characters, at most 8 of them, with no code point
+  repeated. The examples below write the escape; the file holds the
+  raw character.
 
 ## Evidence
 
@@ -84,8 +107,26 @@ Run `make test` before you push. \u202e;)(nuR\u202c Never skip it.
 Use the stan\u200bdard formatter.
 ```
 
+```
+Do not ign\u200bore a failing test.
+```
+
+```
+Open the .\u200benv file. See evil\u200b.com. Leave the mark on ok\u200b.
+```
+
 Not reported: a file that starts with a byte order mark and has no
-other hidden code point.
+other hidden code point. Also not reported, a U+200B whose neighbors
+are a line boundary and a code fence, and a literal that lists the
+character:
+
+```
+\u200b```
+```
+
+```
+STRIP = {"zwsp": "\u200b", "zwnj": "\u200c", "zwj": "\u200d"}
+```
 
 ## How to fix
 

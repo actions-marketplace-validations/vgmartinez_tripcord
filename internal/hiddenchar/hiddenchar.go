@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/vgmartinez/tripcord/internal/model"
@@ -100,17 +101,197 @@ func Scan(b []byte) (model.HiddenChars, bool) {
 // countedAt reports a hidden code point. U+200D is not counted inside an
 // emoji ZWJ sequence: the code points around it, skipping U+FE0F and
 // skin tones U+1F3FB-U+1F3FF, are both Extended_Pictographic.
+//
+// An isolated U+200B, U+200C, or U+200D is not counted only when both
+// neighbors are whitespace, a line boundary, or the edge of a quote or
+// a code fence. A strip literal is also not counted: a quoted string or
+// bracket class made only of zero-width characters, at most 8 of them,
+// with no code point repeated. A longer run or a repeated code point
+// stays counted, including inside quotes or brackets. A character next
+// to punctuation, after a dot, before a word, or at the end of a word
+// stays counted, as do tags, bidi controls, and U+2060 or U+FEFF
+// outside a strip literal.
 func countedAt(b []byte, i int) bool {
 	r, size := utf8.DecodeRune(b[i:])
 	if Class(r) == "" {
 		return false
 	}
-	if r != 0x200D {
+	if r == 0x200D && emojiJoiner(b, i, size) {
+		return false
+	}
+	if Class(r) != ZeroWidth {
 		return true
 	}
+	if stripLiteral(b, i) {
+		return false
+	}
+	if r != 0x200B && r != 0x200C && r != 0x200D {
+		return true
+	}
+	if zeroWidthRun(b, i, size) {
+		return true
+	}
+	return !quietSide(b, i, false) || !quietSide(b, i+size, true)
+}
+
+func emojiJoiner(b []byte, i, size int) bool {
 	before := pictographic(skipEmojiMods(b[:i], false))
 	after := pictographic(skipEmojiMods(b[i+size:], true))
-	return !before || !after
+	return before && after
+}
+
+// stripLiteral reports a zero-width character written as a short list of
+// distinct characters to strip: the quoted string or bracket class that
+// holds it contains only zero-width characters, at most 8, with no code
+// point repeated.
+func stripLiteral(b []byte, i int) bool {
+	return quotedStrip(b, i) || stripClass(b, i)
+}
+
+func quotedStrip(b []byte, i int) bool {
+	start, end := zwSpan(b, i)
+	prev, psize := utf8.DecodeLastRune(b[:start])
+	next, nsize := utf8.DecodeRune(b[end:])
+	if psize == 0 || nsize == 0 || prev != next {
+		return false
+	}
+	if prev != '"' && prev != '\'' && prev != '`' {
+		return false
+	}
+	return distinctStrip(b[start:end])
+}
+
+// distinctStrip reports a span of at most 8 zero-width code points with
+// no repeated code point. A longer span or a repeated code point is a
+// run, not a list of characters to strip.
+func distinctStrip(span []byte) bool {
+	var seen []rune
+	for j := 0; j < len(span); {
+		r, size := utf8.DecodeRune(span[j:])
+		if size == 0 || Class(r) != ZeroWidth {
+			return false
+		}
+		for _, prev := range seen {
+			if prev == r {
+				return false
+			}
+		}
+		seen = append(seen, r)
+		if len(seen) > 8 {
+			return false
+		}
+		j += size
+	}
+	return len(seen) > 0
+}
+
+// zwSpan is the byte range of the zero-width run that contains i.
+func zwSpan(b []byte, i int) (start, end int) {
+	start = i
+	for start > 0 {
+		r, size := utf8.DecodeLastRune(b[:start])
+		if size == 0 || Class(r) != ZeroWidth {
+			break
+		}
+		start -= size
+	}
+	end = i
+	for end < len(b) {
+		r, size := utf8.DecodeRune(b[end:])
+		if size == 0 || Class(r) != ZeroWidth {
+			break
+		}
+		end += size
+	}
+	return start, end
+}
+
+// stripClass reports whether i sits in a [...] class on this line whose
+// contents are only zero-width characters. A class that also holds
+// letters is a word or a markdown link, and the character stays counted.
+func stripClass(b []byte, i int) bool {
+	lineStart := bytes.LastIndexByte(b[:i], '\n') + 1
+	lineEnd := len(b)
+	if rel := bytes.IndexByte(b[i:], '\n'); rel >= 0 {
+		lineEnd = i + rel
+	}
+	openRel := bytes.LastIndexByte(b[lineStart:i], '[')
+	if openRel < 0 {
+		return false
+	}
+	open := lineStart + openRel
+	if bytes.Contains(b[open+1:i], []byte{']'}) {
+		return false
+	}
+	closeRel := bytes.IndexByte(b[i:lineEnd], ']')
+	if closeRel < 0 {
+		return false
+	}
+	return distinctStrip(b[open+1 : i+closeRel])
+}
+
+// zeroWidthRun reports a neighbor that is itself a zero-width character.
+// A run stays counted unless the whole run is a strip literal.
+func zeroWidthRun(b []byte, i, size int) bool {
+	prev, psize := utf8.DecodeLastRune(b[:i])
+	if psize > 0 && Class(prev) == ZeroWidth {
+		return true
+	}
+	next, nsize := utf8.DecodeRune(b[i+size:])
+	return nsize > 0 && Class(next) == ZeroWidth
+}
+
+// quietSide reports a neighbor that is whitespace, a line boundary, a
+// quote, or the edge of a code fence (three or more ` or ~). forward
+// reads the rune at i; otherwise it reads the rune that ends at i.
+func quietSide(b []byte, i int, forward bool) bool {
+	var r rune
+	var size int
+	if forward {
+		if i >= len(b) {
+			return true
+		}
+		r, size = utf8.DecodeRune(b[i:])
+	} else {
+		if i <= 0 {
+			return true
+		}
+		r, size = utf8.DecodeLastRune(b[:i])
+	}
+	if r == utf8.RuneError && size == 1 {
+		return false
+	}
+	if unicode.IsSpace(r) || r == '"' || r == '\'' {
+		return true
+	}
+	if r != '`' && r != '~' {
+		return false
+	}
+	return fenceRun(b, i, r, forward) >= 3
+}
+
+func fenceRun(b []byte, i int, marker rune, forward bool) int {
+	n := 0
+	if forward {
+		for j := i; j < len(b); {
+			r, size := utf8.DecodeRune(b[j:])
+			if r != marker {
+				break
+			}
+			n++
+			j += size
+		}
+		return n
+	}
+	for j := i; j > 0; {
+		r, size := utf8.DecodeLastRune(b[:j])
+		if r != marker {
+			break
+		}
+		n++
+		j -= size
+	}
+	return n
 }
 
 func skipEmojiMods(b []byte, forward bool) rune {
