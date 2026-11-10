@@ -105,7 +105,11 @@ workflow's YAML aliases and anchors are followed, as GitHub Actions
 supports them, up to 100 aliases and 10,000 nodes after expansion; a
 workflow whose anchors expand past either limit (an "alias bomb") is
 reported and not normalized, as are merge keys, which remain unsupported.
-Nesting deeper than 64 levels fails closed.
+Nesting deeper than 64 levels fails closed. A setup workflow that holds a
+second YAML document, even an empty one after a trailing `---`, is
+reported (`multiple-documents`, exit 3) and not normalized: a YAML
+decoder reads only the first document, and another parser may read the
+other.
 
 Reads, symlink handling, limits, and diagnostics are those of the
 [Claude adapter](claude.md#safe-reads).
