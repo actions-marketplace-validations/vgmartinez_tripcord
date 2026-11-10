@@ -29,8 +29,8 @@ policy at the Git root and would block every tool call without one.
 > machine fills the bootstrap cache itself ([Bootstrap](#bootstrap)).
 >
 > The generated `.github/workflows/tripcord.yml` pins the reusable
-> workflow at `main@b5238d9`. `tripcord-pr.yml` at that commit pins the
-> composite action at `main@7b17d42`, which has the `base` input and
+> workflow at `main@12c7476`. `tripcord-pr.yml` at that commit pins the
+> composite action at `main@d01fb05`, which has the `base` input and
 > the embed check, so the generated workflow compares a pull request
 > with its base. This repository's own workflows pin that same action.
 > `TestPinsHaveEmbedCheck` requires every pin to be a full SHA on main,
@@ -486,8 +486,8 @@ composite action: the reusable workflow commit the generated
 `tripcord-pr.yml` and `tripcord-pr-comment.yml` call. It fails unless
 the action at each pin has the `base` input and builds a Tripcord with
 the embed check (`internal/embedded`). This tree's workflows pin the
-action at `main@7b17d42`, which has both. The generated workflow calls
-`tripcord-pr.yml` at `main@b5238d9`, and the file there pins the same
+action at `main@d01fb05`, which has both. The generated workflow calls
+`tripcord-pr.yml` at `main@12c7476`, and the file there pins the same
 action, so both paths pass. It reads the pinned commits with `git show`,
 so the clone must have them (`fetch-depth: 0`).
 
