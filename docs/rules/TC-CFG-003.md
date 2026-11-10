@@ -184,6 +184,16 @@ Not reported:
 Point `command` at the server binary and pass its arguments in `args`,
 without a shell, an inline interpreter, or a downloaded script.
 
+## QA sample
+
+The repository-script exception was measured on 29 repositories, one
+`owner/repo`, a tab, and the pinned commit per line, byte-sorted:
+[`docs/qa/tc-cfg-003-repo-script.lock`](../qa/tc-cfg-003-repo-script.lock).
+`sha256sum docs/qa/tc-cfg-003-repo-script.lock` prints
+`1424d0c0c12d44ff39c3caaff345c0afaa9b21753e38180288d463fc0ec9818e`.
+The `28cc1c21…` digest published with that measurement was not taken
+over these bytes and does not identify the list; use this one.
+
 ## References
 
 - [Novee: The Sandbox is a Suggestion](https://novee.security/blog/breaking-ai-agent-sandboxes/)
