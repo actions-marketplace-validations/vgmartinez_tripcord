@@ -103,7 +103,7 @@ jobs:
       contents: read # checkout the repository being scanned
       pull-requests: read # read pull request reviews
       security-events: write # upload the SARIF report
-    uses: vgmartinez/tripcord/.github/workflows/tripcord-pr.yml@47d6a048c9dee0b26237715a60c933ca7f252032 # main@47d6a04
+    uses: vgmartinez/tripcord/.github/workflows/tripcord-pr.yml@b5238d956a7b5efeecb099655ba590d737a57a79 # main@b5238d9
 ```
 
 or before every commit, with [pre-commit](https://pre-commit.com/):
@@ -111,7 +111,7 @@ or before every commit, with [pre-commit](https://pre-commit.com/):
 ```yaml
 repos:
   - repo: https://github.com/vgmartinez/tripcord
-    rev: 47d6a048c9dee0b26237715a60c933ca7f252032 # main@47d6a04
+    rev: b5238d956a7b5efeecb099655ba590d737a57a79 # main@b5238d9
     hooks:
       - id: tripcord-config
 ```
