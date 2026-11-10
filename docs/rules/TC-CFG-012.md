@@ -112,7 +112,10 @@ single-quoted part (`Authorization:'$(cat .env)'`) is a literal and
 stays quiet. `-H @.env` and `-H "@./.env.local"` make curl send the
 file as headers, so a value that starts with `@` is not ignored. A
 `$(...)` inside a header value that opens with a quote
-(`-H "X-Api-Token: $(cat .env)"`) stays quiet. A URL that contains `$(` or a backtick is
+(`-H "X-Api-Token: $(cat .env)"`) stays quiet. A `$(...)` or backtick
+that the curl or wget command keeps also counts when it names any local
+path (`$(cat ./secrets/token)`, ``` `cat ~/.config/gh/hosts.yml` ```),
+because its output is sent; `$(uuidgen)` and `$(date +%s)` do not. A URL that contains `$(` or a backtick is
 kept, so `$(cat .env)` inside it still counts. A secret value that is
 the direct object, and whose tail says `come from` or `comes from`
 without naming a local path, is an origin (`Source credentials for the

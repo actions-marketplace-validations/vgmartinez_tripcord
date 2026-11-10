@@ -81,7 +81,8 @@ func instructionMatchLine(content string) int {
 				if verb == "curl" || verb == "wget" {
 					// instructionCurlSpan keeps the commands after &&, ||,
 					// |, and ;. instructionClause would drop them at ';'.
-					if instructionSecret.MatchString(stripInstructionCurlNoise(instructionCurlSpan(rest[read[1]:]))) {
+					span := stripInstructionCurlNoise(instructionCurlSpan(rest[read[1]:]))
+					if instructionSecret.MatchString(span) || instructionSubstReadsPath(span) {
 						return line + 1
 					}
 				}
@@ -450,6 +451,55 @@ func headerStop(s string, k int) bool {
 	default:
 		return false
 	}
+}
+
+// instructionSubstReadsPath reports a $(...) or backtick substitution in a
+// curl or wget span that names a local path, such as $(cat ./token.txt) or
+// `cat ~/.config/gh/hosts.yml`. The output of that command is sent, so the
+// path counts even when it is not one of the named secret targets.
+func instructionSubstReadsPath(span string) bool {
+	for i := 0; i < len(span); i++ {
+		var inner string
+		switch {
+		case span[i] == '$' && i+1 < len(span) && span[i+1] == '(':
+			end := closingParen(span, i+2)
+			inner, i = span[i+2:end], end
+		case span[i] == '`':
+			end := strings.IndexByte(span[i+1:], '`')
+			if end < 0 {
+				end = len(span) - i - 1
+			}
+			inner, i = span[i+1:i+1+end], i+1+end
+		default:
+			continue
+		}
+		for _, word := range strings.Fields(inner) {
+			word = strings.TrimLeft(word, "`'\"<(")
+			word = strings.TrimRight(word, "`'\");")
+			if !strings.Contains(word, "://") && instructionLocalPath.MatchString(word) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// closingParen returns the index of the ')' that closes a '(' opened just
+// before i, or len(s) when it is not closed.
+func closingParen(s string, i int) int {
+	depth := 1
+	for ; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return len(s)
 }
 
 func curlURLToken(s string) bool {
