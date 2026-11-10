@@ -255,7 +255,7 @@ cache="${XDG_CACHE_HOME:-$HOME/.cache}/tripcord/<version>/<os-arch>"
   umask 022
   mkdir -p "$cache"
 )
-chmod go-w "${cache%/*/*}" "${cache%/*}" "$cache"
+chmod go-w "${cache%/*/*/*}" "${cache%/*/*}" "${cache%/*}" "$cache"
 CGO_ENABLED=0 go build -trimpath -o "$cache/tripcord" ./cmd/tripcord
 sha256sum "$cache/tripcord"
 ```
@@ -270,17 +270,19 @@ It fails closed. Each of these exits 2 with `tripcord bootstrap:
 - no binary in the cache (the reason names the path to fill);
 - a binary with another SHA-256 (the reason names both digests);
 - a cached binary whose device, inode, size, mtime, or ctime no longer
-  matches the `verified` record, or a cached binary that is group- or
-  world-writable (`hook` only: it does not re-hash, and it runs nothing
-  until `install` or `session-start`);
-- a binary that is a symlink or not a regular file;
+  matches the `verified` record, a cached binary that is group- or
+  world-writable, or a `verified` record that is anything but its one
+  line and a newline (`hook` only: it does not re-hash, and it runs
+  nothing until `install` or `session-start`);
+- a binary that is a symlink or not a regular file, or that is owned
+  by another user, who could rewrite it in place;
 - a binary without the execute bit (`chmod 0755` it), rather than the
   shell's 126; or a binary that still cannot execute, for which a
   `noexec` mount is a likely cause;
-- a cache directory, from `tripcord/` down to `<os-arch>/` and
-  including `tripcord/.run/`, that is a symlink, is owned by another
-  user, or is group- or world-writable (`chmod go-w` it): another user
-  could swap the binary there;
+- a cache directory, from `${XDG_CACHE_HOME:-$HOME/.cache}` itself down
+  to `<os-arch>/` and including `tripcord/.run/`, that is a symlink, is
+  owned by another user, or is group- or world-writable, sticky bit or
+  not (`chmod go-w` it): another user could swap the binary there;
 - no SHA-256 pinned for the platform, or an unsupported OS or
   architecture;
 - no `sha256sum` or `shasum` in `/usr/bin` or `/bin`;

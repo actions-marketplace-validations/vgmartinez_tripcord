@@ -189,8 +189,10 @@ command from the verified binary, so a run that cannot decide denies
 the tool call. After `install` or `session-start` (or the first hook)
 has recorded the cached file's identity, later hooks compare that
 record with one `stat` and do not copy or hash the binary. If the file
-changed, is group- or world-writable, or the record is not a private
-regular file, `bootstrap.sh` exits 2 and runs nothing. With no record,
+changed, is group- or world-writable or owned by another user, a cache
+directory from `${XDG_CACHE_HOME:-$HOME/.cache}` down is unsafe, or the
+record is not a private regular file holding exactly its one line,
+`bootstrap.sh` exits 2 and runs nothing. With no record,
 `hook` verifies once, and a failed check exits 2 as well. Either
 reason blocks the call. See [Init](init.md#bootstrap), including the
 same-user residual (a binary and record rewritten together stay

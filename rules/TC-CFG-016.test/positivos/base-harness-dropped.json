@@ -3,7 +3,7 @@
     "harness": "generic",
     "scope": "repo",
     "path": ".tripcord/embed.json",
-    "sha256": "84c387ad53b9a7804356ea0974b74e5023daddd184378c1878f7af6c4a372b86",
+    "sha256": "45f0457d5a583d9c9d569522de0f465edf5e636345e8a6b70034d10594565b67",
     "kind": "permissions",
     "payload": {
       "harnesses": "cursor",
