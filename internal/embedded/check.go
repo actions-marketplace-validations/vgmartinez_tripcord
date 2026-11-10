@@ -917,6 +917,31 @@ func (c *checker) hookHarness(h model.Harness) {
 	if f.state == "" && projectDirVar(h) != "" {
 		c.guardEnv(h, path, f.raw)
 	}
+	if parsed && (h == model.HarnessCursor || h == model.HarnessCopilot) && !c.head.hooksVersion1(h) {
+		c.add(h, path, subjectHooksVersion, "", StateChanged, f.raw, map[string]string{"reason": reasonHooksVersion})
+	}
+}
+
+// reasonHooksVersion: a Cursor or Copilot hook file whose "version" is
+// not 1. init writes version 1 and refuses to merge into any other; a
+// harness may read another version differently, or reject the file.
+const reasonHooksVersion = "hooks-version"
+
+const subjectHooksVersion = "hooks-version"
+
+// hooksVersion1 reports whether h's wiring file has "version": 1.
+func (t *revision) hooksVersion1(h model.Harness) bool {
+	syntax := kit.StrictJSON
+	if h == model.HarnessCursor {
+		syntax = kit.JSONC
+	}
+	doc, _, err := kit.DecodeJSON(t.files[HookPath(h)].raw, syntax, string(h))
+	top, isObject := doc.(map[string]any)
+	if err != nil || !isObject {
+		return false
+	}
+	v, ok := top["version"]
+	return ok && anyNode(v).equal(anyNode(json.Number("1")))
 }
 
 // reasonGuardEnv: a settings env block sets a variable the guard reads

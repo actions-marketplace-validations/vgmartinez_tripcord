@@ -63,3 +63,4 @@ positivos:
   embed-claude-env-cache-home: high
   embed-cursor-env-project-dir: high
   local-claude-env-project-dir.json: high
+  embed-cursor-hooks-version-2: high

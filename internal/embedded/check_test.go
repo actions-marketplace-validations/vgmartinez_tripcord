@@ -39,6 +39,31 @@ func TestGuardEnvNames(t *testing.T) {
 	}
 }
 
+func TestHooksVersion1(t *testing.T) {
+	t.Parallel()
+	for raw, want := range map[string]bool{
+		`{"version":1,"hooks":{}}`:       true,
+		"{// c\n\"version\": 1}":         true,
+		`{"version":2,"hooks":{}}`:       false,
+		`{"version":"1","hooks":{}}`:     false,
+		`{"version":1.5,"hooks":{}}`:     false,
+		`{"hooks":{}}`:                   false,
+		`{"version":[1],"hooks":{}}`:     false,
+		`{"version":null,"hooks":{}}`:    false,
+		`{"version":true,"hooks":{}}`:    false,
+		`{"version":-1,"hooks":{}}`:      false,
+		`{"version":10,"hooks":{}}`:      false,
+		`[{"version":1}]`:                false,
+		`{"version":1e0,"hooks":{}}`:     false,
+		`{"version":1, "env":{"A":"b"}}`: true,
+	} {
+		rev := &revision{files: map[string]file{CursorHooksPath: {raw: []byte(raw)}}}
+		if got := rev.hooksVersion1(model.HarnessCursor); got != want {
+			t.Errorf("%s: %v, want %v", raw, got, want)
+		}
+	}
+}
+
 func embed(t *testing.T, harnesses ...model.Harness) string {
 	t.Helper()
 	dir := t.TempDir()
