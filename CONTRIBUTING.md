@@ -346,6 +346,33 @@ on `origin/main` yet only on a `pull_request` whose checkout is GitHub's
 merge ref. Push-to-main CI runs the same test with no exception, and
 that run is what fails if the pull request was squash-merged or rebased.
 
+A repin is a chain of commits at the end of the pull request, after
+every scanner, docs, and test change:
+
+1. **A** is the last commit with scanner or docs changes. Nothing that
+   `pinCurrencyPaths` covers changes after it, so A is the scanner the
+   new pins ship.
+2. **B** changes only the composite action pins in
+   `.github/workflows/tripcord-pr.yml` and
+   `.github/workflows/tripcord-pr-comment.yml`, to A, with a
+   `# main@` comment that is a prefix of A. Nothing else changes in B.
+3. **C** sets `WorkflowPin` (`internal/embedded/pins.go`) to B and
+   appends the pin it replaces to the end of `KnownWorkflowPins`; no
+   entry is edited or removed. `known_renders.json` gains renders under
+   the new pin only; the entries under earlier pins stay as they are.
+   C regenerates the embed fixtures (`UPDATE_GOLDEN=1`), and each one
+   may change only the pin line, its comment, the sha256 of the files
+   that hold it, and line numbers.
+4. C, or a docs-only commit after it, moves every pin citation in
+   README.md and `docs/**/*.md` to the new pins: the reusable workflow
+   refs and the pre-commit `rev:` to B, the action to A, and the
+   `` `main@` `` prose to match. `TestReleaseGateDocsCiteCurrentPins`
+   fails on any it misses.
+
+Merge the pull request with a merge commit, so A, B, and C land on
+main with the SHAs they were pinned at, and `make release-gate` passes
+on main as merged.
+
 ## Development
 
 ```sh
