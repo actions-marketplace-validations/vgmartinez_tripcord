@@ -25,8 +25,8 @@ policy at the Git root and would block every tool call without one.
 > `timeoutSec` init sets. A Claude Code release older than the
 > `onFailure` field still blocks on exit 2, which every failure the hook
 > reports returns, but not on another status, such as a crash or a
-> missing `bash`. There is no published release, so each machine fills
-> the bootstrap cache itself ([Bootstrap](#bootstrap)).
+> missing `bash`. The bootstrap never downloads anything, so each
+> machine fills the bootstrap cache itself ([Bootstrap](#bootstrap)).
 >
 > The generated `.github/workflows/tripcord.yml` pins the reusable
 > workflow at `main@1776ce5`. `tripcord-pr.yml` at that commit pins the
@@ -259,8 +259,10 @@ calls) come from `/usr/bin` or `/bin`, then from NixOS's
 `/run/current-system/sw/bin` only when that directory is root-owned and
 not group- or world-writable. They never come from the caller's `PATH`.
 
-There is no published release, so fill the cache with a build of the
-commit the pin was made from, on each machine the agents run on:
+Fill the cache on each machine the agents run on, with the `tripcord`
+binary from the release archive for `<version>`
+([Installation](installation.md)), or with a build of the commit the
+pin was made from:
 
 ```sh
 git checkout <pinned commit>

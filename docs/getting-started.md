@@ -6,8 +6,9 @@ explains the result. For every command and flag, see
 
 ## Build
 
-tripcord has no published release yet. Build it from source with
-Go 1.27.3:
+Download a release archive, or build from source with Go 1.27.3
+([Installation](installation.md) covers both, and how to verify a
+release):
 
 ```sh
 git clone https://github.com/vgmartinez/tripcord.git

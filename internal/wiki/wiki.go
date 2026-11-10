@@ -37,6 +37,7 @@ const (
 var docPages = map[string]string{
 	"README.md":                         "Home",
 	"getting-started.md":                "Getting-Started",
+	"installation.md":                   "Installation",
 	"commands.md":                       "Commands",
 	"scan.md":                           "Scan",
 	"init.md":                           "Init",
@@ -78,7 +79,7 @@ type group struct {
 // sidebar groups pages for _Sidebar. Rule pages are reached from
 // Rules-Catalog.
 var sidebar = []group{
-	{"Start", []string{"Home", "Getting-Started", "Commands", "FAQ"}},
+	{"Start", []string{"Home", "Getting-Started", "Installation", "Commands", "FAQ"}},
 	{"Commands", []string{"Scan", "Init", "Hook", "Preopen", "PR-Context", "Fingerprints", "Output-and-Sinks", "Privacy-and-Redaction"}},
 	{"CI and hooks", []string{"GitHub-Action", "Pre-commit"}},
 	{"Configuration", []string{"Policy", "Harness-Adapters", "Rules-Catalog"}},

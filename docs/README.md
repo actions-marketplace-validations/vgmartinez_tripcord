@@ -24,8 +24,10 @@ and before a commit ([pre-commit](pre-commit.md)).
 
 ## Install
 
-There is no published release, and no npm or PyPI package. Install from
-source with Go 1.27.3 or newer:
+Download a release archive from
+[Releases](https://github.com/vgmartinez/tripcord/releases) and verify
+it ([Installation](installation.md)), or install from source with
+Go 1.27.3 or newer. There is no npm or PyPI package.
 
 ```sh
 go install github.com/vgmartinez/tripcord/cmd/tripcord@main
@@ -39,8 +41,9 @@ cd tripcord
 CGO_ENABLED=0 go build -trimpath -o tripcord ./cmd/tripcord
 ```
 
-In GitHub Actions, call the reusable workflow pinned by commit
-([GitHub Action](github-action.md)). It builds tripcord from source too.
+In GitHub Actions, use `vgmartinez/tripcord@v0.1.0`, or call the
+reusable workflow pinned by commit ([GitHub Action](github-action.md)).
+Both build tripcord from source.
 
 ## 60-second quickstart
 
