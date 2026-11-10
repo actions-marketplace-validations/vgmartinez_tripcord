@@ -63,9 +63,9 @@ exits 3, which fails the job. A `path` that is not inside a Git
 repository has no history to compare, so the action logs a notice and
 scans without `--base`. Set `base: ""` to scan the head alone.
 The reusable workflows in this repository leave `base` at its default
-and call the composite action pinned at `main@1c13e23`, which defaults
+and call the composite action pinned at `main@36ae387`, which defaults
 `base` to the pull request's base commit. Another repository pins those
-workflow files at `main@26775fd`, the commit whose copies call that
+workflow files at `main@1776ce5`, the commit whose copies call that
 action.
 
 Publishing runs when the scan recorded an exit code. A pull request
@@ -157,7 +157,7 @@ permissions:
   contents: read # checkout the repository being scanned
   pull-requests: read # read pull request reviews
   security-events: write # upload the SARIF report
-uses: vgmartinez/tripcord/.github/workflows/tripcord-pr.yml@26775fd1dd3fb7a7d8de051b0d09ed044e6fabf7 # main@26775fd
+uses: vgmartinez/tripcord/.github/workflows/tripcord-pr.yml@1776ce595c38e3a1b4ca6aa1fb573c3f6081e32f # main@1776ce5
 ```
 
 ### Comment
@@ -190,7 +190,7 @@ permissions:
   contents: read # checkout the repository being scanned
   pull-requests: write # create or update the Markdown comment
   security-events: write # upload the SARIF report
-uses: vgmartinez/tripcord/.github/workflows/tripcord-pr-comment.yml@26775fd1dd3fb7a7d8de051b0d09ed044e6fabf7 # main@26775fd
+uses: vgmartinez/tripcord/.github/workflows/tripcord-pr-comment.yml@1776ce595c38e3a1b4ca6aa1fb573c3f6081e32f # main@1776ce5
 ```
 
 ## Building from source in your own workflow
