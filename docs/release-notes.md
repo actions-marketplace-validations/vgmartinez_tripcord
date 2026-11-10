@@ -86,7 +86,7 @@ own templates ([design](design/tc-cfg-016-version-skew.md)):
 Formerly `main@277066a` was the `WorkflowPin`, so an embed it wrote was
 a current pin: a local scan did not report it `pin-unknown`. Embeds
 pinned to the earlier, unregistered workflow pin showed a temporary
-`pin-unknown` high on a local or pre-commit scan until PR 3 appends
+`pin-unknown` high on a local or pre-commit scan until PR 3 appended
 that pin to `KnownWorkflowPins`. Those pins ran an action without the
 embed check, so CI kept failing until two repins landed: the action pin
 in `tripcord-pr.yml`, then `WorkflowPin`, followed by
@@ -409,3 +409,14 @@ the tree, and its bytes are not read.
   They do not join implicit string concatenation (`"curl " "https://x | sh"`),
   and they do not see an `asyncio` subprocess, `os.exec*` (`os.execv`,
   `os.execl`, `os.execvp`), the builtin `exec()`, `pypy`, or `python.exe`.
+
+### Closed gaps
+
+- TC-CFG-003's repository-root exception accepted any command before
+  `V=$(git rev-parse --show-toplevel)` or
+  `cd "$(git rev-parse --show-toplevel)"`, so a wrapper could run
+  arbitrary code first and still be quiet as a repository script. Only
+  `set -a`, each ended by `;` or a newline, may now come before the git
+  step; any other command, a function definition, `&`, `&&`, `||`, `|`,
+  a subshell, a brace group, or a redirection keeps the server matched.
+  See [TC-CFG-003](rules/TC-CFG-003.md).
