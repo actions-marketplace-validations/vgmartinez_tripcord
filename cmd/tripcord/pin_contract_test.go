@@ -29,6 +29,11 @@ const embedCheckMinimum = "8b33b1b5a69c686b611b43a475da9658fe44614d"
 // @release) is still a pin and fails the 40-character check.
 var usesPin = regexp.MustCompile(regexp.QuoteMeta(project.Repository) + `/\.github/(?:actions/tripcord|workflows/tripcord-pr(?:-comment)?\.yml)@([^\s#]+)(?:\s+#\s*main@([0-9a-fA-F]+))?`)
 
+// workflowPinConst is the generated-workflow pin in a revision of
+// internal/embedded/workflow.go. collectRepoPins reads the constant
+// from the current binary; the base pin set reads it from origin/main.
+var workflowPinConst = regexp.MustCompile(`(?m)^const WorkflowPin = "([0-9a-fA-F]{40})"`)
+
 // runningInCI is the CI environment of the process that started the
 // test binary. Package initialization reads it before TestMain sets
 // CI=true and unsets GITHUB_ACTIONS, so a later os.Getenv("CI") is not
@@ -46,13 +51,25 @@ type repoPin struct {
 // is on main and whose tree contains the embed check. Every uses line
 // also needs a "# main@<short>" comment that is a prefix of that sha.
 // A branch or tag ref (@main, @v1, @v1.2.3, @release) fails that
-// sha-length check. The sha-length check always runs. Outside CI, a
-// clone that does not have the history skips the git checks. When the
-// process was started with CI or GITHUB_ACTIONS set, a shallow clone
-// and a directory that is not a git checkout fail those checks.
-// runningInCI records that environment before TestMain overwrites it.
-// TestVetAndTestFetchesFullHistory keeps the vet and test job at
-// fetch-depth 0 so that checkout has the objects.
+// sha-length check. The sha-length check always runs.
+//
+// On a pull_request, and only then, a pin that is not in the origin/main
+// pin set may be an ancestor of the checkout HEAD instead of origin/main.
+// HEAD must be the merge ref: exactly two parents, the first equal to
+// origin/main. A pin that is already on origin/main, or that the base
+// already names, stays strict. TRIPCORD_RELEASE_GATE=1, a push, and a
+// local run (any other GITHUB_EVENT_NAME, or none) stay strict for every
+// pin. A pull_request whose checkout is not that merge, or whose base
+// pins cannot be read, fails. It does not fall back to the strict check
+// and it does not skip.
+//
+// Outside CI, a clone that does not have the history skips the git
+// checks on that strict path. When the process was started with CI or
+// GITHUB_ACTIONS set, a shallow clone and a directory that is not a git
+// checkout fail those checks. runningInCI records that environment
+// before TestMain overwrites it. TestVetAndTestFetchesFullHistory keeps
+// the vet and test job at fetch-depth 0 so that checkout has the objects
+// and origin/main.
 func TestPinsHaveEmbedCheck(t *testing.T) {
 	root := filepath.Join("..", "..")
 	pins := collectRepoPins(t, root)
@@ -69,7 +86,11 @@ func TestPinsHaveEmbedCheck(t *testing.T) {
 	if !formatOK {
 		return
 	}
-	if !pinHistoryAvailable(t, root) {
+	base, err := loadPinBase(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !base.relaxed && !pinHistoryAvailable(t, root) {
 		return
 	}
 	ref := mainRef(t, root)
@@ -85,12 +106,21 @@ func TestPinsHaveEmbedCheck(t *testing.T) {
 			continue
 		}
 		seen[p.pin] = true
+		target := ref
+		if base.relaxed {
+			chosen, err := base.target(root, p.pin)
+			if err != nil {
+				t.Errorf("%s %s", p.where, err.Error())
+				continue
+			}
+			target = chosen
+		}
 		if err := gitRun(root, "cat-file", "-e", p.pin); err != nil {
 			t.Errorf("%s pin %s is not in this clone: %v", p.where, p.pin, err)
 			continue
 		}
-		if err := gitRun(root, "merge-base", "--is-ancestor", p.pin, ref); err != nil {
-			t.Errorf("%s pin %s is not on %s", p.where, p.pin, ref)
+		if err := gitRun(root, "merge-base", "--is-ancestor", p.pin, target); err != nil {
+			t.Errorf("%s pin %s is not on %s", p.where, p.pin, target)
 			continue
 		}
 		if err := gitRun(root, "merge-base", "--is-ancestor", embedCheckMinimum, p.pin); err != nil {
@@ -101,6 +131,166 @@ func TestPinsHaveEmbedCheck(t *testing.T) {
 			t.Errorf("%s pin %s: %v", p.where, p.pin, err)
 		}
 	}
+}
+
+// pinBase is the pin set on origin/main when a pull_request may relax
+// pins that are not in that set. relaxed is false for every other
+// event, for an unset event, and under TRIPCORD_RELEASE_GATE=1.
+type pinBase struct {
+	relaxed bool
+	pins    map[string]struct{}
+}
+
+// loadPinBase decides whether this checkout may treat a pin that is
+// absent from origin/main as new. A pull_request that is not a merge of
+// origin/main, or whose base pins cannot be read, fails closed. It does
+// not return the strict plan, and the caller does not skip.
+func loadPinBase(root string) (pinBase, error) {
+	if os.Getenv("GITHUB_EVENT_NAME") != "pull_request" || os.Getenv("TRIPCORD_RELEASE_GATE") == "1" {
+		return pinBase{}, nil
+	}
+	if err := requireMergeOfOriginMain(root); err != nil {
+		return pinBase{}, err
+	}
+	pins, err := pinSHAsAt(root, "origin/main")
+	if err != nil {
+		return pinBase{}, err
+	}
+	return pinBase{relaxed: true, pins: pins}, nil
+}
+
+// target is the ref pin must be an ancestor of. A pin the base already
+// names, and a pin that is already an ancestor of origin/main, stay on
+// origin/main. Anything else is new: it must be an ancestor of HEAD and
+// it is not an ancestor of origin/main. A missing object fails here.
+func (b pinBase) target(root, pin string) (string, error) {
+	if !b.relaxed {
+		return "", nil
+	}
+	if _, ok := b.pins[strings.ToLower(pin)]; ok {
+		return "origin/main", nil
+	}
+	if gitRun(root, "merge-base", "--is-ancestor", pin, "origin/main") == nil {
+		return "origin/main", nil
+	}
+	if gitRun(root, "cat-file", "-e", pin+"^{commit}") != nil {
+		return "", fmt.Errorf("pin %s is not in this clone", pin)
+	}
+	return "HEAD", nil
+}
+
+// requireMergeOfOriginMain fails unless HEAD is the pull request merge
+// ref: exactly two parents, and the first parent is origin/main.
+func requireMergeOfOriginMain(root string) error {
+	mainOut, err := gitOutput(root, "rev-parse", "--verify", "origin/main")
+	if err != nil {
+		return fmt.Errorf("pull_request checkout cannot read origin/main: %w", err)
+	}
+	out, err := gitOutput(root, "rev-list", "--parents", "-n", "1", "HEAD")
+	if err != nil {
+		return fmt.Errorf("pull_request checkout cannot read HEAD: %w", err)
+	}
+	fields := strings.Fields(strings.TrimSpace(out))
+	if len(fields) != 3 || fields[1] != strings.TrimSpace(mainOut) {
+		return errors.New("pull_request checkout HEAD is not a merge of origin/main: want exactly two parents with the first equal to origin/main")
+	}
+	return nil
+}
+
+// pinSHAsAt collects pins from rev the way collectRepoPins collects them
+// from the working tree. The WorkflowPin constant and the generated
+// workflow come from that revision's workflow.go, not from this binary.
+func pinSHAsAt(root, rev string) (map[string]struct{}, error) {
+	src, err := gitOutput(root, "show", rev+":internal/embedded/workflow.go")
+	if err != nil {
+		return nil, fmt.Errorf("cannot read base pins at %s: %w", rev, err)
+	}
+	found := workflowPinConst.FindStringSubmatch(src)
+	if found == nil {
+		return nil, fmt.Errorf("cannot read base pins at %s: workflow.go has no WorkflowPin", rev)
+	}
+	set := map[string]struct{}{strings.ToLower(found[1]): {}}
+	listing, err := gitOutput(root, "ls-tree", "-r", "--name-only", rev)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read base pins at %s: %w", rev, err)
+	}
+	for _, path := range strings.Split(strings.TrimSpace(listing), "\n") {
+		if !pinSourcePath(path) {
+			continue
+		}
+		text, err := gitOutput(root, "show", rev+":"+path)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read base pins at %s: %s: %w", rev, path, err)
+		}
+		for _, sha := range usesPinSHAs(text) {
+			set[sha] = struct{}{}
+		}
+	}
+	return set, nil
+}
+
+func pinSourcePath(path string) bool {
+	path = filepath.ToSlash(path)
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yml", ".yaml":
+		return strings.HasPrefix(path, ".github/workflows/")
+	case ".md":
+		return path == "README.md" || strings.HasPrefix(path, "docs/")
+	default:
+		return false
+	}
+}
+
+func usesPinSHAs(text string) []string {
+	var out []string
+	for _, m := range usesPin.FindAllStringSubmatch(text, -1) {
+		out = append(out, strings.ToLower(m[1]))
+	}
+	return out
+}
+
+// ancestorErrors reports pins that are not ancestors of the ref
+// loadPinBase selects. It does not check the embed-check tree.
+func ancestorErrors(root string, pins []string) error {
+	base, err := loadPinBase(root)
+	if err != nil {
+		return err
+	}
+	ref := ""
+	if !base.relaxed {
+		ref = mainRefOf(root)
+		if ref == "" {
+			return errors.New("neither origin/main nor main is in this clone, so a pin cannot be checked against main")
+		}
+	}
+	var errs []string
+	seen := map[string]bool{}
+	for _, pin := range pins {
+		if seen[pin] {
+			continue
+		}
+		seen[pin] = true
+		target := ref
+		if base.relaxed {
+			chosen, err := base.target(root, pin)
+			if err != nil {
+				errs = append(errs, err.Error())
+				continue
+			}
+			target = chosen
+		}
+		if gitRun(root, "cat-file", "-e", pin+"^{commit}") != nil {
+			errs = append(errs, fmt.Sprintf("pin %s is not in this clone", pin))
+			continue
+		}
+		if gitRun(root, "merge-base", "--is-ancestor", pin, target) != nil {
+			errs = append(errs, fmt.Sprintf("pin %s is not on %s", pin, target))
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(errs, "\n"))
 }
 
 // pinCurrencyPaths are the files a documented pin falls behind by
@@ -466,9 +656,241 @@ func TestVetAndTestFetchesFullHistory(t *testing.T) {
 		if depth != "0" {
 			t.Errorf("job %s (%s) fetch-depth = %q, want 0", id, job.Name, depth)
 		}
+		for _, step := range job.Steps {
+			if !strings.HasPrefix(step.Uses, "actions/checkout@") {
+				continue
+			}
+			if ref := yamlScalar(step.With["ref"]); ref != "" {
+				t.Errorf("job %s (%s) checkout ref = %q, want the default merge ref", id, job.Name, ref)
+			}
+		}
 	}
 	if found != 1 {
 		t.Fatalf("jobs named %q: %d, want 1", "vet and test", found)
+	}
+}
+
+// pinFixture is a synthetic repository. origin/main pins mainPin.
+// HEAD is a merge of origin/main and a pull request that also pins
+// newPin. outside is a commit in the object store and in neither history.
+type pinFixture struct {
+	root, mainPin, newPin, outside string
+}
+
+func newPinFixture(t *testing.T) pinFixture {
+	t.Helper()
+	root := t.TempDir()
+	gitIn(t, root, "init", "-b", "main")
+	gitIn(t, root, "config", "user.email", "tripcord@example.com")
+	gitIn(t, root, "config", "user.name", "Tripcord")
+	gitIn(t, root, "config", "commit.gpgsign", "false")
+	gitIn(t, root, "commit", "--allow-empty", "-m", "root")
+	mainPin := gitRev(t, root, "HEAD")
+	writePinFiles(t, root, mainPin, mainPin)
+	gitIn(t, root, "add", ".")
+	gitIn(t, root, "commit", "-m", "pin on main")
+	gitIn(t, root, "update-ref", "refs/remotes/origin/main", gitRev(t, root, "HEAD"))
+
+	gitIn(t, root, "checkout", "-b", "pr")
+	gitIn(t, root, "commit", "--allow-empty", "-m", "new pin")
+	newPin := gitRev(t, root, "HEAD")
+	writePinFiles(t, root, mainPin, mainPin, newPin)
+	gitIn(t, root, "add", ".")
+	gitIn(t, root, "commit", "-m", "record new pin")
+
+	gitIn(t, root, "checkout", "--orphan", "outside")
+	gitIn(t, root, "commit", "--allow-empty", "-m", "outside history")
+	outside := gitRev(t, root, "HEAD")
+
+	gitIn(t, root, "checkout", "main")
+	gitIn(t, root, "merge", "--no-ff", "-m", "merge pr", "pr")
+	return pinFixture{root: root, mainPin: mainPin, newPin: newPin, outside: outside}
+}
+
+func writePinFiles(t *testing.T, root, workflowPin string, uses ...string) {
+	t.Helper()
+	dir := filepath.Join(root, "internal", "embedded")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := "package embedded\n\nconst WorkflowPin = \"" + workflowPin + "\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "workflow.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wdir := filepath.Join(root, ".github", "workflows")
+	if err := os.MkdirAll(wdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	b.WriteString("name: pin\n")
+	for _, sha := range uses {
+		fmt.Fprintf(&b, "uses: %s/.github/actions/tripcord@%s # main@%s\n", project.Repository, sha, sha[:7])
+	}
+	if err := os.WriteFile(filepath.Join(wdir, "tripcord-pr.yml"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func worktreePinSHAs(t *testing.T, root string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, "internal", "embedded", "workflow.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := workflowPinConst.FindStringSubmatch(string(raw))
+	if found == nil {
+		t.Fatal("workflow.go has no WorkflowPin")
+	}
+	pins := []string{strings.ToLower(found[1])}
+	for _, dir := range []string{filepath.Join(root, ".github", "workflows"), filepath.Join(root, "docs")} {
+		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			if !pinSourcePath(filepath.ToSlash(rel)) {
+				return nil
+			}
+			text, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			pins = append(pins, usesPinSHAs(string(text))...)
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if text, err := os.ReadFile(filepath.Join(root, "README.md")); err == nil {
+		pins = append(pins, usesPinSHAs(string(text))...)
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return pins
+}
+
+func setPinRefEnv(t *testing.T, event, gate string) {
+	t.Helper()
+	t.Setenv("GITHUB_EVENT_NAME", event)
+	t.Setenv("TRIPCORD_RELEASE_GATE", gate)
+}
+
+func gitRev(t *testing.T, dir, rev string) string {
+	t.Helper()
+	out, err := gitOutput(dir, "rev-parse", rev)
+	if err != nil {
+		t.Fatalf("git rev-parse %s: %v", rev, err)
+	}
+	return strings.TrimSpace(out)
+}
+
+func TestPinRefPullRequestAcceptsNewPinInHistory(t *testing.T) {
+	repo := newPinFixture(t)
+	setPinRefEnv(t, "pull_request", "")
+	if gitRun(repo.root, "merge-base", "--is-ancestor", repo.newPin, "origin/main") == nil {
+		t.Fatal("fixture: new pin is already on origin/main")
+	}
+	if gitRun(repo.root, "merge-base", "--is-ancestor", repo.newPin, "HEAD") != nil {
+		t.Fatal("fixture: new pin is not an ancestor of HEAD")
+	}
+	if err := ancestorErrors(repo.root, worktreePinSHAs(t, repo.root)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPinRefPullRequestRejectsUnknownPin(t *testing.T) {
+	repo := newPinFixture(t)
+	setPinRefEnv(t, "pull_request", "")
+	unknown := "0123456789abcdef0123456789abcdef01234567"
+	writePinFiles(t, repo.root, repo.mainPin, unknown)
+	err := ancestorErrors(repo.root, worktreePinSHAs(t, repo.root))
+	if err == nil || !strings.Contains(err.Error(), "pin "+unknown+" is not in this clone") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPinRefPullRequestRejectsPinOutsideHistory(t *testing.T) {
+	repo := newPinFixture(t)
+	setPinRefEnv(t, "pull_request", "")
+	writePinFiles(t, repo.root, repo.mainPin, repo.outside)
+	err := ancestorErrors(repo.root, worktreePinSHAs(t, repo.root))
+	if err == nil || !strings.Contains(err.Error(), "pin "+repo.outside+" is not on HEAD") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPinRefPushRejectsPinNotOnMain(t *testing.T) {
+	repo := newPinFixture(t)
+	setPinRefEnv(t, "push", "")
+	err := ancestorErrors(repo.root, worktreePinSHAs(t, repo.root))
+	if err == nil || !strings.Contains(err.Error(), "pin "+repo.newPin+" is not on origin/main") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPinRefReleaseGateRejectsPinNotOnMain(t *testing.T) {
+	repo := newPinFixture(t)
+	setPinRefEnv(t, "pull_request", "1")
+	err := ancestorErrors(repo.root, worktreePinSHAs(t, repo.root))
+	if err == nil || !strings.Contains(err.Error(), "pin "+repo.newPin+" is not on origin/main") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPinRefUnsetEventRejectsPinNotOnMain(t *testing.T) {
+	repo := newPinFixture(t)
+	setPinRefEnv(t, "", "")
+	err := ancestorErrors(repo.root, worktreePinSHAs(t, repo.root))
+	if err == nil || !strings.Contains(err.Error(), "pin "+repo.newPin+" is not on origin/main") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPinRefPullRequestRejectsNonMergeHead(t *testing.T) {
+	repo := newPinFixture(t)
+	setPinRefEnv(t, "pull_request", "")
+	gitIn(t, repo.root, "checkout", "pr")
+	err := ancestorErrors(repo.root, worktreePinSHAs(t, repo.root))
+	if err == nil || !strings.Contains(err.Error(), "not a merge of origin/main") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPinRefPullRequestRejectsUnreadableBase(t *testing.T) {
+	repo := newPinFixture(t)
+	setPinRefEnv(t, "pull_request", "")
+	emptyCmd := exec.Command("git", "--no-optional-locks", "mktree")
+	emptyCmd.Dir = repo.root
+	emptyCmd.Stdin = strings.NewReader("")
+	emptyOut, err := emptyCmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := gitOutput(repo.root, "commit-tree", strings.TrimSpace(string(emptyOut)), "-m", "no pins")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := gitRev(t, repo.root, "HEAD^{tree}")
+	pr := gitRev(t, repo.root, "pr")
+	merge, err := gitOutput(repo.root, "commit-tree", tree, "-p", strings.TrimSpace(base), "-p", pr, "-m", "merge empty base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo.root, "update-ref", "refs/remotes/origin/main", strings.TrimSpace(base))
+	gitIn(t, repo.root, "checkout", "--detach", strings.TrimSpace(merge))
+	got := ancestorErrors(repo.root, worktreePinSHAs(t, repo.root))
+	if got == nil || !strings.Contains(got.Error(), "cannot read base pins") {
+		t.Fatalf("error = %v", got)
 	}
 }
 

@@ -42,3 +42,13 @@ positivos:
   embed-unknown-pin-pull-request-target.json: high
   user-disable-all-hooks: high
   user-copilot-disable-all-hooks: high
+  embed-claude-extra-pre-tool-entry.json: high
+  embed-claude-extra-session-start-entry.json: high
+  embed-cursor-extra-pre-tool-entry.json: high
+  embed-cursor-extra-session-start-entry.json: high
+  embed-copilot-extra-pre-tool-entry.json: high
+  embed-copilot-extra-session-start-entry.json: high
+  embed-ci-unknown-pin-duplicate-jobs.json: high
+  embed-ci-unknown-pin-duplicate-permissions.json: high
+  embed-ci-unknown-pin-duplicate-on.json: high
+  embed-ci-unknown-pin-second-document.json: high

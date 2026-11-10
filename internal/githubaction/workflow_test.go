@@ -23,22 +23,45 @@ import (
 var runningInCI = ciRequiresPinnedObject(os.Getenv)
 
 const (
-	workflowCheckout  = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
-	workflowScript    = "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
-	workflowActionSHA = "8b33b1b5a69c686b611b43a475da9658fe44614d"
-	workflowAction    = "vgmartinez/tripcord/.github/actions/tripcord@" + workflowActionSHA
-	workflowActionPin = workflowAction + " # main@8b33b1b"
+	workflowCheckout = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+	workflowScript   = "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
 )
+
+// workflowActionUses is the composite action uses line of a reusable
+// workflow: a full SHA and a "# main@<short>" comment. The SHA is not
+// fixed here: a repin moves it to a commit that does not exist yet when
+// this test is written. TestPinsHaveEmbedCheck and
+// TestPinsReachableFromHead check where it points.
+var workflowActionUses = regexp.MustCompile(`(?m)^\s+uses: (vgmartinez/tripcord/\.github/actions/tripcord@([0-9a-f]{40})) # main@([0-9a-f]{7,40})\b`)
+
+// workflowActionPin is the action ref name pins, and its uses line.
+func workflowActionPin(t *testing.T, name string, wf workflowFile) (action, line string) {
+	t.Helper()
+	all := workflowActionUses.FindAllStringSubmatch(wf.text, -1)
+	if len(all) != 1 {
+		t.Fatalf("%s: %d composite action pins with a # main@ comment, want 1", name, len(all))
+	}
+	m := all[0]
+	if !strings.HasPrefix(m[2], m[3]) {
+		t.Fatalf("%s: # main@%s is not a prefix of the pinned %s", name, m[3], m[2])
+	}
+	return m[1], strings.TrimSpace(m[0])
+}
 
 func TestTripcordWorkflowContract(t *testing.T) {
 	scan := readWorkflow(t, "tripcord-pr.yml")
 	comment := readWorkflow(t, "tripcord-pr-comment.yml")
-	scanScript, scanWith := checkOneJobWorkflow(t, scan, map[string]string{
+	scanAction, scanPin := workflowActionPin(t, "tripcord-pr.yml", scan)
+	commentAction, commentPin := workflowActionPin(t, "tripcord-pr-comment.yml", comment)
+	if scanPin != commentPin {
+		t.Fatalf("the workflows pin different actions:\n  %s\n  %s", scanPin, commentPin)
+	}
+	scanScript, scanWith := checkOneJobWorkflow(t, scan, scanAction, map[string]string{
 		"contents":        "read",
 		"pull-requests":   "read",
 		"security-events": "write",
 	})
-	commentScript, commentWith := checkOneJobWorkflow(t, comment, map[string]string{
+	commentScript, commentWith := checkOneJobWorkflow(t, comment, commentAction, map[string]string{
 		"contents":        "read",
 		"pull-requests":   "write",
 		"security-events": "write",
@@ -114,7 +137,7 @@ func readWorkflow(t *testing.T, name string) workflowFile {
 	return workflowFile{text: string(data), jobs: jobsOf(t, &root)}
 }
 
-func checkOneJobWorkflow(t *testing.T, wf workflowFile, wantPerms map[string]string) (string, string) {
+func checkOneJobWorkflow(t *testing.T, wf workflowFile, workflowAction string, wantPerms map[string]string) (string, string) {
 	t.Helper()
 	text := wf.text
 	if strings.Contains(text, "pull_request_target") {
@@ -122,9 +145,6 @@ func checkOneJobWorkflow(t *testing.T, wf workflowFile, wantPerms map[string]str
 	}
 	if strings.Contains(text, "secrets: inherit") {
 		t.Fatal("workflow inherits secrets")
-	}
-	if !strings.Contains(text, workflowActionPin) {
-		t.Fatalf("action pin is missing %q", workflowActionPin)
 	}
 	for _, version := range []string{"# v7.0.1", "# v9.0.0"} {
 		if !strings.Contains(text, version) {

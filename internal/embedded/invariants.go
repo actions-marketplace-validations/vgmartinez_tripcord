@@ -1,6 +1,9 @@
 package embedded
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"maps"
 	"regexp"
 	"slices"
@@ -269,7 +272,51 @@ type parsedWorkflow struct {
 	jobs       []workflowJob
 }
 
+// Reasons a tripcord.yml is unreadable although it parses.
+const (
+	reasonDuplicateKey      = "duplicate-key"
+	reasonMultipleDocuments = "multiple-documents"
+)
+
+// workflowAmbiguity is why raw does not read the same in every YAML
+// parser, or "": a key twice in one mapping, or a second document.
+// yaml.v3 keeps both keys in the node tree, where mapValue reads the
+// first, and reads only the first document; GitHub, or the next
+// parser, may read the other one.
+func workflowAmbiguity(raw []byte) string {
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	var doc yaml.Node
+	if err := dec.Decode(&doc); err != nil {
+		return ""
+	}
+	if hasDuplicateKey(&doc) {
+		return reasonDuplicateKey
+	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return reasonMultipleDocuments
+	}
+	return ""
+}
+
+func hasDuplicateKey(n *yaml.Node) bool {
+	if n.Kind == yaml.MappingNode {
+		seen := map[string]bool{}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			key := n.Content[i].Value
+			if seen[key] {
+				return true
+			}
+			seen[key] = true
+		}
+	}
+	return slices.ContainsFunc(n.Content, hasDuplicateKey)
+}
+
 func parseWorkflow(raw []byte) (parsedWorkflow, bool) {
+	if workflowAmbiguity(raw) != "" {
+		return parsedWorkflow{}, false
+	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(raw, &doc); err != nil || doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
 		return parsedWorkflow{}, false

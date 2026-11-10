@@ -335,6 +335,17 @@ code may be copied from it. CI rejects a module graph that contains it.
 Secret detection is planned and is not in this build. The intended
 rules are gitleaks (MIT), not TruffleHog.
 
+## Repin pull requests
+
+A pull request that changes the composite action pin or `WorkflowPin`
+is merged with a merge commit. Do not squash it and do not rebase it
+onto main. Those pinned commits have to be ancestors of main after the
+merge, and a squash or rebase writes new commits, so the pinned SHAs
+never land on main. `TestPinsHaveEmbedCheck` accepts a pin that is not
+on `origin/main` yet only on a `pull_request` whose checkout is GitHub's
+merge ref. Push-to-main CI runs the same test with no exception, and
+that run is what fails if the pull request was squash-merged or rebased.
+
 ## Development
 
 ```sh

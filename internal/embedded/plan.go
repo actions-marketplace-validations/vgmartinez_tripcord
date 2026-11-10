@@ -259,3 +259,92 @@ func harnessList() string {
 	}
 	return strings.Join(names, ", ")
 }
+
+// KeptHook is an entry init leaves in a hook file under an event it
+// wires, other than the entry it writes. embed.json does not record it.
+type KeptHook struct {
+	Harness model.Harness
+	Path    string
+	Event   string
+	// Commands are the command and bash strings in the entry, in the
+	// order they appear. A Claude matcher contributes each nested
+	// hook's command. Empty when the entry names neither.
+	Commands []string
+}
+
+// KeptHooks lists entries the planned hook files keep under events init
+// wires, apart from the entry init writes. changes is a successful
+// Plan. Order is harness order, then the order init writes events,
+// then the order of entries in the file. A file this plan does not
+// write is skipped, so a harness this run does not wire is not warned
+// about.
+func KeptHooks(changes []Change) ([]KeptHook, error) {
+	byPath := make(map[string][]byte, len(changes))
+	for _, c := range changes {
+		byPath[c.Path] = c.New
+	}
+	var kept []KeptHook
+	for _, h := range HookHarnesses {
+		path := HookPath(h)
+		raw, ok := byPath[path]
+		if !ok {
+			continue
+		}
+		doc, err := readJSONDoc(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		hooks := doc.root.get("hooks")
+		if hooks == nil || hooks.kind != kindObject {
+			continue
+		}
+		for _, e := range HookEntries(h) {
+			list := hooks.get(e.Event)
+			if list == nil || list.kind != kindArray {
+				continue
+			}
+			for _, item := range list.items {
+				if item.equal(e.entry) {
+					continue
+				}
+				kept = append(kept, KeptHook{
+					Harness:  h,
+					Path:     path,
+					Event:    e.Event,
+					Commands: entryCommands(item),
+				})
+			}
+		}
+	}
+	return kept, nil
+}
+
+// entryCommands is every command or bash string in n, in document order.
+func entryCommands(n *node) []string {
+	if n == nil {
+		return nil
+	}
+	var cmds []string
+	switch n.kind {
+	case kindScalar:
+		return nil
+	case kindArray:
+		for _, item := range n.items {
+			cmds = append(cmds, entryCommands(item)...)
+		}
+	case kindObject:
+		for i, key := range n.keys {
+			child := n.items[i]
+			if (key == "command" || key == "bash") && child.kind == kindScalar {
+				if s, ok := child.str(); ok {
+					cmds = append(cmds, s)
+					continue
+				}
+			}
+			cmds = append(cmds, entryCommands(child)...)
+		}
+	default:
+		panic(fmt.Sprintf("unhandled node kind %d", n.kind))
+	}
+	return cmds
+}

