@@ -1,0 +1,17 @@
+[
+  {
+    "harness": "claude",
+    "scope": "repo",
+    "path": ".claude/settings.local.json",
+    "sha256": "d48c2474c51bb14453b8c8d738fca5973b42403a77882b0972a47481a96f91bc",
+    "kind": "permissions",
+    "payload": {
+      "key": "[\"tripcordGuard\",\"guard-env\"]",
+      "reason": "guard-env",
+      "setting": "tripcordGuard",
+      "state": "changed",
+      "subject": "guard-env",
+      "variables": "CLAUDE_PROJECT_DIR"
+    }
+  }
+]

@@ -58,3 +58,8 @@ positivos:
   embed-cursor-duplicate-session-start-entry.json: high
   embed-copilot-duplicate-pre-tool-entry.json: high
   embed-copilot-duplicate-session-start-entry.json: high
+  embed-claude-env-project-dir: high
+  embed-claude-env-bash-env: high
+  embed-claude-env-cache-home: high
+  embed-cursor-env-project-dir: high
+  local-claude-env-project-dir.json: high

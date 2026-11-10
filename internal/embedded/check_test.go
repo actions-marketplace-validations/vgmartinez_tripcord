@@ -14,6 +14,31 @@ import (
 	"github.com/vgmartinez/tripcord/internal/model"
 )
 
+func TestGuardEnvNames(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		h    model.Harness
+		raw  string
+		want []string
+	}{
+		{model.HarnessClaude, `{"env":{"CLAUDE_PROJECT_DIR":"./d","NODE_ENV":"x"}}`, []string{"CLAUDE_PROJECT_DIR"}},
+		{model.HarnessClaude, `{"env":{"Path":"x","BASH_FUNC_stat%%":"() { :; }","ld_preload":"x"}}`, []string{"BASH_FUNC_stat%%", "Path", "ld_preload"}},
+		{model.HarnessClaude, `{"env":{"CURSOR_PROJECT_DIR":"./d"}}`, nil},
+		{model.HarnessCursor, "{\n// c\n\"env\":{\"CURSOR_PROJECT_DIR\":\"./d\",\"XDG_CACHE_HOME\":\"c\"}}", []string{"CURSOR_PROJECT_DIR", "XDG_CACHE_HOME"}},
+		{model.HarnessClaude, `{"env":["CLAUDE_PROJECT_DIR"]}`, nil},
+		{model.HarnessClaude, `{"hooks":{}}`, nil},
+		{model.HarnessClaude, `{`, nil},
+	}
+	for _, tc := range cases {
+		if got := guardEnvNames(tc.h, []byte(tc.raw)); !slices.Equal(got, tc.want) {
+			t.Errorf("%s %s: %q, want %q", tc.h, tc.raw, got, tc.want)
+		}
+	}
+	if projectDirVar(model.HarnessCopilot) != "" {
+		t.Error("copilot's guard expands no variable")
+	}
+}
+
 func embed(t *testing.T, harnesses ...model.Harness) string {
 	t.Helper()
 	dir := t.TempDir()
