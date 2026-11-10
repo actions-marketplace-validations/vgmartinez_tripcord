@@ -26,7 +26,7 @@ tcf_67a552ca1f4f5508	TC-CFG-008	TheOrcDev/repostars	TP	Cursor afterFileEdit hook
 tcf_23e2406348ec0229	TC-CFG-009	TimSoethout/goodwe-sems-home-assistant	accepted-risk	Copilot setup pipes an install script from a version tag path into sh with no checksum; tag-pinned, not commit-pinned.	2026-11-05
 tcf_4517b21450be67be	TC-CFG-004	YoshiiRyo1/document-templates-for-aws	TP	The shared allow list contains Bash, which pre-approves every shell command apart from a short deny list.	2026-11-05
 tcf_7d217c0d09caec81	TC-CFG-009	acai-sh/cli	TP	Devcontainer postCreateCommand pipes an unversioned remote install script into bash with no checksum.	2026-11-05
-tcf_0e4f0d42c03c7357	TC-CFG-003	ahang1598/doubao-workbuddy-qwenwork-skills	TP	sh -c makes bin/utp executable, strips its macOS quarantine flag, then runs it; that binary is not committed.	2026-11-05
+tcf_0e4f0d42c03c7357	TC-CFG-003	ahang1598/doubao-workbuddy-qwenwork-skills	FP	sh -c makes the committed bin/utp executable, strips its macOS quarantine flag, and runs it; that file is in the tree, so the rule no longer reports it.	2026-11-10
 tcf_05f53c880600075f	TC-CFG-003	ahmed3elshaer/everything-claude-code-mobile	TP	The ios-memory server runs node -e inline code that searches home plugin caches for a start script and requires it.	2026-11-05
 tcf_6cd1a8ffed81c592	TC-CFG-003	ahmed3elshaer/everything-claude-code-mobile	TP	The kmp-context server runs node -e inline code that searches home plugin caches for a start script and requires it.	2026-11-05
 tcf_c79e19ccb6c54989	TC-CFG-003	ahmed3elshaer/everything-claude-code-mobile	TP	The mobile-memory server runs node -e inline code that searches home plugin caches for a start script and requires it.	2026-11-05
@@ -43,19 +43,19 @@ tcf_1252856550575c30	TC-CFG-009	geneontology/go-ontology	TP	Copilot setup clones
 tcf_d08a6388c7a19334	TC-CFG-009	geneontology/go-ontology	accepted-risk	Copilot setup downloads a version-tagged ROBOT jar release with no checksum; the tag is not a commit pin but is not latest.	2026-11-05
 tcf_e4d5791f17fe5082	TC-CFG-009	geneontology/go-ontology	accepted-risk	Copilot setup downloads the ROBOT wrapper script from a version tag path and runs it, with no checksum or commit pin.	2026-11-05
 tcf_04f3401367c76f81	TC-CFG-015	getsentry/warden	accepted-risk	The allow list pre-approves WebFetch of the npm site for package lookups; that site is a public read-back channel.	2026-11-05
-tcf_29c698b0e8e46329	TC-CFG-003	hackers-pub/hackerspub	FP	In opencode.json, bash -c checks a home config file and then execs sentry-mcp, one fixed launch with no inline script.	2026-11-05
-tcf_5e19dc7dd11ba9e5	TC-CFG-003	hackers-pub/hackerspub	FP	In settings.json, bash -c checks a home config file and then execs sentry-mcp, one fixed launch with no inline script.	2026-11-05
-tcf_6b84a963defb14f5	TC-CFG-003	hackers-pub/hackerspub	FP	In config.toml, bash -c checks a home config file and then execs sentry-mcp, one fixed launch with no inline script.	2026-11-05
-tcf_fdd8aeb82fd08c05	TC-CFG-003	hackers-pub/hackerspub	FP	In .mcp.json, bash -c checks a home config file and then execs sentry-mcp, one fixed launch with no inline script.	2026-11-05
-tcf_291df84d035e2bfa	TC-CFG-003	hashgraph-online/awesome-codex-plugins	FP	zsh -lc runs python3 on one local script path, a single normal launch with no inline shell script.	2026-11-05
+tcf_29c698b0e8e46329	TC-CFG-003	hackers-pub/hackerspub	TP	In opencode.json, bash -c tests a config file under HOME and then execs sentry-mcp, a program that is not in the repository.	2026-11-10
+tcf_5e19dc7dd11ba9e5	TC-CFG-003	hackers-pub/hackerspub	TP	In settings.json, bash -c tests a config file under HOME and then execs sentry-mcp, a program that is not in the repository.	2026-11-10
+tcf_6b84a963defb14f5	TC-CFG-003	hackers-pub/hackerspub	TP	In config.toml, bash -c tests a config file under HOME and then execs sentry-mcp, a program that is not in the repository.	2026-11-10
+tcf_fdd8aeb82fd08c05	TC-CFG-003	hackers-pub/hackerspub	TP	In .mcp.json, bash -c tests a config file under HOME and then execs sentry-mcp, a program that is not in the repository.	2026-11-10
+tcf_291df84d035e2bfa	TC-CFG-003	hashgraph-online/awesome-codex-plugins	TP	zsh -lc runs one python3 script or, after ||, another one, a branching shell payload rather than one launch of a committed file.	2026-11-10
 tcf_5ef654382a87e9df	TC-CFG-003	hashgraph-online/awesome-codex-plugins	FP	bash runs the committed run-mailagent-mcp.sh with no -c and no inline code; that script execs a version-pinned npx package.	2026-11-05
 tcf_70089f509d2bdc6f	TC-CFG-003	hashgraph-online/awesome-codex-plugins	TP	powershell with ExecutionPolicy Bypass runs a ps1 script from the user profile directory, outside the repository.	2026-11-05
 tcf_8f4a4163a0bdab3b	TC-CFG-003	hashgraph-online/awesome-codex-plugins	TP	bash -c inline script searches env roots, global npm, and home plugin caches for mcp-server.sh and execs the newest one found.	2026-11-05
 tcf_99bd3a5571eea19d	TC-CFG-003	hashgraph-online/awesome-codex-plugins	TP	powershell with ExecutionPolicy Bypass runs a start ps1 script that is not committed in this catalog copy.	2026-11-05
-tcf_bc363e173a5da93f	TC-CFG-003	hashgraph-online/awesome-codex-plugins	FP	bash runs run-mailagent-mcp.sh with no -c and no inline code, so the shell only starts one named script.	2026-11-05
+tcf_bc363e173a5da93f	TC-CFG-003	hashgraph-online/awesome-codex-plugins	TP	The MailAgent plugin runs bash on scripts/run-mailagent-mcp.sh, and that path is not in this catalog copy, so the shell runs an unknown file.	2026-11-10
 tcf_cea2571b518ef62d	TC-CFG-003	hashgraph-online/awesome-codex-plugins	TP	caw-execution runs node -e inline code that imports a server module from the Codex plugin cache in the home directory.	2026-11-05
 tcf_de6fbbaffd7e95f0	TC-CFG-003	hashgraph-online/awesome-codex-plugins	TP	powershell with ExecutionPolicy Bypass runs node on a js file from the user profile directory, outside the repository.	2026-11-05
-tcf_ea2f1808d3bbe3ff	TC-CFG-003	hashgraph-online/awesome-codex-plugins	FP	bash runs start.sh under the plugin root with no -c and no inline code, so the shell only starts one named script.	2026-11-05
+tcf_ea2f1808d3bbe3ff	TC-CFG-003	hashgraph-online/awesome-codex-plugins	TP	bash runs start.sh under the plugin root, and that file is not in this catalog copy, so the shell runs an unknown file.	2026-11-10
 tcf_fc8d8d52ef32eb60	TC-CFG-003	hashgraph-online/awesome-codex-plugins	TP	codex-agents-workflow runs node -e inline code that imports a server module from the Codex plugin cache in the home directory.	2026-11-05
 tcf_1630b6e93bff8d62	TC-CFG-005	itai-gendler/pdd-kit	TP	Shared Codex config sets approval_policy to never, so commands run with no prompt.	2026-11-05
 tcf_8df0a5fbae42cd73	TC-CFG-005	itai-gendler/pdd-kit	TP	Shared Claude settings set defaultMode to bypassPermissions, so tool calls are not prompted.	2026-11-05
