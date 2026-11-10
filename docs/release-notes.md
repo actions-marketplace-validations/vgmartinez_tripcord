@@ -24,6 +24,17 @@
   as it did before. v0 known gap: there is no supported way yet to
   keep a user's own hook next to the guard. Remove the entry, or run
   it from outside the guarded config. See [Init](init.md#merging).
+- TC-CFG-016 reports an event Tripcord wires that holds more than one
+  copy of Tripcord's entry, or of the entry `embed.json` records, even
+  byte for byte the same: `changed`, high, reason `duplicate-entry`.
+  The harness runs every copy.
+- TC-CFG-012 reads more of a `curl` or `wget` header that can carry a
+  local secret: an unquoted header ends at a stdin redirect
+  (`< .env`, `0<.env`), so a dotenv read there is a warning; a glued
+  value such as `-H Authorization:$(cat .env)` or
+  `Authorization:"$(cat .env)"` is read up to the substitution;
+  `-H @.env` sends the file as headers; and a `$(...)` or backtick in
+  the command that reads a local path counts as a read.
 - TC-CFG-016 reports a `tripcord.yml` that gives a key twice in one
   mapping, or holds a second YAML document, as `unreadable`, high,
   instead of reading the first one, which could leave it `unverified`,
