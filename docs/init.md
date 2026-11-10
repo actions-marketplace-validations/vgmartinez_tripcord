@@ -531,13 +531,12 @@ builds the tripcord the generated `tripcord.yml` really runs in CI
 (`tripcord-pr.yml@WorkflowPin`, then its action, built from source the
 way the action does) and scans a fresh embed from this tree's `init`
 with `GITHUB_ACTIONS=true`. It fails on any high TC-CFG-016 finding.
-It fails on this tree: the action at `8b33b1b` predates this tree's
-templates and reports seven highs (six surfaces "written by an older
+Before the action and `WorkflowPin` were repinned past the TC-CFG-016
+version-skew fix, the action at `8b33b1b` reported seven highs on a
+fresh embed from this tree (six surfaces "written by an older
 Tripcord", and the Copilot setup step `init` writes only with
-`--cloud-setup` as missing). It passes once the action and then
-`WorkflowPin` are repinned past the TC-CFG-016 version-skew fix
-([release notes](release-notes.md)), so until then no release can be
-tagged.
+`--cloud-setup` as missing)
+([release notes](release-notes.md)).
 
 `TestVersionSkewCIScanner` also runs on every pull request, alone, in
 the `version-skew e2e` job of `ci.yml`, which sets
@@ -551,9 +550,10 @@ repins the action and `WorkflowPin`.
 once a scanner change lands after the last repin, fail until the repin
 pull requests land; the other tests pass. Without the variable all five
 log that the gate was not requested and pass. No `pull_request` or
-`push` workflow runs the gate (`TestReleaseGateNotInPullRequestCI`). There is no
-release workflow in this repository: run the target before tagging.
-Tagging and releases are Victor's.
+`push` workflow runs the gate (`TestReleaseGateNotInPullRequestCI`).
+[`release.yml`](development.md#releases) builds the archives when a
+`v*` tag is pushed and opens a draft release. Run `make release-gate`
+before tagging. Tagging and publishing the draft are Victor's.
 
 The per-pull-request pin check is `TestPinsReachableFromHead`. It does
 not read `origin/main`. Each pin in the generated workflow,

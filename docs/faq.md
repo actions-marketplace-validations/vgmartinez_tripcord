@@ -11,12 +11,18 @@ no checkout, filter, LFS, hook, or submodule runs
 
 ## Is there a release, or an npm or PyPI package?
 
-Not yet. Build from source or use `go install`
+Yes. [GitHub Releases](https://github.com/vgmartinez/tripcord/releases)
+has verified binaries ([Installation](installation.md)). npm and PyPI
+are still not published. `go install` and a source build still work
 ([Getting started](getting-started.md#build)). The
 [GitHub Action](github-action.md) builds tripcord from source at a pinned
-commit. The bootstrap `init --embed` writes runs only a binary you
-build into its cache from the pinned commit
+commit. `init --embed` runs only the binary you place in its cache,
+from a release archive or a build of the pinned commit
 ([init](init.md#bootstrap)).
+
+## Does Tripcord phone home?
+
+No: the tripcord binary makes no network calls and has no telemetry.
 
 ## Why did the scan exit 3?
 

@@ -62,8 +62,9 @@ Both build tripcord from source.
 
    `init --embed` also wires each harness's hooks to a pinned,
    checksum-verified bootstrap that runs [`tripcord hook`](hook.md).
-   `--embed` is not releasable yet, so read [Init](init.md) before you
-   embed.
+   `--embed` is part of v0.1.0. Its limits: bash only, the cache is
+   filled locally, and Windows is scan only (no Windows bootstrap
+   platforms). Read [Init](init.md) before you embed.
 
 3. Run it on every pull request with the
    [GitHub Action](github-action.md), or before every commit with the

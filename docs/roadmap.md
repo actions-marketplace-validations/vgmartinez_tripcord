@@ -1,7 +1,9 @@
 # Roadmap
 
-Nothing here is released. There is no tagged release yet; `main` is the
-v0 tree described in [Release notes](release-notes.md).
+v0.1.0 is the tagged release of this tree: verified binaries on
+[GitHub Releases](https://github.com/vgmartinez/tripcord/releases),
+described in [Release notes](release-notes.md). There is no npm or
+PyPI package. `main` continues past that tag.
 
 ## In this tree
 

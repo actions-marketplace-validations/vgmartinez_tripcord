@@ -277,9 +277,10 @@ uses: vgmartinez/tripcord/.github/workflows/tripcord-pr-comment.yml@b5238d956a7b
 A repository that does not want to call the reusable workflows can build
 `./cmd/tripcord` itself, write SARIF, and upload it. This workflow checks
 out the repository to scan and this repository, and pins every action by
-commit. `ref: main` builds the default branch of this repository; set it
-to a full commit SHA to pin the scanner as well, since no release tag
-exists to pin instead.
+commit. `ref: main` builds the default branch of this repository. Pin
+the scanner with `ref: v0.1.0` or with a full commit SHA. The root
+action is used via `@v0.1.0`, while the reusable workflows stay pinned
+to SHAs on main.
 
 A high finding makes `scan` exit 1, which fails the job. The upload step
 still runs. Uploading SARIF on a private repository requires GitHub Code
