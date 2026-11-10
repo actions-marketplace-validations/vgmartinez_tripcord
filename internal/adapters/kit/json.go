@@ -39,6 +39,19 @@ const (
 // case-insensitively, such as Copilot's hook event names; case variants
 // there are not reported.
 func DecodeJSON(raw []byte, syntax Syntax, product string, folded ...string) (any, []string, error) {
+	return decodeJSON(raw, syntax, product, folded, nil)
+}
+
+// DecodeJSONCaseDistinct is DecodeJSON for a document whose named objects
+// hold case-sensitive keys, such as environment variables. caseDistinct
+// lists those objects by the dotted path warnings use. Case variants
+// there are distinct keys and are not reported. An exact duplicate key
+// is still reported.
+func DecodeJSONCaseDistinct(raw []byte, syntax Syntax, product string, caseDistinct []string) (any, []string, error) {
+	return decodeJSON(raw, syntax, product, nil, caseDistinct)
+}
+
+func decodeJSON(raw []byte, syntax Syntax, product string, folded, caseDistinct []string) (any, []string, error) {
 	if syntax == JSONC {
 		cleaned, err := jsonc.Strip(bytes.TrimPrefix(raw, utf8BOM))
 		if err != nil {
@@ -50,7 +63,7 @@ func DecodeJSON(raw []byte, syntax Syntax, product string, folded ...string) (an
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
-	t := &treeDecoder{dec: dec, product: product, folded: folded}
+	t := &treeDecoder{dec: dec, product: product, folded: folded, caseDistinct: caseDistinct}
 	value, err := t.value(0, "")
 	if err != nil {
 		return nil, t.warnings, err
@@ -65,10 +78,11 @@ func DecodeJSON(raw []byte, syntax Syntax, product string, folded ...string) (an
 }
 
 type treeDecoder struct {
-	dec      *json.Decoder
-	product  string
-	folded   []string
-	warnings []string
+	dec          *json.Decoder
+	product      string
+	folded       []string
+	caseDistinct []string
+	warnings     []string
 }
 
 func (t *treeDecoder) value(depth int, where string) (any, error) {
@@ -88,6 +102,7 @@ func (t *treeDecoder) value(depth int, where string) (any, error) {
 		obj := map[string]any{}
 		keys := NewKeySet(where, t.product)
 		keys.foldOK = slices.Contains(t.folded, where)
+		keys.caseDistinct = slices.Contains(t.caseDistinct, where)
 		for t.dec.More() {
 			keyTok, err := t.dec.Token()
 			if err != nil {
@@ -128,11 +143,12 @@ func (t *treeDecoder) value(depth int, where string) (any, error) {
 
 // KeySet reports duplicate and case-variant keys within one object.
 type KeySet struct {
-	where   string
-	product string
-	exact   map[string]bool
-	folds   map[string]string
-	foldOK  bool
+	where        string
+	product      string
+	exact        map[string]bool
+	folds        map[string]string
+	foldOK       bool
+	caseDistinct bool
 }
 
 // NewKeySet starts a key set for the object at where ("" for the root).
@@ -147,7 +163,7 @@ func (k *KeySet) Add(key string) []string {
 		warnings = append(warnings, fmt.Sprintf("duplicate key %q%s; the last value is used", key, k.suffix()))
 	}
 	fold := strings.ToLower(key)
-	if prev, ok := k.folds[fold]; ok && prev != key && !k.foldOK {
+	if prev, ok := k.folds[fold]; ok && prev != key && !k.foldOK && !k.caseDistinct {
 		warnings = append(warnings, fmt.Sprintf("case-variant keys %q and %q%s; %s reads only the exact key name", prev, key, k.suffix(), k.product))
 	}
 	k.exact[key] = true

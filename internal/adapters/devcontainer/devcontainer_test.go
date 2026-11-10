@@ -2,6 +2,7 @@ package devcontainer
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -414,5 +415,57 @@ func TestArrayCommandWithNonString(t *testing.T) {
 	p := kittest.Payload(t, items[0])
 	if _, ok := p["command"]; ok || p["form"] != "other" || items[0].Detect != nil {
 		t.Fatalf("payload = %v, detect = %s", p, items[0].Detect)
+	}
+}
+
+// TestCaseVariantEnvKeys evaluates http_proxy and HTTP_PROXY as distinct
+// keys in build.args, containerEnv, and remoteEnv. An exact duplicate of
+// one name stays a blocking diagnostic. Lifecycle command names that
+// differ only in case stay a diagnostic too (TestHostileInputs).
+func TestCaseVariantEnvKeys(t *testing.T) {
+	t.Parallel()
+	benign := kittest.CopyTree(t, "testdata/issue125/case-variant")
+	got := kittest.Discover(t, New(Options{}), benign)
+	if len(got.Diagnostics) != 0 {
+		t.Fatalf("case variants diagnosed: %v", got.Diagnostics)
+	}
+	raw := string(kittest.GoldenJSON(t, got, nil))
+	for _, key := range []string{"http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "no_proxy", "NO_PROXY"} {
+		if !strings.Contains(raw, key) {
+			t.Fatalf("discovery dropped %s:\n%s", key, raw)
+		}
+	}
+
+	fetch := kittest.CopyTree(t, "testdata/issue125/case-variant-fetch")
+	found := kittest.Discover(t, New(Options{}), fetch)
+	if len(found.Diagnostics) != 0 {
+		t.Fatalf("case variants with a fetch diagnosed: %v", found.Diagnostics)
+	}
+	env, err := rules.NewEnv(rules.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack, err := rules.LoadCore(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rule *rules.Rule
+	for _, candidate := range pack.Rules {
+		if candidate.ID == "TC-CFG-009" {
+			rule = candidate
+		}
+	}
+	if rule == nil {
+		t.Fatal("TC-CFG-009 is not in the core pack")
+	}
+	result := rules.NewEngine(env, []*rules.Rule{rule}).ScanConfig(context.Background(), found.Items)
+	if len(result.Errors) != 0 || len(result.Matches) != 1 || result.Matches[0].Rule.ID != "TC-CFG-009" {
+		t.Fatalf("matches = %+v errors = %v", result.Matches, result.Errors)
+	}
+
+	dup := kittest.CopyTree(t, "testdata/issue125/duplicate-key")
+	blocked := kittest.Discover(t, New(Options{}), dup)
+	if !blocked.HasDiag("duplicate key") || blocked.HasDiag("case-variant") {
+		t.Fatalf("diagnostics = %v", blocked.Diagnostics)
 	}
 }
