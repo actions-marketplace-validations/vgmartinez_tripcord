@@ -367,7 +367,8 @@ every scanner, docs, and test change:
 4. C, or a docs-only commit after it, moves every pin citation in
    README.md and `docs/**/*.md` to the new pins: the reusable workflow
    refs and the pre-commit `rev:` to B, the action to A, and the
-   `` `main@` `` prose to match. `TestReleaseGateDocsCiteCurrentPins`
+   `` `main@` `` prose and any bare sha said to be current to match.
+   `TestReleaseGateDocsCiteCurrentPins`
    fails on any it misses.
 
 If anything has to change after C, such as a review fix or a failing

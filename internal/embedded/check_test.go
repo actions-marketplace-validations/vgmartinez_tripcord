@@ -14,6 +14,56 @@ import (
 	"github.com/vgmartinez/tripcord/internal/model"
 )
 
+func TestGuardEnvNames(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		h    model.Harness
+		raw  string
+		want []string
+	}{
+		{model.HarnessClaude, `{"env":{"CLAUDE_PROJECT_DIR":"./d","NODE_ENV":"x"}}`, []string{"CLAUDE_PROJECT_DIR"}},
+		{model.HarnessClaude, `{"env":{"Path":"x","BASH_FUNC_stat%%":"() { :; }","ld_preload":"x"}}`, []string{"BASH_FUNC_stat%%", "Path", "ld_preload"}},
+		{model.HarnessClaude, `{"env":{"CURSOR_PROJECT_DIR":"./d"}}`, nil},
+		{model.HarnessCursor, "{\n// c\n\"env\":{\"CURSOR_PROJECT_DIR\":\"./d\",\"XDG_CACHE_HOME\":\"c\"}}", []string{"CURSOR_PROJECT_DIR", "XDG_CACHE_HOME"}},
+		{model.HarnessClaude, `{"env":["CLAUDE_PROJECT_DIR"]}`, nil},
+		{model.HarnessClaude, `{"hooks":{}}`, nil},
+		{model.HarnessClaude, `{`, nil},
+	}
+	for _, tc := range cases {
+		if got := guardEnvNames(tc.h, []byte(tc.raw)); !slices.Equal(got, tc.want) {
+			t.Errorf("%s %s: %q, want %q", tc.h, tc.raw, got, tc.want)
+		}
+	}
+	if projectDirVar(model.HarnessCopilot) != "" {
+		t.Error("copilot's guard expands no variable")
+	}
+}
+
+func TestHooksVersion1(t *testing.T) {
+	t.Parallel()
+	for raw, want := range map[string]bool{
+		`{"version":1,"hooks":{}}`:       true,
+		"{// c\n\"version\": 1}":         true,
+		`{"version":2,"hooks":{}}`:       false,
+		`{"version":"1","hooks":{}}`:     false,
+		`{"version":1.5,"hooks":{}}`:     false,
+		`{"hooks":{}}`:                   false,
+		`{"version":[1],"hooks":{}}`:     false,
+		`{"version":null,"hooks":{}}`:    false,
+		`{"version":true,"hooks":{}}`:    false,
+		`{"version":-1,"hooks":{}}`:      false,
+		`{"version":10,"hooks":{}}`:      false,
+		`[{"version":1}]`:                false,
+		`{"version":1e0,"hooks":{}}`:     false,
+		`{"version":1, "env":{"A":"b"}}`: true,
+	} {
+		rev := &revision{files: map[string]file{CursorHooksPath: {raw: []byte(raw)}}}
+		if got := rev.hooksVersion1(model.HarnessCursor); got != want {
+			t.Errorf("%s: %v, want %v", raw, got, want)
+		}
+	}
+}
+
 func embed(t *testing.T, harnesses ...model.Harness) string {
 	t.Helper()
 	dir := t.TempDir()

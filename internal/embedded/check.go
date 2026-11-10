@@ -464,6 +464,10 @@ func (c *checker) localSettings(r *adapters.SafeReader, tracked func(string) boo
 		if off, _ := top["disableAllHooks"].(bool); off {
 			c.add(l.harness, l.path, subjectLocal, "", StateLocalDisabled, raw, nil)
 		}
+		guarded := c.base != nil || c.head.embedded() || c.leftover != nil
+		if guarded && projectDirVar(l.harness) != "" && slices.Contains(c.wired(), l.harness) {
+			c.guardEnv(l.harness, l.path, raw)
+		}
 	}
 }
 
@@ -909,6 +913,99 @@ func (c *checker) hookHarness(h model.Harness) {
 		if state != "" {
 			c.add(h, path, e.Event, e.Event, state, f.raw, extra)
 		}
+	}
+	if f.state == "" && projectDirVar(h) != "" {
+		c.guardEnv(h, path, f.raw)
+	}
+	if parsed && (h == model.HarnessCursor || h == model.HarnessCopilot) && !c.head.hooksVersion1(h) {
+		c.add(h, path, subjectHooksVersion, "", StateChanged, f.raw, map[string]string{"reason": reasonHooksVersion})
+	}
+}
+
+// reasonHooksVersion: a Cursor or Copilot hook file whose "version" is
+// not 1. init writes version 1 and refuses to merge into any other; a
+// harness may read another version differently, or reject the file.
+const reasonHooksVersion = "hooks-version"
+
+const subjectHooksVersion = "hooks-version"
+
+// hooksVersion1 reports whether h's wiring file has "version": 1.
+func (t *revision) hooksVersion1(h model.Harness) bool {
+	syntax := kit.StrictJSON
+	if h == model.HarnessCursor {
+		syntax = kit.JSONC
+	}
+	doc, _, err := kit.DecodeJSON(t.files[HookPath(h)].raw, syntax, string(h))
+	top, isObject := doc.(map[string]any)
+	if err != nil || !isObject {
+		return false
+	}
+	v, ok := top["version"]
+	return ok && anyNode(v).equal(anyNode(json.Number("1")))
+}
+
+// reasonGuardEnv: a settings env block sets a variable the guard reads
+// before the verified binary decides, so the hook entry is intact but
+// may run another bootstrap.sh, another bash, or a cached binary the
+// check never hashed.
+const reasonGuardEnv = "guard-env"
+
+const subjectGuardEnv = "guard-env"
+
+// guardEnvVars are read on the way to the verified binary by every
+// harness's guard: bash resolves bash on PATH and reads its startup
+// variables, the dynamic loader reads its preload variables, and
+// bootstrap.sh finds its cache under XDG_CACHE_HOME or HOME. A name is
+// compared in upper case.
+var guardEnvVars = []string{
+	"BASHOPTS", "BASH_ENV", "CDPATH", "DYLD_FRAMEWORK_PATH", "DYLD_INSERT_LIBRARIES",
+	"DYLD_LIBRARY_PATH", "ENV", "HOME", "IFS", "LD_AUDIT", "LD_LIBRARY_PATH",
+	"LD_PRELOAD", "PATH", "SHELLOPTS", "XDG_CACHE_HOME",
+}
+
+// projectDirVar is the variable h's guard command expands to find
+// bootstrap.sh (projectBootstrap), or "" when it expands none. Copilot's
+// guard runs bootstrap.sh relative to cwd ".".
+func projectDirVar(h model.Harness) string {
+	switch h {
+	case model.HarnessClaude:
+		return "CLAUDE_PROJECT_DIR"
+	case model.HarnessCursor:
+		return "CURSOR_PROJECT_DIR"
+	default:
+		return ""
+	}
+}
+
+// guardEnvNames lists the keys of a top-level env object in raw that h's
+// guard reads, sorted. It is nil when raw has no env object.
+func guardEnvNames(h model.Harness, raw []byte) []string {
+	syntax := kit.StrictJSON
+	if h == model.HarnessCursor {
+		syntax = kit.JSONC
+	}
+	doc, _, err := kit.DecodeJSON(raw, syntax, string(h))
+	top, isObject := doc.(map[string]any)
+	if err != nil || !isObject {
+		return nil
+	}
+	env, _ := top["env"].(map[string]any)
+	var names []string
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		u := strings.ToUpper(k)
+		if u == projectDirVar(h) || slices.Contains(guardEnvVars, u) || strings.HasPrefix(u, "BASH_FUNC_") {
+			names = append(names, k)
+		}
+	}
+	return names
+}
+
+// guardEnv reports a settings env block that sets a variable h's guard
+// reads, whether or not the harness applies that block to hook
+// processes: the guard's integrity must not depend on it.
+func (c *checker) guardEnv(h model.Harness, path string, raw []byte) {
+	if names := guardEnvNames(h, raw); len(names) > 0 {
+		c.add(h, path, subjectGuardEnv, "", StateChanged, raw, map[string]string{"reason": reasonGuardEnv, "variables": strings.Join(names, ",")})
 	}
 }
 

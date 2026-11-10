@@ -1,0 +1,17 @@
+[
+  {
+    "harness": "cursor",
+    "scope": "repo",
+    "path": ".cursor/hooks.json",
+    "sha256": "94cf50e741940b44f0bf41e8aa906a2ac734c2b6b7b8a87cbaf8d98d4cbb4153",
+    "kind": "permissions",
+    "payload": {
+      "key": "[\"tripcordGuard\",\"guard-env\"]",
+      "reason": "guard-env",
+      "setting": "tripcordGuard",
+      "state": "changed",
+      "subject": "guard-env",
+      "variables": "CURSOR_PROJECT_DIR"
+    }
+  }
+]

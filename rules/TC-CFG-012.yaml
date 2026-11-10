@@ -23,7 +23,8 @@
 # cannot sit in front of a verb or split a target. Tag characters and
 # lookalike letters, including a Cyrillic e in .env, stay and do not match.
 # A line matches when a verb follows optional Markdown (#, >, <!--,
-# bullet, number, or **), an optional role label after <!-- only
+# bullet, number, or **, with a ** that closes bold right after the
+# verb dropped), an optional role label after <!-- only
 # (assistant, user, system, or human, then a colon), and an optional
 # prefix (please, always, first, you must/should, make sure to), and
 # then directly names a secret target. A label such as "Example:" is

@@ -1,0 +1,9 @@
+-- .mcp.json --
+{
+  "mcpServers": {
+    "s": {
+      "command": "bash",
+      "args": ["-lc", "uvx mcp-server-git==2025.9.1"]
+    }
+  }
+}
