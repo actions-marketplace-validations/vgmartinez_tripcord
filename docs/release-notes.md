@@ -2,6 +2,39 @@
 
 ## v0 (unreleased)
 
+### Bootstrap and embed check hardening
+
+- `bootstrap.sh hook` runs the cached binary without re-hashing it only
+  when this user owns it, and no mode verifies a binary another user
+  owns: that user could rewrite it in place.
+- The `verified` record must be exactly its one line and a newline.
+  Anything after it, and a record without the newline, makes `hook`
+  exit 2 and run nothing.
+- The cache root, `${XDG_CACHE_HOME:-$HOME/.cache}`, gets the checks
+  every cache directory gets, on the verified hook path too: not a
+  symlink, owned by this user, and not group- or world-writable. A
+  group-writable `~/.cache` (umask 0002) needs `chmod go-w`; see
+  [Init](init.md#bootstrap).
+- TC-CFG-016 reports an entry under an event Tripcord wires (pre-tool
+  or session-start) that is neither Tripcord's nor the one `embed.json`
+  records: `changed`, high, reason `unregistered-entry`. `init --embed`
+  keeps such an entry when it merges and does not register it.
+  It warns on stderr, naming the harness, file, event, and command,
+  that `tripcord scan` will report it as TC-CFG-016 HIGH, and exits
+  as it did before. v0 known gap: there is no supported way yet to
+  keep a user's own hook next to the guard. Remove the entry, or run
+  it from outside the guarded config. See [Init](init.md#merging).
+- TC-CFG-016 reports a `tripcord.yml` that gives a key twice in one
+  mapping, or holds a second YAML document, as `unreadable`, high,
+  instead of reading the first one, which could leave it `unverified`,
+  low, in CI.
+- The `bootstrap.sh` template changed, so this needs a new
+  `WorkflowPin` (`TestTemplateChangeNeedsRepin`).
+- `TestVersionSkewCIScanner` runs on every pull request, in the
+  `version-skew e2e` job of `ci.yml` (`TRIPCORD_VERSION_SKEW_E2E=1`),
+  as well as under `make release-gate`
+  ([#119](https://github.com/vgmartinez/tripcord/issues/119)).
+
 ### TC-CFG-016 version skew: an older scanner no longer fails a newer embed
 
 The scanner CI runs is the one `tripcord-pr.yml@WorkflowPin` pins,
@@ -224,9 +257,20 @@ init writes reports those differences as further highs.
 `make release-gate` now fails when the generated workflow pin or a
 documented pin of the reusable workflows or the pre-commit hook does
 not contain the latest scanner change on main. A repin pull request is
-required before tagging. Tagging is Victor's. Pull request CI checks
-only that each pin is a full sha and an ancestor of the commit under
-test. See [Release gate](init.md#release-gate).
+required before tagging. Tagging is Victor's. Merge that pull request
+with a merge commit, never a squash and never a rebase: the pinned
+commits have to stay on main, and a squash or rebase drops them.
+`TestPinsHaveEmbedCheck` accepts a pin that is not on `origin/main`
+yet only when `GITHUB_EVENT_NAME` is `pull_request`, the checkout is
+that merge (exactly two parents, the first equal to `origin/main`),
+and the pin is not in the pin set on `origin/main`. The new pin must
+be an ancestor of HEAD and must not already be an ancestor of
+`origin/main`. Pins the base already has stay strict. A push, the
+release gate (`TRIPCORD_RELEASE_GATE=1`), and a local run stay strict
+for every pin. If the checkout is not that merge, or the base pins
+cannot be read, the test fails and does not skip. Push-to-main CI is
+what catches a squash or rebase that left a pin unreachable. See
+[Release gate](init.md#release-gate).
 
 ### TC-CFG-003 and a repository's own scripts
 
@@ -289,6 +333,13 @@ the tree, and its bytes are not read.
   `blueprint.yaml`) unless `--cloud-setup` is set. That flag is a known
   gap: `bootstrap.sh install` downloads nothing, and v0 has no download
   channel. See [init](init.md).
+- `init --embed` has no supported way yet to keep a user's own hook
+  next to the guard. An entry it keeps under a pre-tool or
+  session-start event is not registered in `embed.json`, and
+  `tripcord scan` reports it as TC-CFG-016 HIGH. init names the
+  harness, file, event, and command on stderr and does not change its
+  exit code. Remove the entry, or run it from outside the guarded
+  config. See [init](init.md#merging).
 - `-p X` is redacted only when the same command also names a user
   (`-u`, `-U`, `-l`, `--user`, `--username`, `--login`, or a `login`
   subcommand). A `-p` with no user flag in the command, such as

@@ -1,0 +1,16 @@
+[
+  {
+    "harness": "generic",
+    "scope": "repo",
+    "path": ".github/workflows/tripcord.yml",
+    "sha256": "69a68feb2291c3be3c270975fcc603413eb2890cff4fbd05f07627a478133f2f",
+    "kind": "permissions",
+    "payload": {
+      "key": "[\"tripcordGuard\",\"workflow\"]",
+      "reason": "duplicate-key",
+      "setting": "tripcordGuard",
+      "state": "unreadable",
+      "subject": "workflow"
+    }
+  }
+]

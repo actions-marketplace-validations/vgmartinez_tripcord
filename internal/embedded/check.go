@@ -45,7 +45,8 @@ const (
 	// vgmartinez/tripcord/.github/workflows/tripcord-pr.yml at a full
 	// commit SHA.
 	StatePinMalformed = "pin-malformed"
-	// StateUnreadable: the file could not be read or parsed.
+	// StateUnreadable: the file could not be read or parsed, or
+	// tripcord.yml repeats a key in a mapping or holds a second document.
 	StateUnreadable = "unreadable"
 	// StateRemoved: the base revision had it and this change removes it.
 	StateRemoved = "removed"
@@ -591,6 +592,12 @@ func (c *checker) ownFile(subject, path string, render func(Manifest) []byte) {
 		c.add(model.SurfaceGeneric, path, subject, "", StateUnreadable, nil, nil)
 	case c.head.manifestOK:
 		content := c.head.contentBytes(f.raw)
+		if path == WorkflowPath {
+			if reason := workflowAmbiguity(content); reason != "" {
+				c.add(model.SurfaceGeneric, path, subject, "", StateUnreadable, f.raw, map[string]string{"reason": reason})
+				return
+			}
+		}
 		r := rendered{got: digest(content), want: digest(render(c.head.manifest)), recorded: c.head.manifest.recordedFile(path, "")}
 		switch path {
 		case BootstrapPath:
@@ -875,6 +882,7 @@ func (c *checker) hookHarness(h model.Harness) {
 		default:
 			var match *node
 			state, match = entryState(e, hooks, recorded[e.Event])
+			registered := state == "" || match != nil
 			switch {
 			case match != nil:
 				state, extra = c.classify(rendered{
@@ -890,6 +898,9 @@ func (c *checker) hookHarness(h model.Harness) {
 				// record; the pre-tool guard is the floor every
 				// version writes.
 				state, extra = StateUnverified, map[string]string{"reason": "unrecorded-event"}
+			}
+			if registered && state != StateChanged && hasUnregisteredEntry(e, hooks, recorded[e.Event]) {
+				state, extra = StateChanged, map[string]string{"reason": reasonUnregisteredEntry}
 			}
 		}
 		if state != "" {
@@ -918,6 +929,24 @@ func entryState(e HookEntry, hooks map[string]any, recorded string) (state strin
 		}
 	}
 	return state, match
+}
+
+// reasonUnregisteredEntry: an event Tripcord wires holds an entry that
+// is neither Tripcord's nor the one embed.json records, which the
+// harness runs alongside the guard.
+const reasonUnregisteredEntry = "unregistered-entry"
+
+// hasUnregisteredEntry reports whether hooks.<e.Event> holds an entry
+// other than e and the entry whose digest the manifest records.
+func hasUnregisteredEntry(e HookEntry, hooks map[string]any, recorded string) bool {
+	list, _ := hooks[e.Event].([]any)
+	for _, v := range list {
+		n := anyNode(v)
+		if !n.equal(e.entry) && (recorded == "" || hookDigest(e.Event, n) != recorded) {
+			return true
+		}
+	}
+	return false
 }
 
 func hookDigest(event string, n *node) string {

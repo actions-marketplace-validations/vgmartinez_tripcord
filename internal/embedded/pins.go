@@ -18,7 +18,9 @@ import (
 // check. TestKnownWorkflowPinsShape checks the format;
 // TestReleaseGateKnownWorkflowPins checks each entry against main and
 // that the list only grows.
-var KnownWorkflowPins = []string{}
+var KnownWorkflowPins = []string{
+	"277066a292b8717d4d91393a10d00c5dd2d51cdb",
+}
 
 // ExcludedWorkflowPins are earlier WorkflowPin values that must never be
 // accepted: their tripcord-pr.yml pins an action without the embed check.

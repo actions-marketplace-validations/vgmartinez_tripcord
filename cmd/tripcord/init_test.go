@@ -406,9 +406,177 @@ func TestInitMergesExistingFiles(t *testing.T) {
 			t.Errorf("%s changed on the second run", path)
 		}
 	}
-	if code, stdout, stderr := runCLI(t, "scan", "--format", "json", dir); code != 0 || stdout != "" {
+	// The kept lint hook runs alongside the guard under PreToolUse, so it
+	// is the one finding: an entry Tripcord did not register.
+	code, stdout, stderr = runCLI(t, "scan", "--format", "json", dir)
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	var f model.Finding
+	if code != 0 || len(lines) != 1 {
 		t.Fatalf("scan: exit %d\n%s%s", code, stdout, stderr)
 	}
+	mustJSON(t, lines[0], &f)
+	if f.Rule != "TC-CFG-016" || f.Severity != model.SeverityHigh || f.Location.Path != embedded.ClaudeSettingsPath || f.Title != titleChanged {
+		t.Fatalf("scan: %+v, want one high TC-CFG-016 %q at %s", f, titleChanged, embedded.ClaudeSettingsPath)
+	}
+}
+
+func TestInitWarnsKeptUnregisteredHook(t *testing.T) {
+	clean := embedRoot(t)
+	code, stdout, stderr := runCLI(t, embedArgs(clean)...)
+	if code != 0 || stderr != "" {
+		t.Fatalf("clean init: exit %d\nstderr:\n%s", code, stderr)
+	}
+	cleanFiles := snapshot(t, clean)
+
+	dir := embedRoot(t)
+	writeTestFile(t, dir, embedded.ClaudeSettingsPath, `{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/hello.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/lint.sh"
+          },
+          {
+            "type": "command",
+            "command": "./scripts/fmt.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+`)
+	writeTestFile(t, dir, embedded.CursorHooksPath, `{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "./scripts/cursor-session.sh"
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "./scripts/cursor.sh"
+      }
+    ],
+    "stop": [
+      {
+        "command": "./scripts/stop.sh"
+      }
+    ]
+  }
+}
+`)
+	writeTestFile(t, dir, embedded.CopilotHooksPath, `{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "./scripts/copilot.sh",
+        "cwd": ".",
+        "timeoutSec": 30
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "./scripts/copilot-pre.sh",
+        "cwd": ".",
+        "timeoutSec": 30
+      }
+    ]
+  }
+}
+`)
+	existed := map[string]bool{
+		embedded.ClaudeSettingsPath: true,
+		embedded.CursorHooksPath:    true,
+		embedded.CopilotHooksPath:   true,
+	}
+	code2, stdout2, stderr2 := runCLI(t, embedArgs(dir)...)
+	if code2 != code {
+		t.Fatalf("exit %d, want %d (unchanged)\nstdout:\n%s\nstderr:\n%s", code2, code, stdout2, stderr2)
+	}
+	if stdout2 != stdoutWithUpdated(t, stdout, existed) {
+		t.Fatalf("stdout:\n%s\nwant the clean init report, with the pre-existing hook files updated", stdout2)
+	}
+	const kept = "; tripcord scan will report it as TC-CFG-016 HIGH (an entry Tripcord did not register); remove the entry, or run it from outside the guarded config\n"
+	wantStderr := "tripcord init: claude " + embedded.ClaudeSettingsPath + " SessionStart keeps \"./scripts/hello.sh\"" + kept +
+		"tripcord init: claude " + embedded.ClaudeSettingsPath + " PreToolUse keeps \"./scripts/lint.sh\", \"./scripts/fmt.sh\"" + kept +
+		"tripcord init: cursor " + embedded.CursorHooksPath + " sessionStart keeps \"./scripts/cursor-session.sh\"" + kept +
+		"tripcord init: cursor " + embedded.CursorHooksPath + " preToolUse keeps \"./scripts/cursor.sh\"" + kept +
+		"tripcord init: copilot " + embedded.CopilotHooksPath + " sessionStart keeps \"./scripts/copilot.sh\"" + kept +
+		"tripcord init: copilot " + embedded.CopilotHooksPath + " preToolUse keeps \"./scripts/copilot-pre.sh\"" + kept
+	if stderr2 != wantStderr {
+		t.Fatalf("stderr:\n%s\nwant:\n%s", stderr2, wantStderr)
+	}
+	if strings.Contains(stdout2, "TC-CFG-016") || strings.Contains(stderr2, "stop.sh") {
+		t.Fatalf("warning leaked to stdout or named the stop hook\nstdout:\n%s\nstderr:\n%s", stdout2, stderr2)
+	}
+	files := snapshot(t, dir)
+	if files[embedded.ManifestPath] != cleanFiles[embedded.ManifestPath] {
+		t.Fatalf("embed.json registered a kept hook:\n%s\nclean:\n%s", files[embedded.ManifestPath], cleanFiles[embedded.ManifestPath])
+	}
+	for _, cmd := range []string{"./scripts/hello.sh", "./scripts/lint.sh", "./scripts/fmt.sh", "./scripts/cursor-session.sh", "./scripts/cursor.sh", "./scripts/stop.sh", "./scripts/copilot.sh", "./scripts/copilot-pre.sh"} {
+		if strings.Contains(files[embedded.ManifestPath], cmd) {
+			t.Errorf("manifest contains %s", cmd)
+		}
+		keptIn := files[embedded.ClaudeSettingsPath] + files[embedded.CursorHooksPath] + files[embedded.CopilotHooksPath]
+		if !strings.Contains(keptIn, cmd) {
+			t.Errorf("init dropped %s", cmd)
+		}
+	}
+
+	code3, stdout3, stderr3 := runCLI(t, embedArgs(dir)...)
+	if code3 != 0 || stderr3 != wantStderr {
+		t.Fatalf("second run: exit %d\nstdout:\n%s\nstderr:\n%s", code3, stdout3, stderr3)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(stdout3, "\n"), "\n") {
+		if !strings.HasPrefix(line, "unchanged ") {
+			t.Fatalf("second run stdout:\n%s", stdout3)
+		}
+	}
+	if strings.Contains(stdout3, "TC-CFG-016") {
+		t.Fatalf("second run wrote the warning to stdout:\n%s", stdout3)
+	}
+
+	code4, stdout4, stderr4 := runCLI(t, embedArgs("--dry-run", dir)...)
+	if code4 != 0 || stdout4 != "" || stderr4 != wantStderr+"tripcord init: dry run, nothing written\n" {
+		t.Fatalf("dry run: exit %d\nstdout:\n%s\nstderr:\n%s", code4, stdout4, stderr4)
+	}
+}
+
+// stdoutWithUpdated is stdout with "created" rewritten to "updated" for
+// paths that already existed. The verbs are init's own report.
+func stdoutWithUpdated(t *testing.T, stdout string, paths map[string]bool) string {
+	t.Helper()
+	var b strings.Builder
+	for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
+		verb, path, ok := strings.Cut(line, " ")
+		if !ok || (verb != "created" && verb != "updated" && verb != "unchanged") {
+			t.Fatalf("stdout line %q", line)
+		}
+		if paths[path] {
+			verb = "updated"
+		}
+		b.WriteString(verb + " " + path + "\n")
+	}
+	return b.String()
 }
 
 func TestInitUnmergeableFailsClosed(t *testing.T) {

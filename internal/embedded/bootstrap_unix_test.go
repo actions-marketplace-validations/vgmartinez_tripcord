@@ -544,8 +544,9 @@ func TestBootstrapRefusesCacheDirOfAnotherUser(t *testing.T) {
 // leave a cache bootstrap.sh accepts.
 func TestBootstrapCacheFillDocsWorkUnderUmask0002(t *testing.T) {
 	e := newBootstrapEnv(t, nil)
+	e.cache = filepath.Join(e.cache, "new-cache-root")
 	cache := filepath.Dir(e.cached())
-	fill := exec.Command("sh", "-c", `umask 0002; mkdir -p "$1"; chmod go-w "${1%/*/*}" "${1%/*}" "$1"`, "fill", cache)
+	fill := exec.Command("sh", "-c", `umask 0002; mkdir -p "$1"; chmod go-w "${1%/*/*/*}" "${1%/*/*}" "${1%/*}" "$1"`, "fill", cache)
 	if out, err := fill.CombinedOutput(); err != nil {
 		t.Fatalf("documented cache fill: %v: %s", err, out)
 	}
@@ -744,4 +745,206 @@ func TestBootstrapExecFailureNamesNoexec(t *testing.T) {
 			t.Fatalf("%s: exit %d stderr %q", args[0], code, stderr)
 		}
 	}
+}
+
+func (e *bootstrapEnv) marker() string {
+	return filepath.Join(filepath.Dir(e.cached()), "verified")
+}
+
+// verify runs install under shell so the cached binary has a verified
+// record, and forgets that run.
+func (e *bootstrapEnv) verify(t *testing.T, shell string) {
+	t.Helper()
+	if code, stdout, stderr := e.runShell(t, shell, "install"); code != 0 {
+		t.Fatalf("install: exit %d: %s%s", code, stdout, stderr)
+	}
+	if err := os.Remove(e.args); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// rewriteMarker replaces the verified record with content, keeping its
+// mode 0400.
+func (e *bootstrapEnv) rewriteMarker(t *testing.T, content string) {
+	t.Helper()
+	mustChmod(t, e.marker(), 0o600)
+	if err := os.WriteFile(e.marker(), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustChmod(t, e.marker(), 0o400)
+}
+
+// refuses runs bootstrap.sh under shell and requires the fail-closed
+// result: exit 2, nothing on stdout, reason on stderr, no binary run,
+// and nothing fetched.
+func (e *bootstrapEnv) refuses(t *testing.T, shell, reason string, args ...string) {
+	t.Helper()
+	code, stdout, stderr := e.runShell(t, shell, args...)
+	if code != 2 || stdout != "" || !strings.HasPrefix(stderr, "tripcord bootstrap: ") || !strings.Contains(stderr, reason) || e.ran(t) != "" {
+		t.Fatalf("%s %v: exit %d, stdout %q, stderr %q, ran %q; want exit 2 and %q", shell, args, code, stdout, stderr, e.ran(t), reason)
+	}
+	e.assertNoFetch(t)
+}
+
+// bootstrapShells runs test under sh and under bash, the interpreter
+// the hooks init writes use.
+func bootstrapShells(t *testing.T, test func(t *testing.T, shell string)) {
+	for _, shell := range []string{"sh", "bash"} {
+		t.Run(shell, func(t *testing.T) {
+			if _, err := exec.LookPath(shell); err != nil {
+				t.Skipf("%s is not installed", shell)
+			}
+			test(t, shell)
+		})
+	}
+}
+
+// statID is the identity bootstrap.sh records for path, in the format
+// its stat call prints.
+func statID(t *testing.T, path string) string {
+	t.Helper()
+	out, err := exec.Command("/usr/bin/stat", "-c", "%d %i %s %.Y %.Z", path).Output()
+	if err != nil {
+		out, err = exec.Command("/usr/bin/stat", "-f", "%d %i %z %m %c", path).Output()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSuffix(string(out), "\n")
+}
+
+var hookArgs = []string{"hook", "--harness", "claude", "--event", HookEvent, "--on-failure", "block"}
+
+// TestBootstrapRefusesCachedBinaryOfAnotherUser needs root to hand the
+// cached binary to another user, who could rewrite it in place at any
+// time. hook must not run it even when the verified record matches it
+// exactly, and no mode may verify it.
+func TestBootstrapRefusesCachedBinaryOfAnotherUser(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to chown the cached binary to another user")
+	}
+	const reason = "is not owned by uid 0; it was not run"
+	bootstrapShells(t, func(t *testing.T, shell string) {
+		forged := func(t *testing.T, owner int) *bootstrapEnv {
+			t.Helper()
+			e := newBootstrapEnv(t, map[string]string{hostPlatform(t): sum(selfPathBinary)})
+			e.putCache(t, selfPathBinary)
+			e.verify(t, shell)
+			if err := os.Chown(e.cached(), owner, owner); err != nil {
+				t.Fatal(err)
+			}
+			e.rewriteMarker(t, "v1 "+sum(selfPathBinary)+" "+statID(t, e.cached())+"\n")
+			return e
+		}
+		t.Run("record matches, owner is this user", func(t *testing.T) {
+			e := forged(t, 0)
+			code, stdout, stderr := e.runShell(t, shell, hookArgs...)
+			if code != 0 || stderr != "" || strings.TrimSpace(e.ran(t)) != e.cached() {
+				t.Fatalf("exit %d, stdout %q, stderr %q, ran %q; want the cached file run", code, stdout, stderr, e.ran(t))
+			}
+		})
+		t.Run("record matches, owner is another user", func(t *testing.T) {
+			forged(t, 65534).refuses(t, shell, reason, hookArgs...)
+		})
+		for _, args := range [][]string{{"install"}, {"session-start", "--harness", "claude"}, hookArgs} {
+			t.Run("unverified "+args[0], func(t *testing.T) {
+				e := newBootstrapEnv(t, nil)
+				e.putCache(t, fakeBinary)
+				if err := os.Chown(e.cached(), 65534, 65534); err != nil {
+					t.Fatal(err)
+				}
+				e.refuses(t, shell, reason, args...)
+			})
+		}
+	})
+}
+
+// TestBootstrapRefusesRecordWithTrailingContent: the verified record is
+// exactly "v1 <sha256> <identity>" and one newline. A record with
+// anything after that line, or without the newline, is not one
+// bootstrap.sh wrote, so hook exits 2 and runs nothing.
+func TestBootstrapRefusesRecordWithTrailingContent(t *testing.T) {
+	bootstrapShells(t, func(t *testing.T, shell string) {
+		for name, tc := range map[string]struct {
+			edit func(record string) string
+			runs bool
+		}{
+			"rewritten unchanged":  {func(r string) string { return r }, true},
+			"trailing garbage":     {func(r string) string { return r + "garbage\n" }, false},
+			"trailing bytes":       {func(r string) string { return r + "x" }, false},
+			"trailing blank line":  {func(r string) string { return r + "\n" }, false},
+			"record twice":         {func(r string) string { return r + r }, false},
+			"trailing NUL":         {func(r string) string { return r + "\x00" }, false},
+			"no trailing newline":  {func(r string) string { return strings.TrimSuffix(r, "\n") }, false},
+			"carriage return":      {func(r string) string { return strings.TrimSuffix(r, "\n") + "\r\n" }, false},
+			"space before newline": {func(r string) string { return strings.TrimSuffix(r, "\n") + " \n" }, false},
+		} {
+			t.Run(name, func(t *testing.T) {
+				e := newBootstrapEnv(t, map[string]string{hostPlatform(t): sum(selfPathBinary)})
+				e.putCache(t, selfPathBinary)
+				e.verify(t, shell)
+				raw, err := os.ReadFile(e.marker())
+				if err != nil {
+					t.Fatal(err)
+				}
+				e.rewriteMarker(t, tc.edit(string(raw)))
+				if !tc.runs {
+					e.refuses(t, shell, "no longer matches the binary that was verified", hookArgs...)
+					return
+				}
+				code, stdout, stderr := e.runShell(t, shell, hookArgs...)
+				if code != 0 || stderr != "" || strings.TrimSpace(e.ran(t)) != e.cached() {
+					t.Fatalf("exit %d, stdout %q, stderr %q, ran %q; want the cached file run", code, stdout, stderr, e.ran(t))
+				}
+			})
+		}
+	})
+}
+
+// TestBootstrapRefusesUnsafeCacheRoot: the parent of tripcord/
+// (XDG_CACHE_HOME, or ~/.cache) holds the whole cache, so whoever can
+// write it can rename tripcord/ away and put their own in its place. It
+// gets the checks every cache directory gets, in every mode and on the
+// verified hook path, which otherwise never re-hashes.
+func TestBootstrapRefusesUnsafeCacheRoot(t *testing.T) {
+	bootstrapShells(t, func(t *testing.T, shell string) {
+		for name, unsafe := range map[string]struct {
+			apply  func(t *testing.T, e *bootstrapEnv)
+			reason string
+		}{
+			"world-writable": {func(t *testing.T, e *bootstrapEnv) { mustChmod(t, e.cache, 0o777) }, "group- or world-writable"},
+			"group-writable": {func(t *testing.T, e *bootstrapEnv) { mustChmod(t, e.cache, 0o770) }, "group- or world-writable"},
+			"sticky world-writable": {func(t *testing.T, e *bootstrapEnv) {
+				mustChmod(t, e.cache, 0o777|os.ModeSticky)
+			}, "group- or world-writable"},
+			"symlink": {func(t *testing.T, e *bootstrapEnv) {
+				link := filepath.Join(t.TempDir(), "cache")
+				if err := os.Symlink(e.cache, link); err != nil {
+					t.Fatal(err)
+				}
+				e.extraEnv = append(e.extraEnv, "XDG_CACHE_HOME="+link)
+			}, "are not directories or are symlinks"},
+		} {
+			for _, tc := range []struct {
+				name     string
+				verified bool
+				args     []string
+			}{
+				{"install", false, []string{"install"}},
+				{"session-start", false, []string{"session-start", "--harness", "claude"}},
+				{"unverified hook", false, hookArgs},
+				{"verified hook", true, hookArgs},
+			} {
+				t.Run(name+" "+tc.name, func(t *testing.T) {
+					e := newBootstrapEnv(t, nil)
+					e.putCache(t, fakeBinary)
+					if tc.verified {
+						e.verify(t, shell)
+					}
+					unsafe.apply(t, e)
+					e.refuses(t, shell, unsafe.reason, tc.args...)
+				})
+			}
+		}
+	})
 }

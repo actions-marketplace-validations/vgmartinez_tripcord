@@ -148,7 +148,21 @@ init never replaces a file it did not write.
   `.github/hooks/tripcord.json`): existing keys keep their order and the
   file keeps its indentation. New keys are appended. A Tripcord entry
   is added to an event's array only if an identical entry is not
-  already there.
+  already there. An entry already under an event Tripcord wires (the
+  pre-tool and session-start events, in any harness) is kept in the
+  file, and init does not register it: `embed.json` records only the
+  entry init writes. init prints one line per kept entry on stderr,
+  naming the harness, file, event, and command. The line says that
+  `tripcord scan` will report it as TC-CFG-016 HIGH (an entry Tripcord
+  did not register), and lists the options: remove the entry, or run
+  it from outside the guarded config. The exit code does not change,
+  and the line is not written to stdout. `--dry-run` prints it too,
+  before `dry run, nothing written`. A later run warns again while the
+  entry is still there. An entry under any other event is left in
+  place and is not warned about.
+
+  v0 known gap: there is no supported way yet to keep a user's own
+  hook next to the guard.
 - With `--cloud-setup`, the same JSON merge applies to
   `environment.json`, and YAML files (`copilot-setup-steps.yml`,
   `blueprint.yaml`) gain the step or maintenance entry. Without the
@@ -255,7 +269,7 @@ cache="${XDG_CACHE_HOME:-$HOME/.cache}/tripcord/<version>/<os-arch>"
   umask 022
   mkdir -p "$cache"
 )
-chmod go-w "${cache%/*/*}" "${cache%/*}" "$cache"
+chmod go-w "${cache%/*/*/*}" "${cache%/*/*}" "${cache%/*}" "$cache"
 CGO_ENABLED=0 go build -trimpath -o "$cache/tripcord" ./cmd/tripcord
 sha256sum "$cache/tripcord"
 ```
@@ -270,17 +284,19 @@ It fails closed. Each of these exits 2 with `tripcord bootstrap:
 - no binary in the cache (the reason names the path to fill);
 - a binary with another SHA-256 (the reason names both digests);
 - a cached binary whose device, inode, size, mtime, or ctime no longer
-  matches the `verified` record, or a cached binary that is group- or
-  world-writable (`hook` only: it does not re-hash, and it runs nothing
-  until `install` or `session-start`);
-- a binary that is a symlink or not a regular file;
+  matches the `verified` record, a cached binary that is group- or
+  world-writable, or a `verified` record that is anything but its one
+  line and a newline (`hook` only: it does not re-hash, and it runs
+  nothing until `install` or `session-start`);
+- a binary that is a symlink or not a regular file, or that is owned
+  by another user, who could rewrite it in place;
 - a binary without the execute bit (`chmod 0755` it), rather than the
   shell's 126; or a binary that still cannot execute, for which a
   `noexec` mount is a likely cause;
-- a cache directory, from `tripcord/` down to `<os-arch>/` and
-  including `tripcord/.run/`, that is a symlink, is owned by another
-  user, or is group- or world-writable (`chmod go-w` it): another user
-  could swap the binary there;
+- a cache directory, from `${XDG_CACHE_HOME:-$HOME/.cache}` itself down
+  to `<os-arch>/` and including `tripcord/.run/`, that is a symlink, is
+  owned by another user, or is group- or world-writable, sticky bit or
+  not (`chmod go-w` it): another user could swap the binary there;
 - no SHA-256 pinned for the platform, or an unsupported OS or
   architecture;
 - no `sha256sum` or `shasum` in `/usr/bin` or `/bin`;
@@ -377,7 +393,8 @@ script and the manifest's digest together still reports.
 - **changed** (high): it differs from what init writes for the
   recorded pin and from the recorded digest, or it matches the digest
   but breaks an invariant every Tripcord version keeps, or a pin this
-  scanner knows never wrote it;
+  scanner knows never wrote it, or an event Tripcord wires also holds
+  an entry that is neither Tripcord's nor the one the manifest records;
 - **outdated** (low): an earlier Tripcord under a known pin wrote it
   (rerun `tripcord init --embed --force` with the same pins);
 - **unverified** (low): it matches the digest and keeps every
@@ -386,7 +403,10 @@ script and the manifest's digest together still reports.
 - **pin-unknown** and **pin-malformed** (high): `tripcord.yml` pins a
   `tripcord-pr.yml` commit this scanner does not know, or no full
   commit SHA at all;
-- **unreadable** (high): a file cannot be read or parsed.
+- **unreadable** (high): a file cannot be read or parsed, or
+  `tripcord.yml` gives a key twice in one mapping (`jobs:`,
+  `permissions:`, `on:`, or any other) or holds a second YAML document,
+  which another parser could read differently.
 
 `bootstrap.sh`, `tripcord.yml`, and the Copilot hook file are hashed
 with CRLF normalized to LF, but only when every line in the checked-out
@@ -500,6 +520,14 @@ Tripcord", and the Copilot setup step `init` writes only with
 `WorkflowPin` are repinned past the TC-CFG-016 version-skew fix
 ([release notes](release-notes.md)), so until then no release can be
 tagged.
+
+`TestVersionSkewCIScanner` also runs on every pull request, alone, in
+the `version-skew e2e` job of `ci.yml`, which sets
+`TRIPCORD_VERSION_SKEW_E2E=1` rather than the release-gate variable.
+Plain `go test ./...` skips it, because it builds a tripcord per action
+pin. A pull request that changes init's templates or the checker so
+that the pinned CI scanner reports a high fails that job until it also
+repins the action and `WorkflowPin`.
 
 `TestVersionSkewCIScanner`, and `TestReleaseGatePinsContainLatestScannerChange`
 once a scanner change lands after the last repin, fail until the repin

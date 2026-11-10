@@ -37,6 +37,9 @@ type cfg016Fixture struct {
 	edit        func(t *testing.T, dir string)
 	againstBase bool
 	tracked     bool
+	// ci computes the items the way a CI scan does (ContextCI), where a
+	// pin the scanner does not know is only unverified, low.
+	ci bool
 	// crlfTolerant compares content CRLF-normalized the way the embed
 	// checker's own digest does, rather than byte-for-byte. When this
 	// fixture was a plain directory, its own .gitattributes `text
@@ -47,7 +50,7 @@ type cfg016Fixture struct {
 	crlfTolerant bool
 }
 
-func (fx cfg016Fixture) items() bool { return fx.againstBase || fx.tracked }
+func (fx cfg016Fixture) items() bool { return fx.againstBase || fx.tracked || fx.ci }
 
 func edits(steps ...func(*testing.T, string)) func(*testing.T, string) {
 	return func(t *testing.T, dir string) {
@@ -251,10 +254,14 @@ var cfg016Fixtures = map[string]cfg016Fixture{
 
 // checkItems is what scan reports for TC-CFG-016 in dir, as fixture
 // JSON: compared with base, the revision before it, when base is not
-// empty, and with every file tracked when tracked is set.
-func checkItems(t *testing.T, base, dir string, tracked bool) map[string]string {
+// empty, with every file tracked when tracked is set, and in a CI scan
+// when ci is set.
+func checkItems(t *testing.T, base, dir string, tracked, ci bool) map[string]string {
 	t.Helper()
 	var opts embedded.CheckOptions
+	if ci {
+		opts.Context = embedded.ContextCI
+	}
 	if base != "" {
 		opts.Base = func(rel string) ([]byte, error) {
 			return os.ReadFile(filepath.Join(base, filepath.FromSlash(rel)))
@@ -302,7 +309,7 @@ func TestCFG016FixturesMatchInit(t *testing.T) {
 			want, read, format := snapshot(t, dir), readFixtureArchive, formatFixtureArchive
 			if fx.items() {
 				committed = strings.TrimSuffix(committed, txtar.Ext) + ".json"
-				want, read, format = checkItems(t, base, dir, fx.tracked), readFixtureFile, func(m map[string]string) []byte { return []byte(m[""]) }
+				want, read, format = checkItems(t, base, dir, fx.tracked, fx.ci), readFixtureFile, func(m map[string]string) []byte { return []byte(m[""]) }
 			}
 			if os.Getenv("UPDATE_GOLDEN") == "1" {
 				if err := os.WriteFile(committed, format(want), 0o644); err != nil {

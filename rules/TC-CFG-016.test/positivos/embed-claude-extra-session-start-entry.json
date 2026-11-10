@@ -1,0 +1,17 @@
+[
+  {
+    "harness": "claude",
+    "scope": "repo",
+    "path": ".claude/settings.json",
+    "sha256": "86990e5ef2c652854caf519c60f057ae1f5ed70ab2d22c8cd6063ec59c02f1f9",
+    "kind": "permissions",
+    "payload": {
+      "event": "SessionStart",
+      "key": "[\"tripcordGuard\",\"SessionStart\"]",
+      "reason": "unregistered-entry",
+      "setting": "tripcordGuard",
+      "state": "changed",
+      "subject": "SessionStart"
+    }
+  }
+]

@@ -1,0 +1,17 @@
+[
+  {
+    "harness": "copilot",
+    "scope": "repo",
+    "path": ".github/hooks/tripcord.json",
+    "sha256": "0517a5825aad8b58237c75cfd77d57c4f18fd9172164f41826eeb9d72745625e",
+    "kind": "permissions",
+    "payload": {
+      "event": "preToolUse",
+      "key": "[\"tripcordGuard\",\"preToolUse\"]",
+      "reason": "unregistered-entry",
+      "setting": "tripcordGuard",
+      "state": "changed",
+      "subject": "preToolUse"
+    }
+  }
+]
