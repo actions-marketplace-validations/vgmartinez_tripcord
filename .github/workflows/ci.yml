@@ -33,6 +33,12 @@ jobs:
           # needs no credentials on this public repository, and fails
           # if that fetch fails.
           # TestVetAndTestFetchesFullHistory keeps this at 0.
+          # On pull_request the default checkout is the merge ref
+          # (refs/pull/<n>/merge). Do not set ref:. fetch-depth: 0 makes
+          # actions/checkout fetch refs/heads/* into refs/remotes/origin/*,
+          # so origin/main is already present. No extra fetch of main.
+          # TestPinsHaveEmbedCheck fails closed unless that merge's first
+          # parent is origin/main.
           fetch-depth: 0
 
       - name: Setup Go

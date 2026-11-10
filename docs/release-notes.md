@@ -257,9 +257,20 @@ init writes reports those differences as further highs.
 `make release-gate` now fails when the generated workflow pin or a
 documented pin of the reusable workflows or the pre-commit hook does
 not contain the latest scanner change on main. A repin pull request is
-required before tagging. Tagging is Victor's. Pull request CI checks
-only that each pin is a full sha and an ancestor of the commit under
-test. See [Release gate](init.md#release-gate).
+required before tagging. Tagging is Victor's. Merge that pull request
+with a merge commit, never a squash and never a rebase: the pinned
+commits have to stay on main, and a squash or rebase drops them.
+`TestPinsHaveEmbedCheck` accepts a pin that is not on `origin/main`
+yet only when `GITHUB_EVENT_NAME` is `pull_request`, the checkout is
+that merge (exactly two parents, the first equal to `origin/main`),
+and the pin is not in the pin set on `origin/main`. The new pin must
+be an ancestor of HEAD and must not already be an ancestor of
+`origin/main`. Pins the base already has stay strict. A push, the
+release gate (`TRIPCORD_RELEASE_GATE=1`), and a local run stay strict
+for every pin. If the checkout is not that merge, or the base pins
+cannot be read, the test fails and does not skip. Push-to-main CI is
+what catches a squash or rebase that left a pin unreachable. See
+[Release gate](init.md#release-gate).
 
 ### TC-CFG-003 and a repository's own scripts
 
