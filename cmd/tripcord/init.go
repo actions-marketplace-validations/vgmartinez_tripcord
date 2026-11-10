@@ -127,6 +127,19 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	// A user's hook kept under an event init wires is not recorded in
+	// embed.json. Say so on stderr before anything is written, including
+	// on --dry-run. A write error here is the usual internal exit;
+	// otherwise the exit code is unchanged.
+	kept, err := embedded.KeptHooks(changes)
+	if err != nil {
+		return fail(exitcode.Internal, err)
+	}
+	for _, k := range kept {
+		if code := warnKeptHook(stderr, prog, k); code != int(exitcode.OK) {
+			return code
+		}
+	}
 	// The diff quotes the existing files around each change, and a
 	// harness settings file can hold credentials (an env block, an MCP
 	// server's token), so it is redacted and each line capped like any
@@ -232,6 +245,24 @@ func harnessNames() []string {
 		names[i] = string(h)
 	}
 	return names
+}
+
+// warnKeptHook names one hook init left in place and did not register.
+// The command is redacted and forced onto one line: it is text from
+// the repository, and it can hold a credential or a newline. The
+// finding is high; this does not change init's exit code.
+func warnKeptHook(stderr io.Writer, prog string, k embedded.KeptHook) int {
+	command := "(no command)"
+	if len(k.Commands) > 0 {
+		quoted := make([]string, len(k.Commands))
+		for i, c := range k.Commands {
+			quoted[i] = strconv.Quote(output.TerminalLine(foldHome(c)))
+		}
+		command = strings.Join(quoted, ", ")
+	}
+	line := prog + ": " + string(k.Harness) + " " + k.Path + " " + k.Event +
+		" keeps " + command + "; tripcord scan will report it as TC-CFG-016 HIGH (an entry Tripcord did not register); remove the entry, or run it from outside the guarded config\n"
+	return writeString(stderr, line)
 }
 
 // buildVersion is main.version, which runInit's --version shadows.

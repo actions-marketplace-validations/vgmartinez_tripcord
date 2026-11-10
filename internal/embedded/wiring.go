@@ -251,6 +251,9 @@ func newManifest(pin Pin, harnesses []model.Harness, cloudSetup bool) Manifest {
 			m.Files = append(m.Files, ManifestFile{Path: CopilotSetupStepsPath, Step: copilotStepName, SHA256: copilotStep().digest()})
 		}
 		for _, e := range HookEntries(h) {
+			// Only the entry init writes. A user's entry kept beside
+			// it is not registered: recording its digest would make
+			// TC-CFG-016 treat that entry as Tripcord's.
 			m.Hooks = append(m.Hooks, ManifestHook{Harness: string(h), Path: e.Path, Event: e.Event, SHA256: e.SHA256()})
 		}
 	}

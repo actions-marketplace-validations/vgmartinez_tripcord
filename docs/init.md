@@ -148,11 +148,21 @@ init never replaces a file it did not write.
   `.github/hooks/tripcord.json`): existing keys keep their order and the
   file keeps its indentation. New keys are appended. A Tripcord entry
   is added to an event's array only if an identical entry is not
-  already there. Entries already under the events Tripcord wires (the
-  pre-tool and session-start events) are kept, but TC-CFG-016 reports
-  each such event `changed` (reason `unregistered-entry`): the harness
-  runs those entries alongside the guard. Move them to another event,
-  or drop them.
+  already there. An entry already under an event Tripcord wires (the
+  pre-tool and session-start events, in any harness) is kept in the
+  file, and init does not register it: `embed.json` records only the
+  entry init writes. init prints one line per kept entry on stderr,
+  naming the harness, file, event, and command. The line says that
+  `tripcord scan` will report it as TC-CFG-016 HIGH (an entry Tripcord
+  did not register), and lists the options: remove the entry, or run
+  it from outside the guarded config. The exit code does not change,
+  and the line is not written to stdout. `--dry-run` prints it too,
+  before `dry run, nothing written`. A later run warns again while the
+  entry is still there. An entry under any other event is left in
+  place and is not warned about.
+
+  v0 known gap: there is no supported way yet to keep a user's own
+  hook next to the guard.
 - With `--cloud-setup`, the same JSON merge applies to
   `environment.json`, and YAML files (`copilot-setup-steps.yml`,
   `blueprint.yaml`) gain the step or maintenance entry. Without the

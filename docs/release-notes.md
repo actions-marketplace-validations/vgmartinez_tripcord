@@ -18,8 +18,12 @@
 - TC-CFG-016 reports an entry under an event Tripcord wires (pre-tool
   or session-start) that is neither Tripcord's nor the one `embed.json`
   records: `changed`, high, reason `unregistered-entry`. `init --embed`
-  still keeps such an entry when it merges, so an embed merged into a
-  file that already had one reports it.
+  keeps such an entry when it merges and does not register it.
+  It warns on stderr, naming the harness, file, event, and command,
+  that `tripcord scan` will report it as TC-CFG-016 HIGH, and exits
+  as it did before. v0 known gap: there is no supported way yet to
+  keep a user's own hook next to the guard. Remove the entry, or run
+  it from outside the guarded config. See [Init](init.md#merging).
 - TC-CFG-016 reports a `tripcord.yml` that gives a key twice in one
   mapping, or holds a second YAML document, as `unreadable`, high,
   instead of reading the first one, which could leave it `unverified`,
@@ -314,6 +318,13 @@ the tree, and its bytes are not read.
   `blueprint.yaml`) unless `--cloud-setup` is set. That flag is a known
   gap: `bootstrap.sh install` downloads nothing, and v0 has no download
   channel. See [init](init.md).
+- `init --embed` has no supported way yet to keep a user's own hook
+  next to the guard. An entry it keeps under a pre-tool or
+  session-start event is not registered in `embed.json`, and
+  `tripcord scan` reports it as TC-CFG-016 HIGH. init names the
+  harness, file, event, and command on stderr and does not change its
+  exit code. Remove the entry, or run it from outside the guarded
+  config. See [init](init.md#merging).
 - `-p X` is redacted only when the same command also names a user
   (`-u`, `-U`, `-l`, `--user`, `--username`, `--login`, or a `login`
   subcommand). A `-p` with no user flag in the command, such as
