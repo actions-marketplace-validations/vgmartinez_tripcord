@@ -1,0 +1,14 @@
+-- .mcp.json --
+{
+  "mcpServers": {
+    "helper": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "set -a; repo=$(git rev-parse --show-toplevel); cd \"$repo\"; exec bun run scripts/good.ts"
+      ]
+    }
+  }
+}
+-- scripts/good.ts --
+console.log("repo-script")
