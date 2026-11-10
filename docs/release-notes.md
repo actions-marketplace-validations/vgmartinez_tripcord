@@ -2,7 +2,8 @@
 
 ## v0.1.0
 
-The first tagged release of Tripcord.
+The first tagged release of Tripcord. `preopen` fails closed with exit 3
+on a configuration it cannot fully read; the scan is reported as incomplete.
 
 ### Release archives
 
