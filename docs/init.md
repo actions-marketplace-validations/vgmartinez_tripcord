@@ -514,8 +514,10 @@ every `docs/**/*.md` and fails on a pin citation that is not current:
 a `tripcord-pr.yml` or `tripcord-pr-comment.yml` ref, or a tripcord
 pre-commit `rev:`, other than `WorkflowPin`; an
 `.github/actions/tripcord` ref other than the one this tree's reusable
-workflows call; or a `` `main@<sha>` `` code span that is a prefix of
-neither. A branch, a tag, or a short sha in a ref is never current.
+workflows call; or a `` `main@<sha>` `` code span, or a bare sha code
+span (`` `<sha>` `` or `` `A = <sha>` ``) on a line that says "today",
+"currently", or "now", that is a prefix of neither. A bare sha on any
+other line names a commit and is not checked. A branch, a tag, or a short sha in a ref is never current.
 The one exception is explicit historical context: a
 `KnownWorkflowPins` entry cited in `docs/release-notes.md` on a line
 that says "previously" or "formerly". An action pin is never
