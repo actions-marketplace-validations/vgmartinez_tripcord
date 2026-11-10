@@ -1,0 +1,17 @@
+[
+  {
+    "harness": "cursor",
+    "scope": "repo",
+    "path": ".cursor/hooks.json",
+    "sha256": "6d17415fbb210cc02866a65f5764e632fc8d6e82cf43393a789c8cf333b319d2",
+    "kind": "permissions",
+    "payload": {
+      "event": "sessionStart",
+      "key": "[\"tripcordGuard\",\"sessionStart\"]",
+      "reason": "duplicate-entry",
+      "setting": "tripcordGuard",
+      "state": "changed",
+      "subject": "sessionStart"
+    }
+  }
+]

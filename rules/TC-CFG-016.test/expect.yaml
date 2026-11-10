@@ -52,3 +52,9 @@ positivos:
   embed-ci-unknown-pin-duplicate-permissions.json: high
   embed-ci-unknown-pin-duplicate-on.json: high
   embed-ci-unknown-pin-second-document.json: high
+  embed-claude-duplicate-pre-tool-entry.json: high
+  embed-claude-duplicate-session-start-entry.json: high
+  embed-cursor-duplicate-pre-tool-entry.json: high
+  embed-cursor-duplicate-session-start-entry.json: high
+  embed-copilot-duplicate-pre-tool-entry.json: high
+  embed-copilot-duplicate-session-start-entry.json: high

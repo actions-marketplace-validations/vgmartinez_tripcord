@@ -902,6 +902,9 @@ func (c *checker) hookHarness(h model.Harness) {
 			if registered && state != StateChanged && hasUnregisteredEntry(e, hooks, recorded[e.Event]) {
 				state, extra = StateChanged, map[string]string{"reason": reasonUnregisteredEntry}
 			}
+			if registered && state != StateChanged && registeredEntryCount(e, hooks, recorded[e.Event]) > 1 {
+				state, extra = StateChanged, map[string]string{"reason": reasonDuplicateEntry}
+			}
 		}
 		if state != "" {
 			c.add(h, path, e.Event, e.Event, state, f.raw, extra)
@@ -947,6 +950,25 @@ func hasUnregisteredEntry(e HookEntry, hooks map[string]any, recorded string) bo
 		}
 	}
 	return false
+}
+
+// reasonDuplicateEntry: an event Tripcord wires holds more than one
+// copy of the guard entry (or of the entry embed.json records). The
+// harness runs each copy, and exactly one is registered.
+const reasonDuplicateEntry = "duplicate-entry"
+
+// registeredEntryCount counts the entries in hooks.<e.Event> that are e
+// or the entry whose digest the manifest records.
+func registeredEntryCount(e HookEntry, hooks map[string]any, recorded string) int {
+	list, _ := hooks[e.Event].([]any)
+	n := 0
+	for _, v := range list {
+		entry := anyNode(v)
+		if entry.equal(e.entry) || (recorded != "" && hookDigest(e.Event, entry) == recorded) {
+			n++
+		}
+	}
+	return n
 }
 
 func hookDigest(event string, n *node) string {

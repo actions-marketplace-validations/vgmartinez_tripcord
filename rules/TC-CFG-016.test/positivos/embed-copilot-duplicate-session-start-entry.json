@@ -1,0 +1,17 @@
+[
+  {
+    "harness": "copilot",
+    "scope": "repo",
+    "path": ".github/hooks/tripcord.json",
+    "sha256": "95188809e58c0facb60f0d3e2db51eec30a95de2d7b4d7590077fd94f38e70c2",
+    "kind": "permissions",
+    "payload": {
+      "event": "sessionStart",
+      "key": "[\"tripcordGuard\",\"sessionStart\"]",
+      "reason": "duplicate-entry",
+      "setting": "tripcordGuard",
+      "state": "changed",
+      "subject": "sessionStart"
+    }
+  }
+]
