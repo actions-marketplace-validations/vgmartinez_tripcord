@@ -47,6 +47,36 @@ jobs:
       - name: Test
         run: go test -race ./...
 
+  # Builds the tripcord the generated tripcord.yml really runs in CI
+  # (tripcord-pr.yml@WorkflowPin, then the action it pins) and scans a
+  # fresh embed with it. Any high TC-CFG-016 finding fails the pull
+  # request: a template or checker change needs the action and
+  # WorkflowPin repins in the same change.
+  version-skew:
+    name: version-skew e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The test reads tripcord-pr.yml at WorkflowPin, archives each
+          # action pin it names, and checks the pins against main, so it
+          # needs the full history. A shallow clone fails it in CI.
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: CI scanner on a fresh embed
+        env:
+          TRIPCORD_VERSION_SKEW_E2E: "1"
+        run: go test ./cmd/tripcord -run '^TestVersionSkewCIScanner$' -count=1 -v
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest

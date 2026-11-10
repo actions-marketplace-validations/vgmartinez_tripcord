@@ -30,6 +30,10 @@
   low, in CI.
 - The `bootstrap.sh` template changed, so this needs a new
   `WorkflowPin` (`TestTemplateChangeNeedsRepin`).
+- `TestVersionSkewCIScanner` runs on every pull request, in the
+  `version-skew e2e` job of `ci.yml` (`TRIPCORD_VERSION_SKEW_E2E=1`),
+  as well as under `make release-gate`
+  ([#119](https://github.com/vgmartinez/tripcord/issues/119)).
 
 ### TC-CFG-016 version skew: an older scanner no longer fails a newer embed
 

@@ -44,9 +44,9 @@ upstream-check:
 # change on main, that every KnownWorkflowPins entry holds up, and
 # (TestVersionSkewCIScanner) that the CI scanner the generated
 # tripcord.yml pins reports no high TC-CFG-016 finding on a fresh
-# embed. That last check fails until the action and WorkflowPin are
-# repinned past the TC-CFG-016 version-skew fix. Run it before
-# tagging; no CI workflow runs it.
+# embed. Run it before tagging; no CI workflow runs the release gate.
+# TestVersionSkewCIScanner alone also runs on every pull request, in
+# ci.yml's version-skew e2e job (TRIPCORD_VERSION_SKEW_E2E=1).
 release-gate:
 	TRIPCORD_RELEASE_GATE=1 go test ./cmd/tripcord -run '^(TestReleaseGate.*|TestVersionSkewCIScanner)$$' -count=1 -v
 

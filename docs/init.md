@@ -521,6 +521,14 @@ Tripcord", and the Copilot setup step `init` writes only with
 ([release notes](release-notes.md)), so until then no release can be
 tagged.
 
+`TestVersionSkewCIScanner` also runs on every pull request, alone, in
+the `version-skew e2e` job of `ci.yml`, which sets
+`TRIPCORD_VERSION_SKEW_E2E=1` rather than the release-gate variable.
+Plain `go test ./...` skips it, because it builds a tripcord per action
+pin. A pull request that changes init's templates or the checker so
+that the pinned CI scanner reports a high fails that job until it also
+repins the action and `WorkflowPin`.
+
 `TestVersionSkewCIScanner`, and `TestReleaseGatePinsContainLatestScannerChange`
 once a scanner change lands after the last repin, fail until the repin
 pull requests land; the other tests pass. Without the variable all five
