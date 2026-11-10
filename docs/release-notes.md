@@ -83,14 +83,15 @@ own templates ([design](design/tc-cfg-016-version-skew.md)):
   base already has.
 - A release `init` refuses a `--version` older than itself (exit 3).
 
-`277066a` is the current `WorkflowPin`, so an embed it writes is a
-current pin: a local scan does not report it `pin-unknown`. Embeds
-still pinned to `6a12795` show a temporary `pin-unknown` high on a
-local or pre-commit scan until PR 3 appends that pin to
-`KnownWorkflowPins`. Both pins run action `8b33b1b`, so CI keeps
-failing until two repins land: the action pin in `tripcord-pr.yml`,
-then `WorkflowPin`, followed by `init --embed --force`. Until then
-`make release-gate` fails `TestVersionSkewCIScanner` with seven highs:
+`277066a` was the `WorkflowPin` at that time (formerly current), so an
+embed it wrote was a current pin: a local scan did not report it
+`pin-unknown`. Embeds still pinned to `6a12795` show a temporary
+`pin-unknown` high on a local or pre-commit scan until PR 3 appends
+that pin to `KnownWorkflowPins`. Both pins ran action
+`8b33b1b` (previously), so CI kept failing until two repins landed:
+the action pin in `tripcord-pr.yml`, then `WorkflowPin`, followed by
+`init --embed --force`. Until then `make release-gate` failed
+`TestVersionSkewCIScanner` with seven highs:
 the six "written by an older Tripcord", plus `copilot-setup-steps.yml`,
 which `init` writes only with `--cloud-setup` and that action reports
 missing. By the end of PR 3 that test must report 0 high, including
