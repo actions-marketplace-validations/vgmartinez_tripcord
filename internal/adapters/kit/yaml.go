@@ -89,6 +89,21 @@ func DecodeYAMLAliases(raw []byte, product string, limits AliasLimits, folded ..
 	return decodeYAML(raw, product, limits, folded...)
 }
 
+// MultipleYAMLDocuments reports whether raw holds a second document after
+// the first, even an empty one. yaml.Unmarshal reads only the first, so
+// a file that another parser may read differently must be rejected. A
+// stream whose first document does not decode is left to the decoder's
+// own error.
+func MultipleYAMLDocuments(raw []byte) bool {
+	dec := yaml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(raw, utf8BOM)))
+	var first yaml.Node
+	if err := dec.Decode(&first); err != nil {
+		return false
+	}
+	var extra yaml.Node
+	return !errors.Is(dec.Decode(&extra), io.EOF)
+}
+
 // YAMLDocument is one decoded document of a multi-document YAML stream,
 // as returned by DecodeYAMLDocuments: the same tree shape DecodeYAML
 // produces, plus the document's root node so a caller can still resolve

@@ -120,14 +120,27 @@ func workOf(argv []string) int {
 }
 
 // Parse returns the packages argv would install. unparsed is true when
-// a known launcher has an option this grammar does not recognize; the
-// returned refs are then empty.
+// a known launcher has an option this grammar does not recognize; that
+// launcher contributes no refs. cmd /c or /k and sh, bash, or zsh -c
+// are read through to the commands they run; env and other prefixes
+// are not.
 func Parse(argv []string) ([]advisory.PackageRef, bool) {
+	return parseDepth(argv, 0)
+}
+
+// maxWrapDepth bounds how many shell wrappers parseDepth reads through.
+const maxWrapDepth = 4
+
+func parseDepth(argv []string, depth int) ([]advisory.PackageRef, bool) {
 	if len(argv) == 0 {
 		return nil, false
 	}
 	base := baseName(argv[0])
 	switch base {
+	case "cmd":
+		return parseWrapped(cmdPayload(argv[1:]), depth)
+	case "sh", "bash", "zsh":
+		return parseWrapped(shellPayload(argv[1:]), depth)
 	case "npx", "bunx":
 		return parseNPX(argv[1:])
 	case "npm":
@@ -150,6 +163,67 @@ func Parse(argv []string) ([]advisory.PackageRef, bool) {
 		}
 		return nil, false
 	}
+}
+
+// cmdPayload is what cmd /c or cmd /k runs, matched case-insensitively.
+// /d, /q, and /s may come first. The words after the switch are the
+// payload; a single word is split as a command line.
+func cmdPayload(args []string) []string {
+	for i, a := range args {
+		switch strings.ToLower(a) {
+		case "/c", "/k":
+			return args[i+1:]
+		case "/d", "/q", "/s":
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
+// shellPayload is the command string of sh, bash, or zsh -c, also
+// written -lc, -cl, or -l -c, or --login before -c. Any other option
+// leaves the wrapper opaque. Words after the command string are $0 and
+// the positional parameters, not commands.
+func shellPayload(args []string) []string {
+	sawC := false
+	for i, a := range args {
+		switch {
+		case a == "--login":
+		case len(a) > 1 && a[0] == '-' && strings.Trim(a[1:], "lc") == "":
+			sawC = sawC || strings.Contains(a, "c")
+		case sawC:
+			return args[i : i+1]
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
+// parseWrapped reads the packages of every simple command in payload.
+// One word is a command line: each simple command in it is read, after
+// a leading exec. Several words are already the argv. A wrapper inside
+// the payload is read again, up to maxWrapDepth.
+func parseWrapped(payload []string, depth int) ([]advisory.PackageRef, bool) {
+	if len(payload) == 0 || depth >= maxWrapDepth {
+		return nil, false
+	}
+	cmds := [][]string{payload}
+	if len(payload) == 1 {
+		cmds = shellcmd.Commands(payload[0])
+	}
+	var refs []advisory.PackageRef
+	unparsed := false
+	for _, c := range cmds {
+		if len(c) > 0 && c[0] == "exec" {
+			c = c[1:]
+		}
+		r, u := parseDepth(c, depth+1)
+		refs = append(refs, r...)
+		unparsed = unparsed || u
+	}
+	return refs, unparsed
 }
 
 func baseName(p string) string {

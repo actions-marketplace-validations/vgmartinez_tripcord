@@ -63,7 +63,7 @@ func instructionMatchLine(content string) int {
 		if prefix == nil {
 			continue
 		}
-		rest := text[prefix[1]:]
+		rest := closeLeadingBold(text[prefix[1]:])
 		if read := instructionRead.FindStringIndex(rest); read != nil {
 			if read[0] == 0 {
 				if strings.EqualFold(rest[read[0]:read[1]], "open") && instructionOpenPR.MatchString(rest[read[1]:]) {
@@ -116,6 +116,18 @@ func instructionMatchLine(content string) int {
 		}
 	}
 	return 0
+}
+
+// closeLeadingBold drops a ** that closes bold right after the verb that
+// starts rest, so **Read** the .env file reads as Read the .env file. The
+// opening ** is already part of the prefix.
+func closeLeadingBold(rest string) string {
+	for _, verb := range []*regexp.Regexp{instructionRead, instructionSend} {
+		if loc := verb.FindStringIndex(rest); loc != nil && loc[0] == 0 && strings.HasPrefix(rest[loc[1]:], "**") {
+			return rest[:loc[1]] + rest[loc[1]+2:]
+		}
+	}
+	return rest
 }
 
 // stripInstructionHidden drops bidi controls and zero-width characters

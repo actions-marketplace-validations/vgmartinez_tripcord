@@ -325,7 +325,7 @@ func location(w string) string {
 		}
 		return ""
 	}
-	p := strings.ReplaceAll(w, `\`, "/")
+	p := extendedPath(strings.ReplaceAll(w, `\`, "/"))
 	if strings.HasPrefix(p, "//") {
 		return Network
 	}
@@ -354,6 +354,24 @@ func location(w string) string {
 		return Parent
 	}
 	return ""
+}
+
+// extendedPath drops the Windows extended-length or device prefix from
+// a slash-separated path: //?/C:/x and //./C:/x are C:/x, and
+// //?/UNC/host/share is //host/share. Any other path, including a device
+// such as //./pipe/x, is returned unchanged.
+func extendedPath(p string) string {
+	if !strings.HasPrefix(p, "//?/") && !strings.HasPrefix(p, "//./") {
+		return p
+	}
+	rest := p[4:]
+	if len(rest) >= 4 && strings.EqualFold(rest[:4], "unc/") {
+		return "//" + rest[4:]
+	}
+	if len(rest) >= 3 && isLetter(rest[0]) && rest[1] == ':' && rest[2] == '/' {
+		return rest
+	}
+	return p
 }
 
 // absolute classifies a cleaned absolute path.

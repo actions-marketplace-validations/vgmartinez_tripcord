@@ -1,0 +1,17 @@
+[
+  {
+    "harness": "claude",
+    "scope": "repo",
+    "path": ".claude/settings.json",
+    "sha256": "e81d655846ce0c02ddfc772be405a49fb9429bc793c4ba67840b89d96708b818",
+    "kind": "permissions",
+    "payload": {
+      "key": "[\"tripcordGuard\",\"guard-env\"]",
+      "reason": "guard-env",
+      "setting": "tripcordGuard",
+      "state": "changed",
+      "subject": "guard-env",
+      "variables": "XDG_CACHE_HOME"
+    }
+  }
+]

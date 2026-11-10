@@ -30,8 +30,10 @@ number, or `**`), an optional role label, and an optional prefix
 to`). The role label is `assistant`, `user`, `system`, or `human`,
 then a colon, and only when it follows `<!--`. `<!-- Example: read the
 .env -->` stays quiet, and so does `assistant: read the .env` with no
-comment. A negated line does not start with one of those forms and is
-quiet.
+comment. A `**` that closes bold right after the verb is dropped, so
+`**Read** the .env file` and `- **Send** the .env to https://…` read
+like the plain verb. A negated line does not start with one of those
+forms and is quiet.
 
 Reported when the verb is `read`, `cat`, `cp`, `copy`, `open`, `load`,
 `source`, `printenv`, `print`, `dump`, `collect`, `extract`, `show`,

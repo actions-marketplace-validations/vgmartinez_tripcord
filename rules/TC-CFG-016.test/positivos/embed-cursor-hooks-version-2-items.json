@@ -1,0 +1,16 @@
+[
+  {
+    "harness": "cursor",
+    "scope": "repo",
+    "path": ".cursor/hooks.json",
+    "sha256": "69412c4f72bc20cf64397cb5a2cae6594d62d0323d3d34acc4dbe08779543a77",
+    "kind": "permissions",
+    "payload": {
+      "key": "[\"tripcordGuard\",\"hooks-version\"]",
+      "reason": "hooks-version",
+      "setting": "tripcordGuard",
+      "state": "changed",
+      "subject": "hooks-version"
+    }
+  }
+]

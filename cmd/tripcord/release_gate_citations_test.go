@@ -18,11 +18,15 @@ import (
 // or a short sha is a citation too and is never current. A prose
 // citation is only an inline code span that is exactly main@ and 7 to
 // 40 lowercase hex digits; a `# main@` comment belongs to the citation
-// before it.
+// before it. A bare sha code span (`6a12795`, or `W = 6a12795`) is a
+// citation too when its line presents it as current: today, currently,
+// or now. Elsewhere it names a commit, not a pin.
 var (
 	citedWorkflowPin = regexp.MustCompile(regexp.QuoteMeta(project.Repository) + `/\.github/workflows/tripcord-pr(?:-comment)?\.yml@([^\s#` + "`" + `"']+)`)
 	citedActionPin   = regexp.MustCompile(regexp.QuoteMeta(project.Repository) + `/\.github/actions/tripcord@([^\s#` + "`" + `"']+)`)
 	citedProsePin    = regexp.MustCompile("`main@([0-9a-f]{7,40})`")
+	citedBarePin     = regexp.MustCompile("`(?:[A-Za-z_.]+ = )?([0-9a-f]{7,40})`")
+	currentMarker    = regexp.MustCompile(`(?i)\b(?:today|currently|now)\b`)
 )
 
 // historicalMarker is what makes a citation explicitly historical, and
@@ -38,6 +42,7 @@ const (
 	citeAction    citationKind = "action"
 	citePreCommit citationKind = "pre-commit rev"
 	citeProse     citationKind = "prose"
+	citeBare      citationKind = "bare sha"
 )
 
 type pinCitation struct {
@@ -65,6 +70,9 @@ func findCitations(where, text string) []pinCitation {
 			} else {
 				lineEnd += start
 			}
+			if kind == citeBare && !currentMarker.MatchString(text[lineStart:lineEnd]) {
+				continue
+			}
 			out = append(out, pinCitation{
 				where: where,
 				line:  strings.Count(text[:start], "\n") + 1,
@@ -78,6 +86,7 @@ func findCitations(where, text string) []pinCitation {
 	add(citeAction, citedActionPin)
 	add(citePreCommit, anyPreCommitRev)
 	add(citeProse, citedProsePin)
+	add(citeBare, citedBarePin)
 	return out
 }
 
@@ -87,7 +96,7 @@ func (c pinCitation) current(cur currentPinSet) bool {
 		return c.pin == cur.workflow
 	case citeAction:
 		return c.pin == cur.action
-	case citeProse:
+	case citeProse, citeBare:
 		return strings.HasPrefix(cur.workflow, c.pin) || strings.HasPrefix(cur.action, c.pin)
 	default:
 		panic(fmt.Sprintf("unhandled citation kind %q", c.kind))
@@ -140,7 +149,7 @@ func staleCitations(texts map[string]string, cur currentPinSet, known []string) 
 			switch c.kind {
 			case citeAction:
 				want = cur.action
-			case citeProse:
+			case citeProse, citeBare:
 				want = cur.workflow + " or " + cur.action
 			case citeWorkflow, citePreCommit:
 			default:
@@ -185,8 +194,8 @@ func treeActionPin(t *testing.T, root string) string {
 // README.md or docs/**/*.md that is not the current pin: a
 // tripcord-pr.yml or tripcord-pr-comment.yml ref or a pre-commit rev
 // other than WorkflowPin, an action ref other than the one this tree's
-// reusable workflows call, or a `main@` code span that is a prefix of
-// neither. The only exception is a KnownWorkflowPins entry on a line of
+// reusable workflows call, or a `main@` code span, or a bare sha code
+// span on a line that says it is current, that is a prefix of neither. The only exception is a KnownWorkflowPins entry on a line of
 // docs/release-notes.md that says previously or formerly. It reads only
 // this tree, so it runs on every pull request as well as in the
 // release gate.
@@ -252,6 +261,14 @@ func TestReleaseGateStaleCitations(t *testing.T) {
 		{"historical marker in README", "README.md", "previously " + strings.TrimLeft(workflow(old), " "), 1},
 		{"historical action is never allowed", historicalDoc, "previously " + strings.TrimLeft(action(old), " "), 1},
 		{"word containing the marker", historicalDoc, "unpreviously `main@0123456`\n", 1},
+		{"bare sha said to be today's", "docs/design/x.md", "the pin (today `0123456`).\n", 1},
+		{"bare assignment said to be today's", "docs/design/x.md", "the action (today `A = 0123456`).\n", 1},
+		{"bare sha currently", "README.md", "currently pinned at `eeeeeee`\n", 1},
+		{"bare current sha today", "docs/x.md", "today `ccccccc` and `aaaaaaa`\n", 0},
+		{"bare sha without a current marker", "docs/design/x.md", "commit `0123456` added the check.\n", 0},
+		{"bare sha, marker inside a word", "docs/x.md", "knowledge `0123456`\n", 0},
+		{"bare sha, marker on another line", "docs/x.md", "today:\n`0123456`\n", 0},
+		{"longer hex span is not a sha", "docs/x.md", "today `" + strings.Repeat("0", 64) + "`\n", 0},
 	}
 	for _, c := range cases {
 		errs := staleCitations(map[string]string{c.where: c.text}, cur, known)

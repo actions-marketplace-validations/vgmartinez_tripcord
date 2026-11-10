@@ -105,9 +105,9 @@ passing, is the third change.
 Here is what runs when a user's pull request is scanned:
 
 1. The embed's `tripcord.yml` calls `tripcord-pr.yml@W`, where
-   `W = embedded.WorkflowPin` (today `6a12795`).
-2. Line 111 of `tripcord-pr.yml@W` calls `.github/actions/tripcord@A`
-   (today `A = 8b33b1b`).
+   `W = embedded.WorkflowPin`.
+2. `tripcord-pr.yml@W` calls `.github/actions/tripcord@A`, where A is
+   the action pin in that commit's `tripcord-pr.yml`.
 3. The action runs `CGO_ENABLED=0 go build -trimpath ./cmd/tripcord` from
    `github.action_path`. That directory is A's tree, delivered as a
    tarball with no `.git`.

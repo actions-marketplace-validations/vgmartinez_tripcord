@@ -106,3 +106,6 @@ positivos:
   agents-curl-header-glued-backtick-home-path: medium
   agents-curl-header-subst-run-secrets: medium
   agents-curl-url-subst-local-path: medium
+  claude-bold-verb-read-dotenv: medium
+  agents-bullet-bold-verb-aws: medium
+  agents-bold-verb-send-dotenv: medium

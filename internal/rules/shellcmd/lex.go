@@ -206,11 +206,15 @@ func endsWord(c byte) bool {
 // as written at the start of a word, bare or double-quoted, rather than
 // read as one escaped backslash: cmd.exe and PowerShell run \\host\share
 // from the share, and a hook command does not say which shell runs it.
+// The extended-length prefix \\?\ is kept the same way.
 func uncStart(src string, i int) bool {
 	if i+2 >= len(src) || src[i+1] != '\\' {
 		return false
 	}
 	c := src[i+2]
+	if c == '?' {
+		return i+3 < len(src) && src[i+3] == '\\'
+	}
 	return c == '-' || c == '_' || c == '.' || isDigit(c) || isLetter(c)
 }
 

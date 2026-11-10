@@ -171,6 +171,9 @@ type scanOptions struct {
 	path        string
 	staged      bool
 	stagedFiles map[string]bool
+	// stagedDot is set when a --staged path is "."; the working
+	// directory must then be the repository root.
+	stagedDot bool
 	// executing is --executing-workflow: the reusable workflow this scan
 	// runs inside, which tripcord-pr.yml's action passes.
 	executing *embedded.WorkflowRef
@@ -210,6 +213,11 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	if opts.staged {
 		if !repoRoot(root) {
 			code := target.configError(stderr, errors.New("--staged requires a Git repository"))
+			writeString(stderr, "tripcord scan: staged scan blocked the commit; bypass only with git commit --no-verify\n")
+			return code
+		}
+		if opts.stagedDot && !cwdIsRoot(root) {
+			code := target.configError(stderr, errors.New(`--staged path "." is not the repository root; run from the root or pass paths relative to it`))
 			writeString(stderr, "tripcord scan: staged scan blocked the commit; bypass only with git commit --no-verify\n")
 			return code
 		}
@@ -810,7 +818,7 @@ func parseCommandFlags(cmd flagCommand, args []string, stdout io.Writer) (scanOp
 			// invocation. They are unioned with the diff-index change
 			// set in runScan; they do not replace it. With none given,
 			// only that change set is used.
-			opts.stagedFiles, err = stagedPaths(flags.Args())
+			opts.stagedFiles, opts.stagedDot, err = stagedPaths(flags.Args())
 			if err != nil {
 				return opts, err
 			}
@@ -882,19 +890,39 @@ func stagedSourceMatches(item model.ConfigItem, staged map[string]bool) bool {
 	return false
 }
 
-func stagedPaths(paths []string) (map[string]bool, error) {
-	out := make(map[string]bool, len(paths))
+// stagedPaths reads the paths given with --staged. A path that cleans to
+// "." names the repository root; it adds no path, since the change set
+// already holds every staged path, and dot reports it so runScan can
+// check that the working directory is that root.
+func stagedPaths(paths []string) (out map[string]bool, dot bool, err error) {
+	out = make(map[string]bool, len(paths))
 	for _, path := range paths {
 		if filepath.IsAbs(path) {
-			return nil, fmt.Errorf("--staged path %q must be relative", path)
+			return nil, false, fmt.Errorf("--staged path %q must be relative", path)
 		}
 		clean := filepath.ToSlash(filepath.Clean(path))
-		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-			return nil, fmt.Errorf("--staged path %q escapes the repository", path)
+		if clean == "." {
+			dot = true
+			continue
+		}
+		if clean == ".." || strings.HasPrefix(clean, "../") {
+			return nil, false, fmt.Errorf("--staged path %q escapes the repository", path)
 		}
 		out[clean] = true
 	}
-	return out, nil
+	return out, dot, nil
+}
+
+// cwdIsRoot reports whether the working directory is root, after
+// symlinks.
+func cwdIsRoot(root string) bool {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	a, errA := filepath.EvalSymlinks(cwd)
+	b, errB := filepath.EvalSymlinks(root)
+	return errA == nil && errB == nil && a == b
 }
 
 // scanRoot is the directory to scan. A path inside a Git repository uses

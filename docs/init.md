@@ -29,8 +29,8 @@ policy at the Git root and would block every tool call without one.
 > machine fills the bootstrap cache itself ([Bootstrap](#bootstrap)).
 >
 > The generated `.github/workflows/tripcord.yml` pins the reusable
-> workflow at `main@1776ce5`. `tripcord-pr.yml` at that commit pins the
-> composite action at `main@36ae387`, which has the `base` input and
+> workflow at `main@47d6a04`. `tripcord-pr.yml` at that commit pins the
+> composite action at `main@2c80fad`, which has the `base` input and
 > the embed check, so the generated workflow compares a pull request
 > with its base. This repository's own workflows pin that same action.
 > `TestPinsHaveEmbedCheck` requires every pin to be a full SHA on main,
@@ -486,8 +486,8 @@ composite action: the reusable workflow commit the generated
 `tripcord-pr.yml` and `tripcord-pr-comment.yml` call. It fails unless
 the action at each pin has the `base` input and builds a Tripcord with
 the embed check (`internal/embedded`). This tree's workflows pin the
-action at `main@36ae387`, which has both. The generated workflow calls
-`tripcord-pr.yml` at `main@1776ce5`, and the file there pins the same
+action at `main@2c80fad`, which has both. The generated workflow calls
+`tripcord-pr.yml` at `main@47d6a04`, and the file there pins the same
 action, so both paths pass. It reads the pinned commits with `git show`,
 so the clone must have them (`fetch-depth: 0`).
 
@@ -516,8 +516,10 @@ every `docs/**/*.md` and fails on a pin citation that is not current:
 a `tripcord-pr.yml` or `tripcord-pr-comment.yml` ref, or a tripcord
 pre-commit `rev:`, other than `WorkflowPin`; an
 `.github/actions/tripcord` ref other than the one this tree's reusable
-workflows call; or a `` `main@<sha>` `` code span that is a prefix of
-neither. A branch, a tag, or a short sha in a ref is never current.
+workflows call; or a `` `main@<sha>` `` code span, or a bare sha code
+span (`` `<sha>` `` or `` `A = <sha>` ``) on a line that says "today",
+"currently", or "now", that is a prefix of neither. A bare sha on any
+other line names a commit and is not checked. A branch, a tag, or a short sha in a ref is never current.
 The one exception is explicit historical context: a
 `KnownWorkflowPins` entry cited in `docs/release-notes.md` on a line
 that says "previously" or "formerly". An action pin is never
