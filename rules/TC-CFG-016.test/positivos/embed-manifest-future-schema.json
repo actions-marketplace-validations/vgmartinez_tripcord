@@ -1,0 +1,17 @@
+[
+  {
+    "harness": "generic",
+    "scope": "repo",
+    "path": ".tripcord/embed.json",
+    "sha256": "3de7a621aa1a3676963a34e1555261cfc51f819478e40f421cea7afc2ea6487b",
+    "kind": "permissions",
+    "payload": {
+      "key": "[\"tripcordGuard\",\"manifest\"]",
+      "reason": "unknown-schema",
+      "schema": "tripcord.embed/v2",
+      "setting": "tripcordGuard",
+      "state": "unverified",
+      "subject": "manifest"
+    }
+  }
+]

@@ -77,6 +77,9 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	if !embed && (harnesses != "" || version != "" || len(sums) > 0 || cloudSetup) {
 		return fail(exitcode.Config, errors.New("--harness, --version, --sha256, and --cloud-setup require --embed"))
 	}
+	if err := pinNotOlder(version); err != nil {
+		return fail(exitcode.Config, err)
+	}
 	opts := embedded.Options{Embed: embed, CloudSetup: cloudSetup, Force: force, Pin: embedded.Pin{Version: version, SHA256: sums}}
 	if harnesses != "" {
 		for _, raw := range strings.Split(harnesses, ",") {
@@ -229,4 +232,20 @@ func harnessNames() []string {
 		names[i] = string(h)
 	}
 	return names
+}
+
+// buildVersion is main.version, which runInit's --version shadows.
+func buildVersion() string { return version }
+
+// pinNotOlder refuses a release build pinning an older release: the
+// pinned binary's own scan --config in bootstrap.sh would then be an
+// older scanner judging this init's newer embed. A dev build, or a pin
+// that is not a release version (Plan reports that), passes.
+func pinNotOlder(pin string) error {
+	self := embedded.ReleaseVersion(buildVersion())
+	want := embedded.PinVersion(pin)
+	if self == "" || want == "" || embedded.CompareVersions(want, self) >= 0 {
+		return nil
+	}
+	return fmt.Errorf("--version %s is older than this tripcord (%s): its scan would judge this embed with an older TC-CFG-016; pin %s or later, or run the older release's init; nothing was written", want, self, self)
 }

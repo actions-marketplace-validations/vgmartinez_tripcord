@@ -40,10 +40,15 @@ upstream-check:
 # release-gate fails while a feature a release depends on is missing.
 # It checks that this build has the `tripcord hook` the init --embed
 # wiring runs, that both pinned actions have the base input and the
-# embed check, and that every documented pin contains the latest scanner
-# change on main. Run it before tagging; no CI workflow runs it.
+# embed check, that every documented pin contains the latest scanner
+# change on main, that every KnownWorkflowPins entry holds up, and
+# (TestVersionSkewCIScanner) that the CI scanner the generated
+# tripcord.yml pins reports no high TC-CFG-016 finding on a fresh
+# embed. That last check fails until the action and WorkflowPin are
+# repinned past the TC-CFG-016 version-skew fix. Run it before
+# tagging; no CI workflow runs it.
 release-gate:
-	TRIPCORD_RELEASE_GATE=1 go test ./cmd/tripcord -run '^TestReleaseGate' -count=1 -v
+	TRIPCORD_RELEASE_GATE=1 go test ./cmd/tripcord -run '^(TestReleaseGate.*|TestVersionSkewCIScanner)$$' -count=1 -v
 
 # test-rule runs one rule's positivos/ and negativos/ fixtures.
 #   make test-rule ID=TC-CFG-001

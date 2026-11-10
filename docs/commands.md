@@ -51,6 +51,7 @@ It does not execute repository content. The full reference, including
 | `--output path\|-` | Write to a new private (`0600`) local file, or `-` for stdout (default). A symlink is rejected. The destination is replaced only after the result is complete. |
 | `--since git-ref` | Repository files that differ between the ref and `HEAD`. The ref must not start with `-`. Untracked files and uncommitted edits are not included. Requires Git. Implies `--base` with the same ref. |
 | `--base git-ref` | Also compare a Tripcord embed with the ref's and report one the change removes, re-pins, or drops a harness from (TC-CFG-016). Requires Git. Must equal `--since` when both are given; not allowed with `--staged`. |
+| `--executing-workflow owner/repo/path@sha` | CI only: the reusable workflow the scan runs inside (`job.workflow_*`), which the composite action passes. TC-CFG-016 accepts a `tripcord.yml` pin equal to it only when `--base` pins the same commit. Only `vgmartinez/tripcord/.github/workflows/tripcord-pr.yml` at a full SHA is valid; anything else exits 3. Not allowed with `--staged`. See [scan](scan.md). |
 | `--staged` | Scan the staged Git index; paths given after it are unioned with the staged change set. |
 | `--fail-on low\|medium\|high\|critical` | Inclusive threshold for this invocation. A locked policy ceiling can be tightened and cannot be loosened. |
 | `--policy path` | Repository policy file. The path must exist. The default `.tripcord/policy.yaml` is optional. |
@@ -70,8 +71,10 @@ hook runs `.tripcord/bootstrap.sh`, which runs the checksum-verified
 binary by absolute path, never a `tripcord` from `PATH`. Its `hook` mode
 runs `tripcord hook --on-failure block`. The bootstrap never downloads:
 it runs only the pinned binary from its cache, and exits 2, which
-blocks the call, without one. `--embed` needs a Git repository. A
-Copilot hook that times out lets the call through
+blocks the call, without one. A release build refuses a `--version`
+older than itself and exits 3, writing nothing; that check does not
+change the bootstrap's or the hook's exit 2. `--embed` needs a Git
+repository. A Copilot hook that times out lets the call through
 ([init](init.md)). TC-CFG-016 reports an embed that is missing, edited, or,
 against a pull request's base, removed or re-pinned. Details are in
 [init](init.md).
@@ -102,8 +105,8 @@ repository's own `.tripcord` policy. See [preopen](preopen.md).
 | --- | --- |
 | 0 | No finding meets the effective threshold. `--help` also exits 0. |
 | 1 | At least one finding meets the threshold, and the effective mode is `enforce`. |
-| 2 | `hook` blocked the tool call ([hook](hook.md#exit-codes)). `scan` does not return 2. |
-| 3 | Invalid flags or format, a policy or configuration error, a Git ref `--since` cannot use, an invalid `--output` or `--policy` path, a broken fingerprint key, `--secrets` or `--all`, an unknown command, or an incomplete scan. |
+| 2 | `hook` blocked the tool call ([hook](hook.md#exit-codes)), and `bootstrap.sh` when it has no verified binary. `scan` and `init` do not return 2. |
+| 3 | Invalid flags or format, a policy or configuration error, a Git ref `--since` cannot use, an invalid `--output` or `--policy` path, a broken fingerprint key, `--secrets` or `--all`, an unknown command, or an incomplete scan. A malformed `--executing-workflow` and an `init --version` older than a release build are configuration errors and exit 3. |
 | 4 | Internal error, or a failure to start Git or finish writing the output file. |
 
 An incomplete scan still writes the findings it could produce, prints one
