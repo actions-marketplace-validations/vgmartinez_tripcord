@@ -73,7 +73,7 @@ runs:
   using: composite
   steps:
     - id: tripcord
-      uses: vgmartinez/tripcord/.github/actions/tripcord@7b17d4279dacddbe08c24263ecb23832722c37ac # main@7b17d42 # zizmor: ignore[ref-version-mismatch]
+      uses: vgmartinez/tripcord/.github/actions/tripcord@d01fb05f7e31996067c224393f519f699acc5d4a # main@d01fb05 # zizmor: ignore[ref-version-mismatch]
       with:
         ref: ${{ inputs.ref }}
         binary: ${{ inputs.binary }}
