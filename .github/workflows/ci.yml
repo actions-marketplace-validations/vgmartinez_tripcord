@@ -881,7 +881,7 @@ jobs:
         with:
           advanced-security: false
           annotations: true
-          inputs: .github/workflows .github/actions
+          inputs: .github/workflows .github/actions action.yml
 
   actionlint:
     name: actionlint
@@ -1379,3 +1379,158 @@ jobs:
           test "$TRIPCORD_PATH_OUTCOME" = "failure"
           test "$TRIPCORD_UNKNOWN" = "failure"
           test "$TRIPCORD_UNKNOWN_EXIT" = "3"
+
+  # The root action.yml is what uses: vgmartinez/tripcord@<ref> loads.
+  # This checkout goes into a subdirectory, so the workspace has no
+  # .github/actions/tripcord: a delegate written as uses: ./.github/...
+  # would resolve against this workspace, as it would for any external
+  # caller, and fail. The pinned vgmartinez/tripcord/.github/actions/
+  # tripcord@<sha> delegate is downloaded by the runner instead.
+  root-action:
+    name: root action
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout the root action
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tripcord-action
+          persist-credentials: false
+
+      - name: Prepare scan directory and stubs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -e "${GITHUB_WORKSPACE}/.github/actions/tripcord" ]; then
+            echo "the workspace has .github/actions/tripcord; external resolution is not tested" >&2
+            exit 1
+          fi
+          dir="${RUNNER_TEMP}/tripcord-ci"
+          mkdir -p -- "$dir"
+          printf 'ci scan placeholder\n' > "$dir/README"
+          cat > "${RUNNER_TEMP}/tripcord-deny" <<'EOF'
+          #!/usr/bin/env bash
+          case "$1" in
+            scan) exit 0 ;;
+            pr-context)
+              echo "tc_cfg_014=match" >> "$GITHUB_OUTPUT"
+              exit 1
+              ;;
+            *) exit 2 ;;
+          esac
+          EOF
+          chmod +x "${RUNNER_TEMP}/tripcord-deny"
+
+      - id: tripcord
+        name: Root action builds and scans
+        uses: ./tripcord-action # zizmor: ignore[self-repository] load this checkout's root action.yml
+        with:
+          path: ${{ runner.temp }}/tripcord-ci
+          upload-sarif: "false"
+          comment: "false"
+
+      - name: Assert root action outputs
+        shell: bash
+        env:
+          TRIPCORD_EXIT: ${{ steps.tripcord.outputs.scan-exit-code }}
+          TRIPCORD_SARIF: ${{ steps.tripcord.outputs.sarif }}
+          TRIPCORD_MARKDOWN: ${{ steps.tripcord.outputs.markdown }}
+          TRIPCORD_PR_EXIT: ${{ steps.tripcord.outputs.pr-context-exit-code }}
+          TRIPCORD_IS_AGENT: ${{ steps.tripcord.outputs.is_agent }}
+        run: |
+          set -euo pipefail
+          test "$TRIPCORD_EXIT" = "0"
+          test -s "$TRIPCORD_SARIF"
+          test -f "$TRIPCORD_MARKDOWN"
+          test -n "$TRIPCORD_PR_EXIT"
+          case "$TRIPCORD_IS_AGENT" in
+            true|false) ;;
+            *) echo "no is_agent output" >&2; exit 1 ;;
+          esac
+
+      - id: tripcord-deny
+        name: Root action fails a TC-CFG-014 denial by default
+        continue-on-error: true
+        uses: ./tripcord-action # zizmor: ignore[self-repository] test this checkout's root action.yml
+        with:
+          binary: ${{ runner.temp }}/tripcord-deny
+          path: ${{ runner.temp }}/tripcord-ci
+          upload-sarif: "false"
+          comment: "false"
+
+      - name: Assert root action denial
+        shell: bash
+        env:
+          TRIPCORD_OUTCOME: ${{ steps.tripcord-deny.outcome }}
+          TRIPCORD_TC_CFG_014: ${{ steps.tripcord-deny.outputs.tc-cfg-014 }}
+          TRIPCORD_PR_EXIT: ${{ steps.tripcord-deny.outputs.pr-context-exit-code }}
+        run: |
+          set -euo pipefail
+          test "$TRIPCORD_OUTCOME" = "failure"
+          test "$TRIPCORD_TC_CFG_014" = "match"
+          test "$TRIPCORD_PR_EXIT" = "1"
+
+  # fail-on none through the root action. It runs the composite action
+  # at the commit action.yml pins, so it passes only once that pin has
+  # the report-only mode (B of the repin chain).
+  root-action-report-only:
+    name: root action report-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout the root action
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tripcord-action
+          persist-credentials: false
+
+      - name: Prepare scan directory and stub
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/tripcord-ci"
+          mkdir -p -- "$dir"
+          printf 'ci scan placeholder\n' > "$dir/README"
+          cat > "${RUNNER_TEMP}/tripcord-findings" <<'EOF'
+          #!/usr/bin/env bash
+          case "$1" in
+            scan) exit 1 ;;
+            pr-context)
+              echo "tc_cfg_014=match" >> "$GITHUB_OUTPUT"
+              exit 1
+              ;;
+            *) exit 2 ;;
+          esac
+          EOF
+          chmod +x "${RUNNER_TEMP}/tripcord-findings"
+
+      - id: report-only
+        name: Root action with fail-on none
+        continue-on-error: true
+        uses: ./tripcord-action # zizmor: ignore[self-repository] test this checkout's root action.yml
+        with:
+          binary: ${{ runner.temp }}/tripcord-findings
+          path: ${{ runner.temp }}/tripcord-ci
+          fail-on: none
+          upload-sarif: "false"
+          comment: "false"
+
+      - name: Assert report-only passes
+        shell: bash
+        env:
+          TRIPCORD_OUTCOME: ${{ steps.report-only.outcome }}
+          TRIPCORD_EXIT: ${{ steps.report-only.outputs.scan-exit-code }}
+          TRIPCORD_PR_EXIT: ${{ steps.report-only.outputs.pr-context-exit-code }}
+        run: |
+          set -euo pipefail
+          echo "outcome=${TRIPCORD_OUTCOME} scan-exit-code=${TRIPCORD_EXIT} pr-context-exit-code=${TRIPCORD_PR_EXIT}"
+          if [ "$TRIPCORD_OUTCOME" != "success" ]; then
+            echo "::error::fail-on none failed the root action; the composite action pin in action.yml has no report-only mode yet"
+            exit 1
+          fi
+          test "$TRIPCORD_EXIT" = "1"
+          test "$TRIPCORD_PR_EXIT" = "1"

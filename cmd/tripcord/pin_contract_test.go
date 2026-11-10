@@ -23,6 +23,10 @@ import (
 // a later commit on main. It is the merge of the init --embed change.
 const embedCheckMinimum = "8b33b1b5a69c686b611b43a475da9658fe44614d"
 
+// rootActionPath is the Marketplace action. It pins the composite action
+// at the same commit as the reusable workflows, so B repins it too.
+const rootActionPath = "action.yml"
+
 // usesPin matches a uses ref of this repository's composite action or of
 // a reusable workflow, plus an optional "# main@<prefix>" comment. The
 // ref is whatever follows @. A branch or tag (@main, @v1, @v1.2.3,
@@ -233,7 +237,7 @@ func pinSourcePath(path string) bool {
 	path = filepath.ToSlash(path)
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".yml", ".yaml":
-		return strings.HasPrefix(path, ".github/workflows/")
+		return strings.HasPrefix(path, ".github/workflows/") || path == rootActionPath
 	case ".md":
 		return path == "README.md" || strings.HasPrefix(path, "docs/")
 	default:
@@ -306,6 +310,7 @@ var pinCurrencyPaths = []string{
 	".github/workflows/tripcord-pr.yml",
 	".github/workflows/tripcord-pr-comment.yml",
 	".github/actions/tripcord",
+	rootActionPath,
 	".pre-commit-hooks.yaml",
 	"rules/ADVISORIES.json",
 	"rules/REGISTRY",
@@ -405,6 +410,13 @@ func ensurePinCommit(root, sha string) error {
 func headPins(t *testing.T, root string) []repoPin {
 	t.Helper()
 	pins := []repoPin{{where: "embedded.WorkflowPin", pin: embedded.WorkflowPin}}
+	rootAction, err := os.ReadFile(filepath.Join(root, rootActionPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range usesPin.FindAllStringSubmatch(string(rootAction), -1) {
+		pins = append(pins, repoPin{where: rootActionPath, pin: m[1]})
+	}
 	for where, text := range pinTexts(t, root) {
 		for _, m := range usesPin.FindAllStringSubmatch(text, -1) {
 			pins = append(pins, repoPin{where: where, pin: m[1]})
@@ -1023,7 +1035,7 @@ func collectRepoPins(t *testing.T, root string) []repoPin {
 			t.Fatal(err)
 		}
 	}
-	files = append(files, filepath.Join(root, "README.md"))
+	files = append(files, filepath.Join(root, "README.md"), filepath.Join(root, rootActionPath))
 	for _, path := range files {
 		raw, err := os.ReadFile(path)
 		if err != nil {
