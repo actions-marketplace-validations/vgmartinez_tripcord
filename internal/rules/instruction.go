@@ -81,7 +81,8 @@ func instructionMatchLine(content string) int {
 				if verb == "curl" || verb == "wget" {
 					// instructionCurlSpan keeps the commands after &&, ||,
 					// |, and ;. instructionClause would drop them at ';'.
-					if instructionSecret.MatchString(stripInstructionCurlNoise(instructionCurlSpan(rest[read[1]:]))) {
+					span := stripInstructionCurlNoise(instructionCurlSpan(rest[read[1]:]))
+					if instructionSecret.MatchString(span) || instructionSubstReadsPath(span) {
 						return line + 1
 					}
 				}
@@ -337,24 +338,72 @@ func consumeCurlValue(s string, i int, flag string) int {
 		return i
 	}
 	if s[i] == '"' || s[i] == '\'' {
-		q := s[i]
-		i++
-		for i < len(s) && s[i] != q {
-			i++
+		if headerFlag(flag) && i+1 < len(s) && s[i+1] == '@' {
+			return i
 		}
-		if i < len(s) {
+		return skipQuoted(s, i)
+	}
+	start := i
+	if !headerFlag(flag) {
+		for i < len(s) && s[i] != ' ' && s[i] != '\t' {
 			i++
 		}
 		return i
 	}
-	start := i
+	end, stopped := consumeHeaderWord(s, start)
+	if !stopped && strings.Contains(s[start:end], ":") {
+		return consumeHeaderTail(s, end)
+	}
+	return end
+}
+
+// consumeHeaderWord reads the first word of an unquoted header value, such
+// as Authorization:$TOKEN or Authorization:"Bearer $TOKEN". A word that
+// starts with '@' names a file curl reads the headers from, so it is not
+// consumed. A shell operator or a substitution ends the word at that byte
+// (stopped is set), so Authorization:$(cat .env) keeps $(cat .env) in the
+// clause. A double-quoted part is one string unless it holds $( or a
+// backtick. A single-quoted part is a literal and is skipped.
+func consumeHeaderWord(s string, start int) (end int, stopped bool) {
+	if start < len(s) && s[start] == '@' {
+		return start, true
+	}
+	i := start
 	for i < len(s) && s[i] != ' ' && s[i] != '\t' {
+		switch {
+		case headerStop(s, i):
+			return i, true
+		case s[i] == '\'':
+			i = skipQuoted(s, i)
+		case s[i] == '"':
+			next := skipQuoted(s, i)
+			if quotedSubstitution(s[i:next]) {
+				return i, true
+			}
+			i = next
+		default:
+			i++
+		}
+	}
+	return i, false
+}
+
+// skipQuoted returns the index after the quote that closes the one at i,
+// or len(s) when it is not closed.
+func skipQuoted(s string, i int) int {
+	q := s[i]
+	i++
+	for i < len(s) && s[i] != q {
 		i++
 	}
-	if headerFlag(flag) && strings.Contains(s[start:i], ":") {
-		return consumeHeaderTail(s, i)
+	if i < len(s) {
+		i++
 	}
 	return i
+}
+
+func quotedSubstitution(part string) bool {
+	return strings.Contains(part, "$(") || strings.Contains(part, "`")
 }
 
 func consumeHeaderTail(s string, i int) int {
@@ -387,21 +436,70 @@ func consumeHeaderTail(s string, i int) int {
 
 // headerStop reports a shell control operator or a following command
 // substitution at k. '&' covers a background command and '&&'. '|'
-// covers '|', '||', and '|&'. '$(' , a backtick, and '<(' end the value
-// only when they start a substitution, so '$TOKEN' stays inside it.
-// '.' ends a clause only when a space or the end of the string follows
-// it, so '.env' is not a stop.
+// covers '|', '||', and '|&'. '<' covers an input redirect (< .env,
+// 0<.env, <<<) and '<('. '$(' ends the value only when it starts a
+// substitution, so '$TOKEN' stays inside it. '.' ends a clause only when
+// a space or the end of the string follows it, so '.env' is not a stop.
 func headerStop(s string, k int) bool {
 	switch s[k] {
-	case '&', '|', ';', '\n', '`':
+	case '&', '|', ';', '\n', '`', '<':
 		return true
-	case '$', '<':
+	case '$':
 		return k+1 < len(s) && s[k+1] == '('
 	case '.':
 		return k+1 == len(s) || s[k+1] == ' ' || s[k+1] == '\t' || s[k+1] == '\n'
 	default:
 		return false
 	}
+}
+
+// instructionSubstReadsPath reports a $(...) or backtick substitution in a
+// curl or wget span that names a local path, such as $(cat ./token.txt) or
+// `cat ~/.config/gh/hosts.yml`. The output of that command is sent, so the
+// path counts even when it is not one of the named secret targets.
+func instructionSubstReadsPath(span string) bool {
+	for i := 0; i < len(span); i++ {
+		var inner string
+		switch {
+		case span[i] == '$' && i+1 < len(span) && span[i+1] == '(':
+			end := closingParen(span, i+2)
+			inner, i = span[i+2:end], end
+		case span[i] == '`':
+			end := strings.IndexByte(span[i+1:], '`')
+			if end < 0 {
+				end = len(span) - i - 1
+			}
+			inner, i = span[i+1:i+1+end], i+1+end
+		default:
+			continue
+		}
+		for _, word := range strings.Fields(inner) {
+			word = strings.TrimLeft(word, "`'\"<(")
+			word = strings.TrimRight(word, "`'\");")
+			if !strings.Contains(word, "://") && instructionLocalPath.MatchString(word) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// closingParen returns the index of the ')' that closes a '(' opened just
+// before i, or len(s) when it is not closed.
+func closingParen(s string, i int) int {
+	depth := 1
+	for ; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return len(s)
 }
 
 func curlURLToken(s string) bool {

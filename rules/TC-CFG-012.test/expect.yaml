@@ -79,3 +79,30 @@ positivos:
   agents-credentials-come-from-paren-dotenv: medium
   agents-credentials-come-from-quoted-paren-dotenv: medium
   agents-credentials-come-from-bracket-dotenv: medium
+  agents-curl-quoted-header-stdin-dotenv: medium
+  agents-curl-header-stdin-dotenv: medium
+  agents-curl-header-stdin-no-url-dotenv: medium
+  agents-curl-header-stdin-glued-dotenv: medium
+  agents-curl-header-stdin-local-dotenv: medium
+  agents-curl-header-stdin-fd-dotenv: medium
+  agents-curl-header-stdin-fd-glued-dotenv: medium
+  agents-curl-header-herestring-dotenv: medium
+  agents-wget-header-stdin-dotenv: medium
+  agents-curl-header-glued-subst-dotenv: medium
+  agents-curl-header-glued-quoted-subst-dotenv: medium
+  agents-curl-header-glued-bearer-subst-dotenv: medium
+  agents-curl-header-glued-backtick-dotenv: medium
+  agents-curl-header-glued-quoted-backtick-dotenv: medium
+  agents-curl-header-glued-subst-no-url-dotenv: medium
+  agents-curl-header-equals-glued-subst-dotenv: medium
+  agents-curl-header-glued-read-subst-dotenv: medium
+  agents-curl-header-glued-process-subst-dotenv: medium
+  agents-curl-header-glued-subst-aws: medium
+  agents-wget-header-glued-subst-dotenv: medium
+  agents-curl-header-subst-value-dotenv: medium
+  agents-curl-header-at-file-dotenv: medium
+  agents-curl-header-at-quoted-dotenv: medium
+  agents-curl-header-glued-subst-local-path: medium
+  agents-curl-header-glued-backtick-home-path: medium
+  agents-curl-header-subst-run-secrets: medium
+  agents-curl-url-subst-local-path: medium

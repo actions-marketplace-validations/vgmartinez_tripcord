@@ -12,3 +12,12 @@ positivos:
   vscode-python-list-arg: high
   opencode-command-map: high
   opencode-command-number: high
+  git-prefix-wget-run: high
+  git-prefix-curl-pipe: high
+  git-prefix-source: high
+  git-prefix-eval: high
+  git-prefix-function: high
+  git-prefix-cd-toplevel-wget: high
+  git-prefix-background: high
+  git-prefix-redirect: high
+  git-prefix-subshell: high

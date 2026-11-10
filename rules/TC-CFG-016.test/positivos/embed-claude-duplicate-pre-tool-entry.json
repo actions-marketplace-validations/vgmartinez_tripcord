@@ -1,0 +1,17 @@
+[
+  {
+    "harness": "claude",
+    "scope": "repo",
+    "path": ".claude/settings.json",
+    "sha256": "d88b760ffc9235d40bc524cfc0e91cdcbace05b0ae5773a03a1ef679ff02057d",
+    "kind": "permissions",
+    "payload": {
+      "event": "PreToolUse",
+      "key": "[\"tripcordGuard\",\"PreToolUse\"]",
+      "reason": "duplicate-entry",
+      "setting": "tripcordGuard",
+      "state": "changed",
+      "subject": "PreToolUse"
+    }
+  }
+]

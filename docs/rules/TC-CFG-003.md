@@ -64,10 +64,16 @@ Not reported:
   `cd` uses that same variable, double-quoted, and the variable is
   not reassigned between the assignment and the `cd`; between that
   `cd` and the exec there is no other `cd`, `pushd`, `-C`,
-  `--chdir`, or `--cwd`; and the script is still relative, inside the
-  tree, has no `..`, and is not a symlink that leaves the tree.
-  `|| exit 1` after the assignment or the `cd` is that same form.
-  Any other variant stays matched. The launchers that may name no file are
+  `--chdir`, or `--cwd`. The commands are joined by `;` or a newline;
+  `&&` is not that form, and `|| exit 1` after the assignment or the
+  `cd` is. The command after that `cd` is the last one, and it is
+  `bun run <file>` or `exec bun run <file>`, nothing else:
+  `bash scripts/x.sh`, `./scripts/x.sh`, `node`, `python3`,
+  `bun <file>` without `run`, and `npx` after that `cd` stay matched. `<file>` is
+  relative, has no `..`, is a file in the scanned tree (the name of a
+  `package.json` script, as in `bun run dev`, is not), and is not a
+  symlink that leaves the tree. Plain arguments may follow it. Any other
+  variant stays matched. The launchers that may name no file are
   `npx`, `bunx`, `uvx`, `uv`, `pipx`, `pnpm dlx`, `yarn dlx`,
   `npm exec`, `npm dlx`, and `bun x`.
   The only dotenv names are `.env`, `.env.local`, and `.env.claude`.
@@ -113,11 +119,24 @@ Not reported:
   `cd` uses that same variable, double-quoted, and the variable is
   not reassigned between the assignment and the `cd`; between that
   `cd` and the exec there is no other `cd`, `pushd`, `-C`,
-  `--chdir`, or `--cwd`; and the script is still relative, inside the
-  tree, has no `..`, and is not a symlink that leaves the tree.
-  `|| exit 1` after the assignment or the `cd` is that same form.
-  Any other variant stays matched. The path is resolved from the
-  repository root.
+  `--chdir`, or `--cwd`. The commands are joined by `;` or a newline;
+  `&&` is not that form, and `|| exit 1` after the assignment or the
+  `cd` is. The command after that `cd` is the last one, and it is
+  `bun run <file>` or `exec bun run <file>`, nothing else:
+  `bash scripts/x.sh`, `./scripts/x.sh`, `node`, `python3`,
+  `bun <file>` without `run`, and `npx` after that `cd` stay matched. `<file>` is
+  relative, has no `..`, is a file in the scanned tree (the name of a
+  `package.json` script, as in `bun run dev`, is not), and is not a
+  symlink that leaves the tree. Plain arguments may follow it. Any other
+  variant stays matched. The `bun run` file, and the path after
+  `$(git rev-parse --show-toplevel)/`, are resolved from the repository
+  root. `${CLAUDE_PLUGIN_ROOT}/...` is resolved from the directory that
+  holds the config file. Any other relative script is resolved from the
+  directory of the config file that names it: a config at the repository root, or
+  directly inside `.claude`, `.cursor`, `.github`, `.windsurf`,
+  `.devin`, `.codex`, `.gemini`, `.agents`, or `.vscode`, uses the
+  repository root, and a nested config such as
+  `plugins/p/.mcp.json` uses its own directory.
 - A `$` in program position is not expanded. `${X:-rm}` stays matched.
   `rm`, `notes-mcp`, and `evil-mcp "$TOKEN"` stay matched, including
   when the loader is separated by newlines.
@@ -136,6 +155,15 @@ Not reported:
   one of those three that is not in the tree does not match. The same
   file sourced without `set -a` stays matched when it is missing.
   No other name is a dotenv.
+- Known gap, false positive: any `export`, `env`, or `VAR=` assignment
+  earlier in the same command rejects the repository-root `cd`, even
+  when it has nothing to do with git
+  (`export NODE_ENV=production; repo=$(git rev-parse --show-toplevel); cd "$repo"; exec bun run scripts/x.ts`).
+  The server stays matched, so this fails closed.
+- Known gap, location only: a sourced file that is not one of the
+  three dotenv names, such as `.envrc` or `./config/vars.sh`, only has
+  to be in the tree. Its bytes are not read, so whatever it runs or
+  exports is not checked.
 
 ## Examples
 
@@ -155,6 +183,16 @@ Not reported:
 
 Point `command` at the server binary and pass its arguments in `args`,
 without a shell, an inline interpreter, or a downloaded script.
+
+## QA sample
+
+The repository-script exception was measured on 29 repositories, one
+`owner/repo`, a tab, and the pinned commit per line, byte-sorted:
+[`docs/qa/tc-cfg-003-repo-script.lock`](../qa/tc-cfg-003-repo-script.lock).
+`sha256sum docs/qa/tc-cfg-003-repo-script.lock` prints
+`1424d0c0c12d44ff39c3caaff345c0afaa9b21753e38180288d463fc0ec9818e`.
+The `28cc1c21…` digest published with that measurement was not taken
+over these bytes and does not identify the list; use this one.
 
 ## References
 

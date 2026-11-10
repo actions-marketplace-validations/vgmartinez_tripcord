@@ -29,8 +29,8 @@ policy at the Git root and would block every tool call without one.
 > the bootstrap cache itself ([Bootstrap](#bootstrap)).
 >
 > The generated `.github/workflows/tripcord.yml` pins the reusable
-> workflow at `main@277066a`. `tripcord-pr.yml` at that commit pins the
-> composite action at `main@8b33b1b`, which has the `base` input and
+> workflow at `main@1776ce5`. `tripcord-pr.yml` at that commit pins the
+> composite action at `main@36ae387`, which has the `base` input and
 > the embed check, so the generated workflow compares a pull request
 > with its base. This repository's own workflows pin that same action.
 > `TestPinsHaveEmbedCheck` requires every pin to be a full SHA on main,
@@ -484,8 +484,8 @@ composite action: the reusable workflow commit the generated
 `tripcord-pr.yml` and `tripcord-pr-comment.yml` call. It fails unless
 the action at each pin has the `base` input and builds a Tripcord with
 the embed check (`internal/embedded`). This tree's workflows pin the
-action at `main@8b33b1b`, which has both. The generated workflow calls
-`tripcord-pr.yml` at `main@277066a`, and the file there pins the same
+action at `main@36ae387`, which has both. The generated workflow calls
+`tripcord-pr.yml` at `main@1776ce5`, and the file there pins the same
 action, so both paths pass. It reads the pinned commits with `git show`,
 so the clone must have them (`fetch-depth: 0`).
 
@@ -507,6 +507,20 @@ from the embed check, and pins, through its `tripcord-pr.yml`, an action
 with the embed check and the `base` input; the list is in history
 order, holds neither excluded pin (`8b33b1b`, `6e1d5db`), and only
 extends main's.
+
+`TestReleaseGateDocsCiteCurrentPins`
+(`cmd/tripcord/release_gate_citations_test.go`) reads README.md and
+every `docs/**/*.md` and fails on a pin citation that is not current:
+a `tripcord-pr.yml` or `tripcord-pr-comment.yml` ref, or a tripcord
+pre-commit `rev:`, other than `WorkflowPin`; an
+`.github/actions/tripcord` ref other than the one this tree's reusable
+workflows call; or a `` `main@<sha>` `` code span that is a prefix of
+neither. A branch, a tag, or a short sha in a ref is never current.
+The one exception is explicit historical context: a
+`KnownWorkflowPins` entry cited in `docs/release-notes.md` on a line
+that says "previously" or "formerly". An action pin is never
+historical. It reads only the tree, so it also runs on every pull
+request; `TestReleaseGateStaleCitations` pins those cases.
 
 `TestVersionSkewCIScanner` (`cmd/tripcord/version_skew_e2e_test.go`)
 builds the tripcord the generated `tripcord.yml` really runs in CI

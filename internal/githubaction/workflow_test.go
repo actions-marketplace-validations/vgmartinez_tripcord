@@ -499,14 +499,22 @@ func TestPreCommitHookContract(t *testing.T) {
 		return
 	}
 	ref := preCommitMainRef(t, root)
+	base, err := loadPreCommitBase(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	seen := map[string]bool{}
 	for _, rev := range revs {
 		if seen[rev.sha] {
 			continue
 		}
 		seen[rev.sha] = true
-		if err := gitAt(root, "merge-base", "--is-ancestor", rev.sha, ref); err != nil {
-			t.Errorf("%s rev %s is not on %s", rev.where, rev.sha, ref)
+		target := ref
+		if base.newRev(root, rev.sha) {
+			target = "HEAD"
+		}
+		if err := gitAt(root, "merge-base", "--is-ancestor", rev.sha, target); err != nil {
+			t.Errorf("%s rev %s is not on %s", rev.where, rev.sha, target)
 			continue
 		}
 		// The pin must be a commit that actually ships the hook. A commit
@@ -514,6 +522,60 @@ func TestPreCommitHookContract(t *testing.T) {
 		// tripcord-config, fails closed.
 		requirePinnedHookManifest(t, root, rev.sha)
 	}
+}
+
+// preCommitBase is the set of revs origin/main documents, when a
+// pull_request may pin a rev that is not on origin/main yet. It is the
+// same exception TestPinsHaveEmbedCheck makes for the workflow pins: a
+// repin pull request moves the rev to a commit of its own, which lands
+// on main only when the pull request is merged with a merge commit.
+// relaxed is false for every other event, for an unset event, and
+// under TRIPCORD_RELEASE_GATE=1, so a push to main stays strict.
+type preCommitBase struct {
+	relaxed bool
+	revs    map[string]bool
+}
+
+// loadPreCommitBase fails closed on a pull_request whose checkout is not
+// the merge ref (exactly two parents, the first equal to origin/main)
+// or whose base revs cannot be read.
+func loadPreCommitBase(root string) (preCommitBase, error) {
+	if os.Getenv("GITHUB_EVENT_NAME") != "pull_request" || os.Getenv("TRIPCORD_RELEASE_GATE") == "1" {
+		return preCommitBase{}, nil
+	}
+	mainSHA, err := gitText(root, "rev-parse", "--verify", "origin/main")
+	if err != nil {
+		return preCommitBase{}, fmt.Errorf("pull_request checkout cannot read origin/main: %v", err)
+	}
+	parents, err := gitText(root, "rev-list", "--parents", "-n", "1", "HEAD")
+	if err != nil {
+		return preCommitBase{}, fmt.Errorf("pull_request checkout cannot read HEAD: %v", err)
+	}
+	fields := strings.Fields(parents)
+	if len(fields) != 3 || fields[1] != strings.TrimSpace(mainSHA) {
+		return preCommitBase{}, fmt.Errorf("pull_request checkout HEAD is not a merge of origin/main: want exactly two parents with the first equal to origin/main")
+	}
+	revs := map[string]bool{}
+	for _, rel := range []string{"README.md", "docs/pre-commit.md"} {
+		text, err := gitText(root, "show", "origin/main:"+rel)
+		if err != nil {
+			return preCommitBase{}, fmt.Errorf("cannot read base revs at origin/main:%s: %v", rel, err)
+		}
+		for _, rev := range preCommitRevsIn(rel, text) {
+			revs[rev.sha] = true
+		}
+	}
+	return preCommitBase{relaxed: true, revs: revs}, nil
+}
+
+// newRev reports a rev this pull request introduces: one the base does
+// not document and that is not already on origin/main. It must then be
+// an ancestor of HEAD. Any other rev stays on origin/main.
+func (b preCommitBase) newRev(root, sha string) bool {
+	if !b.relaxed || b.revs[sha] {
+		return false
+	}
+	return gitAt(root, "merge-base", "--is-ancestor", sha, "origin/main") != nil
 }
 
 // preCommitRev is one tripcord pre-commit pin: the rev token and the
@@ -1140,4 +1202,81 @@ func keysOf(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestPreCommitBasePullRequestOnly(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	run := func(args ...string) string {
+		t.Helper()
+		out, err := gitText(dir, args...)
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(out)
+	}
+	write := func(rev string) {
+		t.Helper()
+		doc := "```yaml\nrepos:\n  - repo: https://github.com/" + project.Repository + "\n    rev: " + rev + "\n```\n"
+		for _, rel := range []string{"README.md", "docs/pre-commit.md"} {
+			if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(rel)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, rel), []byte(doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		run("add", "-A")
+	}
+	commit := func(msg string) string {
+		t.Helper()
+		run("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", msg)
+		return run("rev-parse", "HEAD")
+	}
+	run("init", "-q", "-b", "main")
+	write(strings.Repeat("a", 40))
+	mainSHA := commit("main")
+	run("update-ref", "refs/remotes/origin/main", mainSHA)
+	run("checkout", "-q", "-b", "repin")
+	newRev := commit("repin")
+	write(newRev)
+	commit("docs")
+	branch := run("rev-parse", "HEAD")
+	run("checkout", "-q", "--detach", mainSHA)
+	run("-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-ff", "-m", "merge", branch)
+
+	for _, c := range []struct {
+		event, gate string
+		relaxed     bool
+	}{
+		{"push", "", false},
+		{"", "", false},
+		{"pull_request", "1", false},
+		{"pull_request", "", true},
+	} {
+		t.Setenv("GITHUB_EVENT_NAME", c.event)
+		t.Setenv("TRIPCORD_RELEASE_GATE", c.gate)
+		base, err := loadPreCommitBase(dir)
+		if err != nil {
+			t.Fatalf("event %q gate %q: %v", c.event, c.gate, err)
+		}
+		if base.relaxed != c.relaxed {
+			t.Errorf("event %q gate %q: relaxed = %v, want %v", c.event, c.gate, base.relaxed, c.relaxed)
+		}
+		if got := base.newRev(dir, newRev); got != c.relaxed {
+			t.Errorf("event %q gate %q: newRev(new) = %v, want %v", c.event, c.gate, got, c.relaxed)
+		}
+		if base.newRev(dir, mainSHA) {
+			t.Errorf("event %q gate %q: a rev on origin/main counts as new", c.event, c.gate)
+		}
+	}
+
+	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
+	t.Setenv("TRIPCORD_RELEASE_GATE", "")
+	run("checkout", "-q", "--detach", branch)
+	if _, err := loadPreCommitBase(dir); err == nil {
+		t.Error("a pull_request checkout that is not a merge of origin/main is accepted")
+	}
 }

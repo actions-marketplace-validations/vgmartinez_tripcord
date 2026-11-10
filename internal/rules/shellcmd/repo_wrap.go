@@ -137,15 +137,16 @@ func gitExec(payload string) ([]RepoFile, bool) {
 // The git command is exactly V=$(git rev-parse --show-toplevel) or
 // cd "$(git rev-parse --show-toplevel)". No other git arguments, no
 // git -C, --git-dir, or --work-tree, and no environment prefix
-// (GIT_DIR, GIT_WORK_TREE, any GIT_*, or any other VAR=) on that line
-// or in an earlier command. The cd uses that same variable,
+// (GIT_DIR, GIT_WORK_TREE, any GIT_*, or any other VAR=) on that line.
+// The only command allowed before it is set -a, joined by ';' or a
+// newline (see onlySetABefore). The cd uses that same variable,
 // double-quoted, and the variable is not reassigned after the
 // assignment. Between that cd and the exec there is no other cd,
 // pushd, -C, --chdir, or --cwd. || exit 1 after the assignment or the
 // cd is the same form. Any other variant is not.
 func gitAssignChain(payload string) ([]RepoFile, bool) {
 	toks, subs := lex(payload, false)
-	if len(subs) != 1 || !gitTop(subs[0]) {
+	if len(subs) != 1 || !gitTop(subs[0]) || !onlySetABefore(toks) {
 		return nil, false
 	}
 	cmds := split(toks)
@@ -268,6 +269,34 @@ func assignsName(c command, name string) bool {
 		}
 	}
 	return false
+}
+
+// onlySetABefore reports that the tokens before the git command are
+// nothing but `set -a` commands, each ended by ';' or a newline. It
+// reads the tokens rather than split's commands: split drops a
+// redirection and its target, so `x >f; repo=$(...)` would look like a
+// bare `x`. A function definition, `&`, `&&`, `|`, a subshell, a
+// redirection, or any other command there voids the exception.
+func onlySetABefore(toks []token) bool {
+	i := 0
+	for {
+		for i < len(toks) && toks[i].op == opSep {
+			i++
+		}
+		if i+2 < len(toks) && toks[i].op == "" && toks[i].word == "set" &&
+			toks[i+1].op == "" && toks[i+1].word == "-a" && toks[i+2].op == opSep {
+			i += 3
+			continue
+		}
+		break
+	}
+	if i >= len(toks) || toks[i].op != "" {
+		return false
+	}
+	if _, ok := assignVar(toks[i].word); ok {
+		return true
+	}
+	return toks[i].word == "cd" && i+1 < len(toks) && toks[i+1].op == "" && toks[i+1].word == subst
 }
 
 // envBefore reports an export or assignment before the git command.

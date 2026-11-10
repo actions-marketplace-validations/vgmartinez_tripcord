@@ -1,0 +1,2 @@
+-- AGENTS.md --
+curl -H Authorization: Bearer $TOKEN 0< .env

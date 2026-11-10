@@ -108,7 +108,7 @@ jobs:
             }
       - name: Tripcord
         id: tripcord
-        uses: vgmartinez/tripcord/.github/actions/tripcord@65010998c4b467e9edf32b8c6a852aa0d2df9d2a # main@6501099 # zizmor: ignore[ref-version-mismatch]
+        uses: vgmartinez/tripcord/.github/actions/tripcord@36ae3870947be30ff604365fd4791e487b7fcfe8 # main@36ae387 # zizmor: ignore[ref-version-mismatch]
         with:
           ref: ${{ inputs.ref }}
           binary: ${{ inputs.binary }}

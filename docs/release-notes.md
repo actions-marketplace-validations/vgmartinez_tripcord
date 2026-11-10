@@ -24,6 +24,17 @@
   as it did before. v0 known gap: there is no supported way yet to
   keep a user's own hook next to the guard. Remove the entry, or run
   it from outside the guarded config. See [Init](init.md#merging).
+- TC-CFG-016 reports an event Tripcord wires that holds more than one
+  copy of Tripcord's entry, or of the entry `embed.json` records, even
+  byte for byte the same: `changed`, high, reason `duplicate-entry`.
+  The harness runs every copy.
+- TC-CFG-012 reads more of a `curl` or `wget` header that can carry a
+  local secret: an unquoted header ends at a stdin redirect
+  (`< .env`, `0<.env`), so a dotenv read there is a warning; a glued
+  value such as `-H Authorization:$(cat .env)` or
+  `Authorization:"$(cat .env)"` is read up to the substitution;
+  `-H @.env` sends the file as headers; and a `$(...)` or backtick in
+  the command that reads a local path counts as a read.
 - TC-CFG-016 reports a `tripcord.yml` that gives a key twice in one
   mapping, or holds a second YAML document, as `unreadable`, high,
   instead of reading the first one, which could leave it `unverified`,
@@ -72,14 +83,15 @@ own templates ([design](design/tc-cfg-016-version-skew.md)):
   base already has.
 - A release `init` refuses a `--version` older than itself (exit 3).
 
-`277066a` is the current `WorkflowPin`, so an embed it writes is a
-current pin: a local scan does not report it `pin-unknown`. Embeds
-still pinned to `6a12795` show a temporary `pin-unknown` high on a
-local or pre-commit scan until PR 3 appends that pin to
-`KnownWorkflowPins`. Both pins run action `8b33b1b`, so CI keeps
-failing until two repins land: the action pin in `tripcord-pr.yml`,
-then `WorkflowPin`, followed by `init --embed --force`. Until then
-`make release-gate` fails `TestVersionSkewCIScanner` with seven highs:
+Formerly `main@277066a` was the `WorkflowPin`, so an embed it wrote was
+a current pin: a local scan did not report it `pin-unknown`. Embeds
+pinned to the earlier, unregistered workflow pin showed a temporary
+`pin-unknown` high on a local or pre-commit scan until PR 3 appends
+that pin to `KnownWorkflowPins`. Those pins ran an action without the
+embed check, so CI kept failing until two repins landed: the action pin
+in `tripcord-pr.yml`, then `WorkflowPin`, followed by
+`init --embed --force`. Until then `make release-gate` failed
+`TestVersionSkewCIScanner` with seven highs:
 the six "written by an older Tripcord", plus `copilot-setup-steps.yml`,
 which `init` writes only with `--cloud-setup` and that action reports
 missing. By the end of PR 3 that test must report 0 high, including
@@ -295,11 +307,24 @@ no `git -C`, `--git-dir`, or `--work-tree`, and no environment prefix
 line or exported earlier in the command; the `cd` uses that same
 variable, double-quoted, and the variable is not reassigned between
 the assignment and the `cd`; between that `cd` and the exec there is
-no other `cd`, `pushd`, `-C`, `--chdir`, or `--cwd`; and the script is
-still relative, inside the tree, has no `..`, and is not a symlink
-that leaves the tree. `|| exit 1` after the assignment or the `cd` is
-that same form. Any other variant stays a finding. The path is
-resolved from the repository root.
+no other `cd`, `pushd`, `-C`, `--chdir`, or `--cwd`. The commands are
+joined by `;` or a newline; `&&` is not that form, and `|| exit 1`
+after the assignment or the `cd` is. The command after that `cd` is
+the last one, and it is `bun run <file>` or `exec bun run <file>`,
+nothing else: `bash scripts/x.sh`, `./scripts/x.sh`, `node`,
+`python3`, `bun <file>` without `run`, and `npx` after that `cd` stay
+findings. `<file>` is relative, has no `..`, is a file in the scanned
+tree (the name of a `package.json` script, as in `bun run dev`, is
+not), and is not a symlink that leaves the tree. Plain arguments may
+follow it. Any other variant stays a finding. The `bun run` file, and
+the path after `$(git rev-parse --show-toplevel)/`, are resolved from
+the repository root. `${CLAUDE_PLUGIN_ROOT}/...` is resolved from the
+directory that holds the config file. Any other relative script is
+resolved from the directory of the config file that names it: a
+config at the repository root, or directly inside `.claude`,
+`.cursor`, `.github`, `.windsurf`, `.devin`, `.codex`, `.gemini`,
+`.agents`, or `.vscode`, uses the repository root, and a nested config
+such as `plugins/p/.mcp.json` uses its own directory.
 
 The only dotenv names are `.env`, `.env.local`, and `.env.claude`.
 Under `set -a` one of those may be absent. When the file is in the

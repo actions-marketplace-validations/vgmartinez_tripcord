@@ -1,0 +1,17 @@
+[
+  {
+    "harness": "cursor",
+    "scope": "repo",
+    "path": ".cursor/hooks.json",
+    "sha256": "5eb3f7a22b5fec81d0629c95f3e4d54091d077d880b4c4309dd9746a950e8145",
+    "kind": "permissions",
+    "payload": {
+      "event": "preToolUse",
+      "key": "[\"tripcordGuard\",\"preToolUse\"]",
+      "reason": "duplicate-entry",
+      "setting": "tripcordGuard",
+      "state": "changed",
+      "subject": "preToolUse"
+    }
+  }
+]

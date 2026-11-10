@@ -1,0 +1,2 @@
+-- AGENTS.md --
+curl -H X-Request-Id:$(uuidgen) https://api.example.com
