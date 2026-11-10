@@ -16,7 +16,7 @@ import (
 // scanner, the reusable workflows, the action, or the hook manifest.
 // TestReleaseGatePinnedActionHasEmbedCheck follows the action pin inside
 // the pinned workflow file.
-const WorkflowPin = "1776ce595c38e3a1b4ca6aa1fb573c3f6081e32f"
+const WorkflowPin = "47d6a048c9dee0b26237715a60c933ca7f252032"
 
 // checkoutPin is actions/checkout v7.0.1, the version this repository's
 // own workflows pin.

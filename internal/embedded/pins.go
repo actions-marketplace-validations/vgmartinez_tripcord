@@ -21,6 +21,7 @@ import (
 var KnownWorkflowPins = []string{
 	"277066a292b8717d4d91393a10d00c5dd2d51cdb",
 	"8b494a32ca061fcb6a4291d703fe16e33b873db9",
+	"1776ce595c38e3a1b4ca6aa1fb573c3f6081e32f",
 }
 
 // ExcludedWorkflowPins are earlier WorkflowPin values that must never be
