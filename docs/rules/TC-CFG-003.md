@@ -155,6 +155,15 @@ Not reported:
   one of those three that is not in the tree does not match. The same
   file sourced without `set -a` stays matched when it is missing.
   No other name is a dotenv.
+- Known gap, false positive: any `export`, `env`, or `VAR=` assignment
+  earlier in the same command rejects the repository-root `cd`, even
+  when it has nothing to do with git
+  (`export NODE_ENV=production; repo=$(git rev-parse --show-toplevel); cd "$repo"; exec bun run scripts/x.ts`).
+  The server stays matched, so this fails closed.
+- Known gap, location only: a sourced file that is not one of the
+  three dotenv names, such as `.envrc` or `./config/vars.sh`, only has
+  to be in the tree. Its bytes are not read, so whatever it runs or
+  exports is not checked.
 
 ## Examples
 
