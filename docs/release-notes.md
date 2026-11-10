@@ -1,6 +1,48 @@
 # Release notes
 
-## v0 (unreleased)
+## v0.1.0
+
+The first tagged release of Tripcord.
+
+### Release archives
+
+Each release has `tripcord` for linux, darwin, and windows on amd64
+and arm64, as `.tar.gz` (`.zip` on Windows) archives that also hold
+`LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES`, plus a `SHA256SUMS`
+file. The `release` workflow builds them reproducibly from the tagged
+commit and attests their build provenance. Check an archive with
+`sha256sum -c SHA256SUMS` and
+`gh attestation verify <file> --repo vgmartinez/tripcord`
+([Installation](installation.md)). `go install` and building a
+checkout still work.
+
+- `tripcord --version` and `tripcord version` print the tag and the
+  commit of a release build, `v0.1.0 (commit <sha>)`. Any other build
+  prints `dev` ([Commands](commands.md)).
+- `NOTICE` and `THIRD_PARTY_NOTICES` cover every Go module linked into
+  the binary, with each module's license, and `NOTICE` reproduces the
+  `go.yaml.in/yaml/v3` NOTICE. A test fails when the module graph and
+  the notices disagree.
+
+### Marketplace action
+
+The repository root has an `action.yml`, listed on the Marketplace as
+Tripcord Security. `uses: vgmartinez/tripcord@v0.1.0` runs the
+composite action at the commit the root action pins, with the same
+inputs and outputs ([GitHub Action](github-action.md#marketplace-action)).
+The reusable workflows are unchanged.
+
+### Report-only mode: `fail-on: none`
+
+`fail-on: none` in the action, the root action, and the reusable
+workflows still uploads SARIF and posts the pull request comment, but
+does not fail the job on findings. Exit 1 (findings) and a TC-CFG-014
+denial from `pr-context` become a `::warning::` with the finding
+count. Exit 3 (configuration), exit 4 (internal error), an invalid
+`path`, and an unknown `fail-on` value still fail the job. The default
+is unchanged, and the CLI's `--fail-on` does not take `none`
+([Report-only mode](github-action.md#report-only-mode),
+[#62](https://github.com/vgmartinez/tripcord/issues/62)).
 
 ### Bootstrap and embed check hardening
 
@@ -248,10 +290,10 @@ package is an open product question
 
 CI runs the composite action as a remote step. The reusable workflows
 `tripcord-pr.yml` and `tripcord-pr-comment.yml` are covered by the
-contract test and actionlint, not by an end-to-end run. There is no
-report-only mode. `fail-on` accepts `low`, `medium`, `high`, and
-`critical`, and a non-zero scan or `pr-context` exit fails the job
-after publishing
+contract test and actionlint, not by an end-to-end run. `fail-on`
+accepts `low`, `medium`, `high`, and `critical`, where a non-zero scan
+or `pr-context` exit fails the job after publishing, and `none`, where
+findings and a TC-CFG-014 denial are a warning instead
 ([#62](https://github.com/vgmartinez/tripcord/issues/62)).
 
 ### Leftover embed
@@ -388,11 +430,11 @@ the tree, and its bytes are not read.
   ([zizmor#1655](https://github.com/zizmorcore/zizmor/pull/1655),
   [#41](https://github.com/vgmartinez/tripcord/issues/41)). See
   [Known gaps](rules/README.md#known-gaps) in the rule index.
-- Report-only mode for the Action and the reusable workflows is not
-  implemented. Publishing SARIF or a pull-request comment without
-  failing on findings needs a product decision
-  ([#62](https://github.com/vgmartinez/tripcord/issues/62)). Exit 3,
-  exit 4, and an invalid `path` would still have to fail.
+- `fail-on: none` is a warning, not a gate. A pull request that
+  report-only mode lets through still has its findings in code
+  scanning and in the comment; nothing blocks the merge until
+  `fail-on` is set to a severity
+  ([#62](https://github.com/vgmartinez/tripcord/issues/62)).
 - Scanning one subdirectory of a monorepo is not implemented. `tripcord
   scan PATH` and the Action's `path` input resolve a path inside a Git
   repository to that repository's root

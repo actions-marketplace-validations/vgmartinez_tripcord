@@ -3,6 +3,7 @@ package githubaction_test
 import (
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -182,5 +183,30 @@ func TestReleaseBuildFlags(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Errorf("scripts/release-build.sh is missing %q", want)
 		}
+	}
+}
+
+// TestReleaseNotesSection checks the body release.yml would publish for
+// v0.1.0: the section exists, and links to other docs are absolute.
+func TestReleaseNotesSection(t *testing.T) {
+	cmd := exec.Command("bash", filepath.Join("..", "..", "scripts", "release-build.sh"), "notes", "v0.1.0")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("notes v0.1.0: %v", err)
+	}
+	body := string(out)
+	for _, want := range []string{"TC-CFG-013", "fail-on: none", "https://github.com/vgmartinez/tripcord/blob/v0.1.0/docs/"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("v0.1.0 release body is missing %q", want)
+		}
+	}
+	if strings.Contains(body, "\n## ") {
+		t.Error("v0.1.0 release body runs into the next section")
+	}
+	if regexp.MustCompile(`\]\((?:\.\./)?[A-Za-z0-9_-]+\.md`).MatchString(body) {
+		t.Error("v0.1.0 release body has a relative docs link")
+	}
+	if err := exec.Command("bash", filepath.Join("..", "..", "scripts", "release-build.sh"), "notes", "v9.9.9").Run(); err == nil {
+		t.Error("notes for a version with no section succeeded")
 	}
 }
