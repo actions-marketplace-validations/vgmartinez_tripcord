@@ -3,7 +3,7 @@
     "harness": "generic",
     "scope": "repo",
     "path": ".github/workflows/tripcord.yml",
-    "sha256": "93014a2e672b0c4b72d1744c518f7ddfb6d1da4b6fc21133431735cfcde44631",
+    "sha256": "6771732c414f6bf9e9e7e4ace5f72dcad4745ec6b7d1d30514fb6c2b2526b068",
     "kind": "permissions",
     "payload": {
       "key": "[\"tripcordGuard\",\"workflow-pin\"]",
