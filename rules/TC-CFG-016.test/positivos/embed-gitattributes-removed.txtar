@@ -47,8 +47,8 @@ jobs:
       contents: read # checkout the repository being scanned
       pull-requests: read # tripcord-pr.yml reads pull request reviews
       security-events: write # upload the SARIF report
-    # Reusable workflow pinned by full commit SHA (main@8b494a3).
-    uses: vgmartinez/tripcord/.github/workflows/tripcord-pr.yml@8b494a32ca061fcb6a4291d703fe16e33b873db9 # main@8b494a3 # zizmor: ignore[ref-version-mismatch]
+    # Reusable workflow pinned by full commit SHA (main@26775fd).
+    uses: vgmartinez/tripcord/.github/workflows/tripcord-pr.yml@26775fd1dd3fb7a7d8de051b0d09ed044e6fabf7 # main@26775fd # zizmor: ignore[ref-version-mismatch]
     with:
       fail-on: high
 -- .gitignore --
@@ -396,7 +396,7 @@ run_bin "$copy" scan --config "$repo_root" >&2
     },
     {
       "path": ".github/workflows/tripcord.yml",
-      "sha256": "ed5a7b155ef9fdf26ae42d3a80fdbc85302da0390e83bda83f62329b34932dd1"
+      "sha256": "4ef52d97eefe937f5d957e9c057ba948ade4bf21397fb14bf8e202e98ed3d07c"
     }
   ],
   "hooks": [

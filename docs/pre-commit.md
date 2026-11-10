@@ -7,7 +7,7 @@ the minimum version in this repository's `go.mod`.
 ```yaml
 repos:
   - repo: https://github.com/vgmartinez/tripcord
-    rev: 8b494a32ca061fcb6a4291d703fe16e33b873db9 # main@8b494a3
+    rev: 26775fd1dd3fb7a7d8de051b0d09ed044e6fabf7 # main@26775fd
     hooks:
       - id: tripcord-config
 ```
