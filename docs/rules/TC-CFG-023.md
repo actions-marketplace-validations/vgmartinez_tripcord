@@ -157,9 +157,22 @@ No Docker advisory is seeded. Image parsing is covered by unit tests.
   prefab-ui without naming it.
 - An unpinned spec that resolves to an old cached copy. Unpinned specs
   match only when the advisory has no fixed version.
-- Wrappers that are not unwrapped: `env`, `busybox`, `$SHELL`, `sh -c`,
-  and `$VAR` or `${VERSION}` in the version. Those limits are shared
-  with the rest of the pack.
+- Wrappers that are not unwrapped: `env`, `busybox`, `$SHELL`, and
+  `$VAR` or `${VERSION}` in the version. Those limits are shared with
+  the rest of the pack. `sh`, `bash`, and `zsh -c` and `cmd /c` are
+  read through ([What it detects](#what-it-detects)), with these
+  residual gaps, tracked in
+  [#52](https://github.com/vgmartinez/tripcord/issues/52):
+  - `env` or a variable assignment before the launcher, at the top
+    level or inside the command string: `FOO=1 npx …`,
+    `sh -c 'FOO=1 npx …'`, and `sh -c 'env FOO=1 npx …'` do not match.
+  - `--` between `-c` and the command string: `sh -c -- 'npx …'` is
+    opaque.
+  - Other shells, such as `dash`, `ksh`, `fish`, `pwsh`, and
+    `powershell`, and any other option of `sh`, `bash`, or `zsh`
+    (`bash -ec`), are not read through.
+  - Wrappers nested more than four deep: a fifth `sh -c` inside four
+    others is not read.
 - Digests, local paths, tarballs, and an unknown launcher option. Those
   are not guesses.
 - A range that still admits a fixed version, such as `^0.6.0` when
