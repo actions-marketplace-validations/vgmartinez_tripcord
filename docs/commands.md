@@ -12,7 +12,9 @@ tripcord init [PATH] [--embed] [--harness h,...] [flags]
 tripcord hook --harness <claude|cursor|copilot> --event <e> [--on-failure block|error]
 ```
 
-`version` prints the link-time version, or `dev` when it was not set.
+`version` (or `--version`) prints the link-time version, or `dev` when
+it was not set. A release build also prints the commit it was built
+from: `v0.1.0 (commit <sha>)`.
 `tripcord <command> --help` prints that command's flags and exits 0. An
 unknown command prints the usage and exits 3.
 

@@ -53,10 +53,23 @@ import (
 	"github.com/vgmartinez/tripcord/internal/scriptcheck"
 )
 
-// version is the build version. Override it at link time:
+// version and commit are the build version and the commit it was built
+// from. Override them at link time:
 //
-//	go build -ldflags "-X main.version=vX.Y.Z"
-var version = "dev"
+//	go build -ldflags "-X main.version=vX.Y.Z -X main.commit=<sha>"
+var (
+	version = "dev"
+	commit  = ""
+)
+
+// versionLine is what version and --version print: the version alone
+// when no commit was linked in, so a plain build still prints dev.
+func versionLine() string {
+	if commit == "" {
+		return version + "\n"
+	}
+	return version + " (commit " + commit + ")\n"
+}
 
 const usage = `tripcord is a local coding-agent security scanner.
 
@@ -118,7 +131,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	case "help", "-h", "--help":
 		return writeString(stdout, usage)
 	case "version", "--version":
-		return writeString(stdout, version+"\n")
+		return writeString(stdout, versionLine())
 	case "scan":
 		return runScan(args[1:], stdout, stderr)
 	case "pr-context":
