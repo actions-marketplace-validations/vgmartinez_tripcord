@@ -14,7 +14,7 @@ inputs:
     required: false
     default: .
   fail-on:
-    description: Inclusive severity passed to tripcord. Empty lets the CLI and policy decide.
+    description: Inclusive severity passed to tripcord (low, medium, high, critical). Empty lets the CLI and policy decide. none is report-only; findings and a TC-CFG-014 denial warn instead of failing the job, while exit 3, exit 4, and an invalid path still fail.
     required: false
     default: ""
   upload-sarif:
@@ -39,7 +39,7 @@ inputs:
     default: ${{ github.event.pull_request.base.sha }}
 outputs:
   scan-exit-code:
-    description: Exit code from the scans. The job fails with this code after publishing.
+    description: Exit code from the scans. The job fails with this code after publishing, except exit 1 with fail-on none.
     value: ${{ steps.scan.outputs.exit-code }}
   sarif:
     description: Path to the SARIF report.
@@ -208,7 +208,10 @@ runs:
           printf '%s' "$data"
         }
         args=()
-        if [ -n "$TRIPCORD_FAIL_ON" ]; then
+        # none is the action's report-only mode, not a CLI severity: the
+        # scan keeps the policy's threshold and apply-exit-code turns its
+        # exit 1 into a warning.
+        if [ -n "$TRIPCORD_FAIL_ON" ] && [ "$TRIPCORD_FAIL_ON" != "none" ]; then
           args+=(--fail-on "$TRIPCORD_FAIL_ON")
         fi
         if [ -n "$TRIPCORD_BASE" ]; then
@@ -405,9 +408,25 @@ runs:
         TRIPCORD_SCAN_STATUS: ${{ steps.scan.outputs.exit-code }}
         TRIPCORD_PR_CONTEXT_STATUS: ${{ steps.pr-context.outputs.exit-code }}
         TRIPCORD_REVIEWS_FILE: ${{ inputs.reviews-file }}
+        TRIPCORD_FAIL_ON: ${{ inputs.fail-on }}
+        TRIPCORD_SARIF: ${{ steps.paths.outputs.sarif }}
       run: |
+        report_only=false
+        if [ "$TRIPCORD_FAIL_ON" = "none" ]; then
+          report_only=true
+        fi
+        # One "ruleId": key per SARIF result. A quote inside a value is
+        # escaped, so no value matches.
+        findings="an unknown number of"
+        if [ "$report_only" = true ] && [ -f "$TRIPCORD_SARIF" ]; then
+          findings=$(grep -o '"ruleId":' -- "$TRIPCORD_SARIF" | wc -l | tr -d '[:space:]')
+        fi
         if [ "$TRIPCORD_SCAN_STATUS" -ne 0 ]; then
-          exit "$TRIPCORD_SCAN_STATUS"
+          if [ "$TRIPCORD_SCAN_STATUS" -eq 1 ] && [ "$report_only" = true ]; then
+            echo "::warning::tripcord found ${findings} finding(s) (scan exit 1); fail-on is none, so findings do not fail the job"
+          else
+            exit "$TRIPCORD_SCAN_STATUS"
+          fi
         fi
         case "$TRIPCORD_PR_CONTEXT_STATUS" in
           0)
@@ -418,6 +437,10 @@ runs:
             exit 1
             ;;
           1)
+            if [ "$report_only" = true ]; then
+              echo "::warning::tripcord pr-context denied the pull request under TC-CFG-014 (1 finding); fail-on is none, so the denial does not fail the job"
+              exit 0
+            fi
             echo "::error::tripcord pr-context denied the pull request under TC-CFG-014"
             exit 1
             ;;

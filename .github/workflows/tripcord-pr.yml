@@ -35,7 +35,7 @@ on:
         required: false
         default: "."
       fail-on:
-        description: Inclusive severity passed to tripcord. Empty lets the CLI and policy decide.
+        description: Inclusive severity passed to tripcord (low, medium, high, critical). Empty lets the CLI and policy decide. none is report-only; findings and a TC-CFG-014 denial warn instead of failing the job, while exit 3, exit 4, and an invalid path still fail.
         type: string
         required: false
         default: ""

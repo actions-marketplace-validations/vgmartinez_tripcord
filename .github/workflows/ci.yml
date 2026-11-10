@@ -1256,3 +1256,126 @@ jobs:
           TRIPCORD_OUTCOME: ${{ steps.tripcord-incomplete.outcome }}
         run: |
           test "$TRIPCORD_OUTCOME" = "failure"
+
+      # fail-on none (#62): findings and a TC-CFG-014 denial warn and
+      # the job passes; the outputs still carry the real exit codes.
+      - name: Write a report-only stub
+        shell: bash
+        run: |
+          cat > "${RUNNER_TEMP}/tripcord-findings" <<'EOF'
+          #!/usr/bin/env bash
+          case "$1" in
+            scan)
+              format=""
+              output=""
+              prev=""
+              for arg in "$@"; do
+                case "$prev" in
+                  --format) format=$arg ;;
+                  --output) output=$arg ;;
+                esac
+                prev=$arg
+              done
+              if [ "$format" = "sarif" ] && [ -n "$output" ]; then
+                printf '%s\n' '{"runs":[{"results":[{"ruleId":"TC-CFG-001"},{"ruleId":"TC-CFG-005"}]}]}' > "$output"
+              fi
+              exit 1
+              ;;
+            pr-context)
+              echo "tc_cfg_014=match" >> "$GITHUB_OUTPUT"
+              exit 1
+              ;;
+            *)
+              exit 2
+              ;;
+          esac
+          EOF
+          chmod +x "${RUNNER_TEMP}/tripcord-findings"
+          printf '#!/usr/bin/env bash\nexit 4\n' > "${RUNNER_TEMP}/tripcord-internal"
+          chmod +x "${RUNNER_TEMP}/tripcord-internal"
+
+      - id: report-only
+        name: fail-on none reports findings and a denial without failing
+        uses: ./.github/actions/tripcord # zizmor: ignore[self-repository] test this checkout's report-only mode
+        with:
+          binary: ${{ runner.temp }}/tripcord-findings
+          path: ${{ runner.temp }}/tripcord-ci
+          fail-on: none
+          upload-sarif: "false"
+          comment: "false"
+
+      - name: Assert report-only outputs
+        shell: bash
+        env:
+          TRIPCORD_OUTCOME: ${{ steps.report-only.outcome }}
+          TRIPCORD_EXIT: ${{ steps.report-only.outputs.scan-exit-code }}
+          TRIPCORD_PR_EXIT: ${{ steps.report-only.outputs.pr-context-exit-code }}
+          TRIPCORD_TC_CFG_014: ${{ steps.report-only.outputs.tc-cfg-014 }}
+        run: |
+          set -euo pipefail
+          test "$TRIPCORD_OUTCOME" = "success"
+          test "$TRIPCORD_EXIT" = "1"
+          test "$TRIPCORD_PR_EXIT" = "1"
+          test "$TRIPCORD_TC_CFG_014" = "match"
+
+      - id: report-only-incomplete
+        name: fail-on none still fails on a TC-CFG-014 exit 3
+        continue-on-error: true
+        uses: ./.github/actions/tripcord # zizmor: ignore[self-repository] test this checkout's report-only exit-3 handling
+        with:
+          binary: ${{ runner.temp }}/tripcord-incomplete
+          path: ${{ runner.temp }}/tripcord-ci
+          reviews-file: ${{ runner.temp }}/tripcord-reviews.json
+          fail-on: none
+          upload-sarif: "false"
+          comment: "false"
+
+      - id: report-only-internal
+        name: fail-on none still fails on exit 4
+        continue-on-error: true
+        uses: ./.github/actions/tripcord # zizmor: ignore[self-repository] test this checkout's report-only exit-4 handling
+        with:
+          binary: ${{ runner.temp }}/tripcord-internal
+          path: ${{ runner.temp }}/tripcord-ci
+          fail-on: none
+          upload-sarif: "false"
+          comment: "false"
+
+      - id: report-only-path
+        name: fail-on none still fails on an invalid path
+        continue-on-error: true
+        uses: ./.github/actions/tripcord # zizmor: ignore[self-repository] test this checkout's report-only path check
+        with:
+          binary: ${{ runner.temp }}/tripcord-findings
+          path: ${{ runner.temp }}/does-not-exist
+          fail-on: none
+          upload-sarif: "false"
+          comment: "false"
+
+      - id: unknown-fail-on
+        name: An unknown fail-on value still fails
+        continue-on-error: true
+        uses: ./.github/actions/tripcord # zizmor: ignore[self-repository] test this checkout's fail-on validation
+        with:
+          path: ${{ runner.temp }}/tripcord-ci
+          fail-on: nonee
+          upload-sarif: "false"
+          comment: "false"
+
+      - name: Assert report-only failures
+        shell: bash
+        env:
+          TRIPCORD_INCOMPLETE: ${{ steps.report-only-incomplete.outcome }}
+          TRIPCORD_INTERNAL: ${{ steps.report-only-internal.outcome }}
+          TRIPCORD_INTERNAL_EXIT: ${{ steps.report-only-internal.outputs.scan-exit-code }}
+          TRIPCORD_PATH_OUTCOME: ${{ steps.report-only-path.outcome }}
+          TRIPCORD_UNKNOWN: ${{ steps.unknown-fail-on.outcome }}
+          TRIPCORD_UNKNOWN_EXIT: ${{ steps.unknown-fail-on.outputs.scan-exit-code }}
+        run: |
+          set -euo pipefail
+          test "$TRIPCORD_INCOMPLETE" = "failure"
+          test "$TRIPCORD_INTERNAL" = "failure"
+          test "$TRIPCORD_INTERNAL_EXIT" = "4"
+          test "$TRIPCORD_PATH_OUTCOME" = "failure"
+          test "$TRIPCORD_UNKNOWN" = "failure"
+          test "$TRIPCORD_UNKNOWN_EXIT" = "3"
