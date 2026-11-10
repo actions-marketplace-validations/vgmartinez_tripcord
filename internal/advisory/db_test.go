@@ -9,7 +9,7 @@ import (
 func TestSeedList(t *testing.T) {
 	t.Parallel()
 	db := loadSeed(t)
-	if db.Count() != 16 || db.LatestReview() != "2026-11-06" {
+	if db.Count() != 23 || db.LatestReview() != "2026-11-10" {
 		t.Fatalf("count %d reviewed %s", db.Count(), db.LatestReview())
 	}
 	hits, err := db.Match([]PackageRef{{
@@ -247,6 +247,123 @@ func TestOpenEncodedCommandBounds(t *testing.T) {
 			t.Fatalf("unpinned %s hits = %+v %v", tc.name, hits, err)
 		}
 	}
+}
+
+func TestFastAgentBounds(t *testing.T) {
+	t.Parallel()
+	db := loadSeed(t)
+	// 0.7.20 is the release the advisory reproduced against. 0.7.21 is the
+	// fix (ba99f89) and 0.7.22 is a later release.
+	for _, version := range []string{"0.0.7", "0.6.26", "0.7.20"} {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoPyPI, Name: "fast-agent-mcp", Kind: KindExact, Version: version,
+		}})
+		if err != nil || len(hits) != 1 || hits[0].ID != "TCA-2026-0017" || hits[0].Severity != "moderate" {
+			t.Fatalf("%s hits = %+v %v", version, hits, err)
+		}
+	}
+	for _, version := range []string{"0.7.21", "0.7.22", "0.10.53"} {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoPyPI, Name: "fast-agent-mcp", Kind: KindExact, Version: version,
+		}})
+		if err != nil || len(hits) != 0 {
+			t.Fatalf("%s hits = %+v %v", version, hits, err)
+		}
+	}
+	hits, err := db.Match([]PackageRef{{
+		Ecosystem: EcoPyPI, Name: "fast-agent-mcp", Kind: KindUnpinned,
+	}})
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("unpinned hits = %+v %v", hits, err)
+	}
+}
+
+func TestCodeGraphRAGBounds(t *testing.T) {
+	t.Parallel()
+	db := loadSeed(t)
+	// 0.0.344 is the version before the read_file fix. 0.0.345 fixes
+	// TCA-2026-0018 and stays affected by TCA-2026-0019. GHSA-85gg-2gfq-q95m
+	// is <=0.0.586, first patched 0.0.587, recorded here as fixed 0.0.587.
+	cases := []struct {
+		version string
+		want    map[string]string
+	}{
+		{"0.0.246", map[string]string{"TCA-2026-0018": "high", "TCA-2026-0019": "high"}},
+		{"0.0.344", map[string]string{"TCA-2026-0018": "high", "TCA-2026-0019": "high"}},
+		{"0.0.345", map[string]string{"TCA-2026-0019": "high"}},
+		{"0.0.586", map[string]string{"TCA-2026-0019": "high"}},
+		{"0.0.587", map[string]string{}},
+		{"0.0.589", map[string]string{}},
+	}
+	for _, tc := range cases {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoPyPI, Name: "code-graph-rag", Kind: KindExact, Version: tc.version,
+		}})
+		if err != nil || !sameHits(hits, tc.want) {
+			t.Fatalf("%s hits = %+v %v", tc.version, hits, err)
+		}
+	}
+	hits, err := db.Match([]PackageRef{{
+		Ecosystem: EcoPyPI, Name: "code-graph-rag", Kind: KindUnpinned,
+	}})
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("unpinned hits = %+v %v", hits, err)
+	}
+}
+
+func TestDynatraceBounds(t *testing.T) {
+	t.Parallel()
+	db := loadSeed(t)
+	// GHSA-p7w7-4929-vpj5 is <=1.8.7 with first patched version 2.0.0, and
+	// 2.0.0 is the next published release, so the catalog records fixed
+	// 2.0.0. 1.8.7 is the notebook fix, so TCA-2026-0023 stops there.
+	// 2.0.0 and 2.1.0 still match the DQL injection.
+	cases := []struct {
+		version string
+		want    map[string]string
+	}{
+		{"1.8.6", map[string]string{
+			"TCA-2026-0020": "high",
+			"TCA-2026-0021": "moderate",
+			"TCA-2026-0022": "moderate",
+			"TCA-2026-0023": "low",
+		}},
+		{"1.8.7", map[string]string{
+			"TCA-2026-0020": "high",
+			"TCA-2026-0021": "moderate",
+			"TCA-2026-0022": "moderate",
+		}},
+		{"2.0.0", map[string]string{"TCA-2026-0022": "moderate"}},
+		{"2.1.0", map[string]string{"TCA-2026-0022": "moderate"}},
+		{"2.1.1", map[string]string{}},
+		{"2.1.2", map[string]string{}},
+	}
+	for _, tc := range cases {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoNPM, Name: "@dynatrace-oss/dynatrace-mcp-server", Kind: KindExact, Version: tc.version,
+		}})
+		if err != nil || !sameHits(hits, tc.want) {
+			t.Fatalf("%s hits = %+v %v", tc.version, hits, err)
+		}
+	}
+	hits, err := db.Match([]PackageRef{{
+		Ecosystem: EcoNPM, Name: "@dynatrace-oss/dynatrace-mcp-server", Kind: KindUnpinned,
+	}})
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("unpinned hits = %+v %v", hits, err)
+	}
+}
+
+func sameHits(hits []Hit, want map[string]string) bool {
+	if len(hits) != len(want) {
+		return false
+	}
+	for _, h := range hits {
+		if want[h.ID] != h.Severity {
+			return false
+		}
+	}
+	return true
 }
 
 func TestAdvisoryRejects(t *testing.T) {
