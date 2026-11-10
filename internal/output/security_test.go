@@ -152,6 +152,10 @@ func assertNoRawControls(t *testing.T, got string) {
 			i += size
 			continue
 		}
+		if n := textHyperlinkLen(got[i:]); n > 0 {
+			i += n
+			continue
+		}
 		if (r < 0x20 && r != '\n') || isUnsafeRune(r) {
 			t.Fatalf("raw control %U at byte %d:\n%q", r, i, got)
 		}
@@ -176,8 +180,9 @@ func assertLineStructure(t *testing.T, format Format, got string, findings int) 
 		}
 		return
 	case FormatText:
-		if len(lines) != findings+1 {
-			t.Fatalf("text lines = %d, want %d:\n%s", len(lines), findings+1, got)
+		// Compact text is a summary, one line per finding, and the -v hint.
+		if len(lines) != findings+2 {
+			t.Fatalf("text lines = %d, want %d:\n%s", len(lines), findings+2, got)
 		}
 	case FormatJSON, FormatJSONL:
 		if len(lines) != findings {
@@ -596,7 +601,7 @@ func TestManagedHomePathsDisplayAsTilde(t *testing.T) {
 				if !strings.Contains(got, tc.want) || strings.Contains(strings.ToLower(got), "alice") {
 					t.Fatalf("%s/%s/%s path = %q\n%s", tc.name, format, mode, tc.path, got)
 				}
-				if !strings.Contains(got, finding.Fingerprint) {
+				if !strings.Contains(detailText(t, format, finding, options), finding.Fingerprint) {
 					t.Fatalf("%s/%s dropped the fingerprint\n%s", format, mode, got)
 				}
 			}
@@ -633,7 +638,7 @@ func TestManagedHomeDisplayLeavesFingerprint(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if again != want || !strings.Contains(got, want) {
+			if again != want || !strings.Contains(detailText(t, format, finding, testOptions()), want) {
 				t.Fatalf("%s fingerprint changed for %s\n%s", format, path, got)
 			}
 		}
@@ -686,10 +691,16 @@ func TestConfigIDHomePathIsPresentationOnly(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if again != storedFP || !strings.Contains(got, storedFP) {
+				shown := got
+				if format == FormatText {
+					verbose := options
+					verbose.Verbose = true
+					shown = renderWith(t, format, []model.Finding{finding}, verbose)
+				}
+				if again != storedFP || !strings.Contains(shown, storedFP) {
 					t.Fatalf("%s/%s/%s fingerprint changed\n%s", tc.name, format, mode, got)
 				}
-				if strings.Contains(strings.ToLower(got), "victor") {
+				if strings.Contains(strings.ToLower(got), "victor") || strings.Contains(strings.ToLower(shown), "victor") {
 					t.Fatalf("%s/%s/%s leaked a username\n%s", tc.name, format, mode, got)
 				}
 				if format == FormatJSON || format == FormatJSONL {

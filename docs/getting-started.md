@@ -39,12 +39,15 @@ member rules/TC-CFG-009.test/positivos/copilot-curl-pipe-sh.txtar .github/workfl
 (cd "$sample" && "$bin" scan .)
 ```
 
-That command exits 1. This is the output, captured from that run:
+That command exits 1. This is the output, captured from that run
+(the rule id is a terminal link to its doc; the link target is not
+shown here):
 
 ```text
-HIGH TC-CFG-002 .vscode/tasks.json: VS Code task that runs when the folder opens (also Cursor and Windsurf) | fix: Remove runOn: folderOpen or move the task to an explicit script. Cursor and Windsurf open this same .vscode/tasks.json. | fingerprint: tcf_22bc80b217a42306
-HIGH TC-CFG-009 .github/workflows/copilot-setup-steps.yml: Environment setup runs code fetched from an unpinned source | fix: Commit the setup script to the repository and run it from there, or pin what it downloads: fetch an https URL that names a commit, or download to a file and check its SHA-256 (sha256sum -c) before running it, with && so a mismatch stops setup. | fingerprint: tcf_529866e0be350750
-2 finding(s): 0 critical, 2 high, 0 medium, 0 low; 0 warning(s)
+2 finding(s): 0 critical, 2 high, 0 medium, 0 low; 0 warning(s); exit 1
+HIGH TC-CFG-002 VS Code task that runs when the folder opens… .vscode/tasks.json
+HIGH TC-CFG-009 Environment setup run… .github/workflows/copilot-setup-steps.yml
+re-run with -v for details
 ```
 
 The default fail-on is `high`, and both findings are high, so the
@@ -65,10 +68,13 @@ fail-on: critical    # low | medium | high | critical
 That prints the same two findings and exits 0. Layers, locks, and
 exceptions are in [Policy](policy.md).
 
-Each line is one finding: severity, [rule id](rules/README.md), path,
-title, fix, and a [fingerprint](fingerprint.md) you can use to triage
-it. `--format json`, `sarif`, `md`, and `gha` write the same findings
-for machines ([Output and sinks](output.md)).
+The first line is the summary: counts by severity and the exit verdict.
+Each following line is one finding: severity, [rule id](rules/README.md)
+(a link to that rule's doc), a short title, and the path. The last line
+says to re-run with `-v`, which prints the evidence, the fix, and a
+[fingerprint](fingerprint.md) you can use to triage it. `--format json`,
+`sarif`, `md`, and `gha` write the same findings for machines and ignore
+`-v` ([Output and sinks](output.md)).
 
 ## How it works
 

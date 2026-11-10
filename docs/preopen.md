@@ -68,7 +68,13 @@ directories, or more than 1 GiB of content is refused.
 ## Flags, policy, and exit codes
 
 `preopen` takes the [scan flags](scan.md#flags) and produces the same output
-formats. `--since` and `--staged` are refused, because only the latest commit
+formats. The default text view fits a typical 80 by 24 terminal: one summary
+line with counts by severity and the exit verdict, then one line per finding
+(severity, rule id, short title, path and line). The rule id is a link to
+`docs/rules/<id>.md` on this repository. A last line says to re-run with
+`-v` for evidence, the fix, and the fingerprint. `-v` does not change JSON,
+SARIF, Markdown, or GitHub Actions output, and it does not change the exit
+code. `--since` and `--staged` are refused, because only the latest commit
 is fetched and the scan reads that tree, not a Git index. `--scope` must be
 `repo`, because only the fetched repository is scanned.
 

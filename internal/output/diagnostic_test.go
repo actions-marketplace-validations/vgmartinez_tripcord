@@ -132,12 +132,16 @@ func TestConfigKeyDoesNotLeakAcrossFormats(t *testing.T) {
 		t.Run(string(format), func(t *testing.T) {
 			t.Parallel()
 			got := render(t, format, []model.Finding{finding})
+			checked := got
+			if format == FormatText {
+				checked = stripTextHyperlinks(got)
+			}
 			for _, forbidden := range []string{"/Users/vicuserzz", "?sig=", "secret-query"} {
-				if strings.Contains(got, forbidden) {
+				if strings.Contains(checked, forbidden) {
 					t.Fatalf("%s leaked %q: %s", format, forbidden, got)
 				}
 			}
-			if strings.Contains(got, "\x1b") {
+			if strings.Contains(checked, "\x1b") {
 				t.Fatalf("%s leaked control: %s", format, got)
 			}
 		})

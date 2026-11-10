@@ -62,6 +62,29 @@ escape, so `@org/team` still cannot notify.
 and `]` after the control escape, so a finding cannot embed a Markdown
 link.
 
+## Text
+
+The default text view is a summary, one line per finding, and a hint:
+
+```text
+2 finding(s): 0 critical, 1 high, 1 medium, 0 low; 0 warning(s); exit 1
+MEDIUM TC-CFG-002 Task runs on folder open configs/tasks.json
+HIGH TC-CFG-010 Plugin executes arbitrary code configs/hook.json:7
+re-run with -v for details
+```
+
+The summary lists counts by severity, the warning count, and the exit
+verdict for this run (the same code the process returns). Each finding
+line is severity, rule id, a short title, and `path:line`. A rule id of
+the form `TC-…-NNN` is a terminal link to
+`https://github.com/vgmartinez/tripcord/blob/main/docs/rules/<id>.md`.
+Visible text stays within 80 columns; a long title is shortened before
+the path is. `-v` / `--verbose` prints the detailed line instead:
+severity, rule, location, title, evidence, fix, and fingerprint, then
+the count line without the exit verdict. The flag is ignored by JSON,
+JSONL, SARIF, Markdown, and GitHub Actions output, and it does not
+change the exit code. There is no `--debug` flag.
+
 ## Diagnostics
 
 When discovery is incomplete, or a rule could not be evaluated on a file,

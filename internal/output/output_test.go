@@ -474,6 +474,16 @@ func testOptions() Options {
 	return Options{Redactor: DefaultRedactor, RepoRoot: "/work/repo", ToolVersion: "1.2.3"}
 }
 
+// detailText is the view that still carries the fingerprint. Compact
+// text omits it; -v and every machine format keep it.
+func detailText(t *testing.T, format Format, finding model.Finding, options Options) string {
+	t.Helper()
+	if format == FormatText {
+		options.Verbose = true
+	}
+	return renderWith(t, format, []model.Finding{finding}, options)
+}
+
 func renderWith(t *testing.T, format Format, input []model.Finding, options Options) string {
 	t.Helper()
 	var buffer bytes.Buffer

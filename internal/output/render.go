@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/vgmartinez/tripcord/internal/exitcode"
 	"github.com/vgmartinez/tripcord/internal/model"
+	"github.com/vgmartinez/tripcord/internal/project"
 )
 
 // renderJSONL writes one tripcord.finding/v1 document per line. Values
@@ -160,23 +164,46 @@ func publishedFinding(finding model.Finding, root string) model.Finding {
 	return finding
 }
 
-// renderText writes one line per finding and a summary line. Every field
-// goes through escapeControls, so a line always starts with the severity.
+// textWidth is the visible width of a compact text line. Terminal
+// hyperlinks around a rule id do not count.
+const textWidth = 80
+
+// textDetailHint tells a reader how to get the evidence, fix, and fingerprint.
+const textDetailHint = "re-run with -v for details"
+
+// ruleDocID matches a catalog rule id. Only those ids become links.
+var ruleDocID = regexp.MustCompile(`^TC-[A-Z]+-[0-9]{3}$`)
+
+// renderText writes the human view. The default is one screen: a summary
+// with the exit verdict, one line per finding, and a hint. -v
+// (Options.Verbose) writes the detailed line instead. Every
+// attacker-controlled field goes through present, so a finding line
+// starts with the severity. JSON and SARIF do not call this.
 func renderText(writer io.Writer, findings []model.Finding, diags []Diagnostic, options Options) error {
+	if options.Verbose {
+		return renderTextDetail(writer, findings, diags, options.RepoRoot)
+	}
 	var b strings.Builder
-	for _, d := range diags {
-		prefix := "diagnostic: "
-		if d.Informational {
-			prefix = "warning: "
-		}
-		b.WriteString(prefix + present(d.Text()) + "\n")
+	writeTextSummary(&b, findings, diags, textExitCode(findings, diags, options))
+	writeTextDiagnostics(&b, diags)
+	for _, finding := range findings {
+		b.WriteString(compactFindingLine(finding, options.RepoRoot))
+		b.WriteByte('\n')
 	}
-	if hasBlockingDiagnostic(diags) {
-		b.WriteString("scan incomplete\n")
-	}
+	b.WriteString(textDetailHint)
+	b.WriteByte('\n')
+	_, err := io.WriteString(writer, b.String())
+	return err
+}
+
+// renderTextDetail is the text view from before the one-screen summary:
+// one line per finding with evidence, fix, and fingerprint, then the counts.
+func renderTextDetail(writer io.Writer, findings []model.Finding, diags []Diagnostic, root string) error {
+	var b strings.Builder
+	writeTextDiagnostics(&b, diags)
 	for _, finding := range findings {
 		location := "-"
-		if ref := locate(finding.Location, options.RepoRoot); ref.kind != locNone {
+		if ref := locate(finding.Location, root); ref.kind != locNone {
 			location = ref.display()
 		}
 		parts := []string{fmt.Sprintf("%s %s %s: %s",
@@ -191,12 +218,144 @@ func renderText(writer io.Writer, findings []model.Finding, diags []Diagnostic, 
 		}
 		parts = append(parts, "fix: "+present(finding.Fix), "fingerprint: "+present(finding.Fingerprint))
 		b.WriteString(strings.Join(parts, " | "))
-		b.WriteString("\n")
+		b.WriteByte('\n')
 	}
 	summary := Summarize(findings)
 	fmt.Fprintf(&b, "%d finding(s): %d critical, %d high, %d medium, %d low; %d warning(s)\n", summary.Findings, summary.Critical, summary.High, summary.Medium, summary.Low, informationalDiagnostics(diags))
 	_, err := io.WriteString(writer, b.String())
 	return err
+}
+
+func writeTextDiagnostics(b *strings.Builder, diags []Diagnostic) {
+	for _, d := range diags {
+		prefix := "diagnostic: "
+		if d.Informational {
+			prefix = "warning: "
+		}
+		b.WriteString(prefix + present(d.Text()) + "\n")
+	}
+	if hasBlockingDiagnostic(diags) {
+		b.WriteString("scan incomplete\n")
+	}
+}
+
+func writeTextSummary(b *strings.Builder, findings []model.Finding, diags []Diagnostic, code int) {
+	summary := Summarize(findings)
+	fmt.Fprintf(b, "%d finding(s): %d critical, %d high, %d medium, %d low; %d warning(s); exit %d\n", summary.Findings, summary.Critical, summary.High, summary.Medium, summary.Low, informationalDiagnostics(diags), code)
+}
+
+// textExitCode is the exit the compact summary prints. A caller that
+// already decided (audit mode, a changed --fail-on) passes it in
+// Options.TextExit. Otherwise a blocking diagnostic is exit 3 and a
+// finding at or above high, the scan default, is exit 1.
+func textExitCode(findings []model.Finding, diags []Diagnostic, options Options) int {
+	if options.TextExit != nil {
+		return *options.TextExit
+	}
+	if hasBlockingDiagnostic(diags) {
+		return int(exitcode.Config)
+	}
+	for _, finding := range findings {
+		cmp, err := finding.Severity.Compare(model.SeverityHigh)
+		if err == nil && cmp >= 0 {
+			return int(exitcode.Findings)
+		}
+	}
+	return int(exitcode.OK)
+}
+
+// compactFindingLine is one finding: severity, rule id, short title,
+// path:line. The rule id is a terminal hyperlink to its doc. The
+// visible line is at most textWidth columns.
+func compactFindingLine(finding model.Finding, root string) string {
+	sev := strings.ToUpper(finding.Severity.String())
+	rule := present(finding.Rule)
+	title := present(finding.Title)
+	loc := "-"
+	if ref := locate(finding.Location, root); ref.kind != locNone {
+		loc = present(ref.display())
+	}
+	shownTitle, shownLoc := fitFinding(sev, rule, title, loc)
+	line := sev + " " + linkRuleID(rule)
+	if shownTitle != "" {
+		line += " " + shownTitle
+	}
+	return line + " " + shownLoc
+}
+
+// fitFinding shortens the title, then the path, so the visible line
+// fits in textWidth. The rule id is counted without its hyperlink.
+func fitFinding(sev, rule, title, loc string) (string, string) {
+	overhead := utf8.RuneCountInString(sev) + utf8.RuneCountInString(rule) + utf8.RuneCountInString(loc) + 3
+	room := textWidth - overhead
+	if room >= 1 {
+		return shortenVisible(title, room), loc
+	}
+	// No room for a title. Drop it and shorten the path into what remains.
+	locRoom := textWidth - (utf8.RuneCountInString(sev) + utf8.RuneCountInString(rule) + 2)
+	if locRoom < 1 {
+		locRoom = 1
+	}
+	return "", shortenVisible(loc, locRoom)
+}
+
+// shortenVisible caps s to room runes without splitting an escape token.
+func shortenVisible(s string, room int) string {
+	if room <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(s) <= room {
+		return s
+	}
+	if room == 1 {
+		return "…"
+	}
+	budget := room - 1
+	var b strings.Builder
+	width := 0
+	for i := 0; i < len(s); {
+		n := nextToken(s, i)
+		tok := s[i : i+n]
+		w := utf8.RuneCountInString(tok)
+		if width+w > budget {
+			break
+		}
+		b.WriteString(tok)
+		width += w
+		i += n
+	}
+	b.WriteString("…")
+	return b.String()
+}
+
+// linkRuleID wraps a catalog rule id in an OSC 8 hyperlink to its doc.
+// Anything else is returned unchanged, so a finding cannot set the URL.
+func linkRuleID(id string) string {
+	if !ruleDocID.MatchString(id) {
+		return id
+	}
+	target := "https://github.com/" + project.Repository + "/blob/main/docs/rules/" + id + ".md"
+	return "\x1b]8;;" + target + "\x1b\\" + id + "\x1b]8;;\x1b\\"
+}
+
+// textHyperlinkLen is the byte length of one OSC 8 sequence compact text
+// emits, either the opener (the rule-doc URL included) or the closer.
+// It is zero when s does not start with one of those, so an escaped
+// control in a finding is not treated as a link.
+func textHyperlinkLen(s string) int {
+	const closer = "\x1b]8;;\x1b\\"
+	open := "\x1b]8;;https://github.com/" + project.Repository + "/blob/main/docs/rules/"
+	if strings.HasPrefix(s, open) {
+		id, _, ok := strings.Cut(s[len(open):], ".md\x1b\\")
+		if ok && ruleDocID.MatchString(id) {
+			return len(open) + len(id) + len(".md\x1b\\")
+		}
+		return 0
+	}
+	if strings.HasPrefix(s, closer) {
+		return len(closer)
+	}
+	return 0
 }
 
 func renderGHA(writer io.Writer, findings []model.Finding, diags []Diagnostic, options Options) error {

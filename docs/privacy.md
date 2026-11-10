@@ -129,7 +129,7 @@ then a cut at 1024 bytes (`MaxFieldBytes`).
 | `pr-context` text, json, gha, and `GITHUB_OUTPUT` | `publishedPrContext`: every signal value and source, warning, outcome reason and path through `output.Message(foldHome())`, the TC-CFG-014 finding through `output.PublishFinding`; `GITHUB_OUTPUT` carries only `is_agent` and validated agent ids | message, field |
 | Git notes report (`refs/notes/ai` signals in `pr-context`) | tripcord only reads notes; tool ids are kept only when `validTool` accepts them (64 bytes at most), then `publishedPrContext` | 64 |
 | `bootstrap.sh` errors on stderr | `fail` prints fixed text with the home directory folded to `~` (`fold_home`); no event, environment value, or command is printed | fixed text and a path |
-| `--verbose` / `--debug` logs | none: v0 has neither flag | - |
+| `-v` / `--verbose` | the detailed text report: evidence, fix, and fingerprint on each finding. It is not a log stream, and JSON, JSONL, SARIF, Markdown, and GitHub Actions output ignore it. There is no `--debug` flag | field, the same caps as other text |
 | Events | never emitted: an event exists only as the CEL input of the hook's rules (`rules.EventInput`); its `redactions` field is always `0` in v0, since the event is that unredacted CEL input and is never itself written to any output (see the schema's `redactions` description) | - |
 
 ## What is persisted
