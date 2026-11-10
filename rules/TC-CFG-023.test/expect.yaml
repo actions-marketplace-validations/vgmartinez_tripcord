@@ -52,3 +52,9 @@ positivos:
   claude-npx-dynatrace-1.8.7: high
   claude-npx-dynatrace-2.0.0: high
   claude-npx-dynatrace-2.1.0: high
+  claude-cmd-c-mcp-remote: critical
+  claude-cmd-exe-k-mcp-remote: critical
+  claude-sh-c-mcp-remote: critical
+  claude-bash-lc-uvx-git-server: high
+  claude-bash-l-c-uvx-git-server: high
+  claude-zsh-c-mcp-remote: critical

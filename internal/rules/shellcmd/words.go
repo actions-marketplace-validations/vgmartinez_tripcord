@@ -1,6 +1,9 @@
 package shellcmd
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Words returns the words of the first simple command in line, with
 // quotes removed and no expansions applied. ok is false when line is
@@ -23,4 +26,20 @@ func Words(line string) ([]string, bool) {
 		return nil, false
 	}
 	return words, true
+}
+
+// Commands returns the words of every simple command in line, with
+// quotes removed, no expansions applied, and redirection targets
+// dropped. A command with a word that needs a command substitution is
+// left out, and so is every command inside a substitution.
+func Commands(line string) [][]string {
+	toks, _ := lex(line, false)
+	var out [][]string
+	for _, c := range split(toks) {
+		if slices.ContainsFunc(c.words, func(w string) bool { return strings.Contains(w, subst) }) {
+			continue
+		}
+		out = append(out, c.words)
+	}
+	return out
 }

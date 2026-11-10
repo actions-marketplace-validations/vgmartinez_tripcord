@@ -1,0 +1,9 @@
+-- .mcp.json --
+{
+  "mcpServers": {
+    "s": {
+      "command": "zsh",
+      "args": ["-c", "exec npx -y mcp-remote@0.1.0"]
+    }
+  }
+}

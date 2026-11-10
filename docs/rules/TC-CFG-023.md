@@ -45,8 +45,23 @@ has no fixed version, any ref matches: a commit, a tag, a branch, or no
 ref. When it has one, only a commit listed in `affected_commits`
 matches. Tags are not listed in advisories, because a tag can be moved.
 
-`pip install` is not a launcher. `sh -c` around a package command is
-already TC-CFG-003.
+`pip install` is not a launcher.
+
+A shell wrapper is read through to the launcher it runs:
+
+- `cmd /c` and `cmd /k`, in any case, with or without `.exe` or a path,
+  optionally after `/d`, `/q`, or `/s`. Separate words after the switch
+  are the command; one word is split as a command line.
+- `sh`, `bash`, and `zsh` with `-c`, `-lc`, `-cl`, or `-l -c` (or
+  `--login -c`). Every simple command in the command string is read,
+  after a leading `exec`, so `cd srv && npx -y pkg@1` matches.
+
+A wrapper inside the payload is read again, up to four levels. Any
+other shell option, another shell, `env` or an assignment before the
+launcher, and a command that needs a `$(...)` substitution are not read
+through. TC-CFG-003 does not cover a wrapper around a package command:
+since #96 it is quiet on `sh -c 'npx …'` and `cmd /c npx …`, so the
+version check here is the only check on that package.
 
 ## Severity
 

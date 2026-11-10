@@ -1,0 +1,9 @@
+-- .mcp.json --
+{
+  "mcpServers": {
+    "s": {
+      "command": "CMD.EXE",
+      "args": ["/K", "npx -y mcp-remote@0.1.16"]
+    }
+  }
+}
