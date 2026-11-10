@@ -341,9 +341,10 @@ A pull request that changes the composite action pin or `WorkflowPin`
 is merged with a merge commit. Do not squash it and do not rebase it
 onto main. Those pinned commits have to be ancestors of main after the
 merge, and a squash or rebase writes new commits, so the pinned SHAs
-never land on main. `TestPinsHaveEmbedCheck` accepts a pin that is not
-on `origin/main` yet only on a `pull_request` whose checkout is GitHub's
-merge ref. Push-to-main CI runs the same test with no exception, and
+never land on main. `TestPinsHaveEmbedCheck`, and
+`TestPreCommitHookContract` for the pre-commit `rev:`, accept a pin that
+is not on `origin/main` yet only on a `pull_request` whose checkout is
+GitHub's merge ref. Push-to-main CI runs the same test with no exception, and
 that run is what fails if the pull request was squash-merged or rebased.
 
 A repin is a chain of commits at the end of the pull request, after
@@ -368,6 +369,14 @@ every scanner, docs, and test change:
    refs and the pre-commit `rev:` to B, the action to A, and the
    `` `main@` `` prose to match. `TestReleaseGateDocsCiteCurrentPins`
    fails on any it misses.
+
+If anything has to change after C, such as a review fix or a failing
+check, commit it after C and build B and C again on top of it. The new
+C replaces the intermediate `WorkflowPin` instead of appending it:
+`KnownWorkflowPins` holds only pins that were `WorkflowPin` on main,
+and `known_renders.json` holds exactly `WorkflowPin` and
+`KnownWorkflowPins`, so the entry under the intermediate pin moves to
+the new one.
 
 Merge the pull request with a merge commit, so A, B, and C land on
 main with the SHAs they were pinned at, and `make release-gate` passes
