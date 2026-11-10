@@ -1,0 +1,17 @@
+[
+  {
+    "harness": "cursor",
+    "scope": "repo",
+    "path": ".cursor/hooks.json",
+    "sha256": "dfe9efc856db33343fc690606e08d992793ad0671021651164c144118248ba6f",
+    "kind": "permissions",
+    "payload": {
+      "event": "preToolUse",
+      "key": "[\"tripcordGuard\",\"preToolUse\"]",
+      "reason": "unregistered-entry",
+      "setting": "tripcordGuard",
+      "state": "changed",
+      "subject": "preToolUse"
+    }
+  }
+]

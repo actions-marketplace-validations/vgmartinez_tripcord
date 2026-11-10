@@ -406,8 +406,17 @@ func TestInitMergesExistingFiles(t *testing.T) {
 			t.Errorf("%s changed on the second run", path)
 		}
 	}
-	if code, stdout, stderr := runCLI(t, "scan", "--format", "json", dir); code != 0 || stdout != "" {
+	// The kept lint hook runs alongside the guard under PreToolUse, so it
+	// is the one finding: an entry Tripcord did not register.
+	code, stdout, stderr = runCLI(t, "scan", "--format", "json", dir)
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	var f model.Finding
+	if code != 0 || len(lines) != 1 {
 		t.Fatalf("scan: exit %d\n%s%s", code, stdout, stderr)
+	}
+	mustJSON(t, lines[0], &f)
+	if f.Rule != "TC-CFG-016" || f.Severity != model.SeverityHigh || f.Location.Path != embedded.ClaudeSettingsPath || f.Title != titleChanged {
+		t.Fatalf("scan: %+v, want one high TC-CFG-016 %q at %s", f, titleChanged, embedded.ClaudeSettingsPath)
 	}
 }
 

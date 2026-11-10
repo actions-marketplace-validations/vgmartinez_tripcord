@@ -148,7 +148,11 @@ init never replaces a file it did not write.
   `.github/hooks/tripcord.json`): existing keys keep their order and the
   file keeps its indentation. New keys are appended. A Tripcord entry
   is added to an event's array only if an identical entry is not
-  already there.
+  already there. Entries already under the events Tripcord wires (the
+  pre-tool and session-start events) are kept, but TC-CFG-016 reports
+  each such event `changed` (reason `unregistered-entry`): the harness
+  runs those entries alongside the guard. Move them to another event,
+  or drop them.
 - With `--cloud-setup`, the same JSON merge applies to
   `environment.json`, and YAML files (`copilot-setup-steps.yml`,
   `blueprint.yaml`) gain the step or maintenance entry. Without the
@@ -379,7 +383,8 @@ script and the manifest's digest together still reports.
 - **changed** (high): it differs from what init writes for the
   recorded pin and from the recorded digest, or it matches the digest
   but breaks an invariant every Tripcord version keeps, or a pin this
-  scanner knows never wrote it;
+  scanner knows never wrote it, or an event Tripcord wires also holds
+  an entry that is neither Tripcord's nor the one the manifest records;
 - **outdated** (low): an earlier Tripcord under a known pin wrote it
   (rerun `tripcord init --embed --force` with the same pins);
 - **unverified** (low): it matches the digest and keeps every
@@ -388,7 +393,10 @@ script and the manifest's digest together still reports.
 - **pin-unknown** and **pin-malformed** (high): `tripcord.yml` pins a
   `tripcord-pr.yml` commit this scanner does not know, or no full
   commit SHA at all;
-- **unreadable** (high): a file cannot be read or parsed.
+- **unreadable** (high): a file cannot be read or parsed, or
+  `tripcord.yml` gives a key twice in one mapping (`jobs:`,
+  `permissions:`, `on:`, or any other) or holds a second YAML document,
+  which another parser could read differently.
 
 `bootstrap.sh`, `tripcord.yml`, and the Copilot hook file are hashed
 with CRLF normalized to LF, but only when every line in the checked-out

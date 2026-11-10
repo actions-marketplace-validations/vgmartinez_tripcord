@@ -2,6 +2,31 @@
 
 ## v0 (unreleased)
 
+### Bootstrap and embed check hardening
+
+- `bootstrap.sh hook` runs the cached binary without re-hashing it only
+  when this user owns it, and no mode verifies a binary another user
+  owns: that user could rewrite it in place.
+- The `verified` record must be exactly its one line and a newline.
+  Anything after it, and a record without the newline, makes `hook`
+  exit 2 and run nothing.
+- The cache root, `${XDG_CACHE_HOME:-$HOME/.cache}`, gets the checks
+  every cache directory gets, on the verified hook path too: not a
+  symlink, owned by this user, and not group- or world-writable. A
+  group-writable `~/.cache` (umask 0002) needs `chmod go-w`; see
+  [Init](init.md#bootstrap).
+- TC-CFG-016 reports an entry under an event Tripcord wires (pre-tool
+  or session-start) that is neither Tripcord's nor the one `embed.json`
+  records: `changed`, high, reason `unregistered-entry`. `init --embed`
+  still keeps such an entry when it merges, so an embed merged into a
+  file that already had one reports it.
+- TC-CFG-016 reports a `tripcord.yml` that gives a key twice in one
+  mapping, or holds a second YAML document, as `unreadable`, high,
+  instead of reading the first one, which could leave it `unverified`,
+  low, in CI.
+- The `bootstrap.sh` template changed, so this needs a new
+  `WorkflowPin` (`TestTemplateChangeNeedsRepin`).
+
 ### TC-CFG-016 version skew: an older scanner no longer fails a newer embed
 
 The scanner CI runs is the one `tripcord-pr.yml@WorkflowPin` pins,
