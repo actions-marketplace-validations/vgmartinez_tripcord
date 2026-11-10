@@ -116,6 +116,15 @@ func TestLocate(t *testing.T) {
 		{`pwsh -c "~\x.ps1"`, []string{Home}},
 		{`./a.sh && /tmp/b.sh; ../c.sh | ~/d.sh`, []string{Home, Temp, Parent}},
 		{`/tmp/a.sh; /tmp/b.sh`, []string{Temp}},
+		// The extended-length and device prefixes name the same path.
+		{`\\?\C:\Users\bob\x.bat`, []string{Home}},
+		{`"\\?\C:\Users\bob\x.bat"`, []string{Home}},
+		{`'\\?\c:\Windows\Temp\x.ps1'`, []string{Temp}},
+		{`\\.\C:\Users\bob\x.bat`, []string{Home}},
+		{`\\?\D:\tools\x.cmd`, []string{Absolute}},
+		{`\\?\UNC\fileserver\share\x.cmd`, []string{Network}},
+		{`\\?\unc\fileserver\share\x.cmd`, []string{Network}},
+		{`\\.\pipe\x`, []string{Network}},
 	}
 	for _, tc := range cases {
 		got := Locate(tc.line).Locations
@@ -135,6 +144,8 @@ func TestLocateArgv(t *testing.T) {
 		{[]string{"node", ".github/hooks/check.js", "/tmp/arg"}, nil},
 		{[]string{"bash", "-c", "../x.sh"}, []string{Parent}},
 		{[]string{`\\fileserver\share\x.cmd`}, []string{Network}},
+		{[]string{`\\?\C:\Users\bob\x.bat`}, []string{Home}},
+		{[]string{`\\?\UNC\fileserver\share\x.cmd`}, []string{Network}},
 		{nil, nil},
 	}
 	for _, tc := range cases {

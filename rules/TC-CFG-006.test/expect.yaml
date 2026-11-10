@@ -40,3 +40,5 @@ positivos:
   shared-skill-tmp: high
   windsurf-home-script: high
   windsurf-powershell-userprofile: high
+  claude-extended-length-users: high
+  claude-extended-length-unc: high
