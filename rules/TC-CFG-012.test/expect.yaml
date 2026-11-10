@@ -79,3 +79,12 @@ positivos:
   agents-credentials-come-from-paren-dotenv: medium
   agents-credentials-come-from-quoted-paren-dotenv: medium
   agents-credentials-come-from-bracket-dotenv: medium
+  agents-curl-quoted-header-stdin-dotenv: medium
+  agents-curl-header-stdin-dotenv: medium
+  agents-curl-header-stdin-no-url-dotenv: medium
+  agents-curl-header-stdin-glued-dotenv: medium
+  agents-curl-header-stdin-local-dotenv: medium
+  agents-curl-header-stdin-fd-dotenv: medium
+  agents-curl-header-stdin-fd-glued-dotenv: medium
+  agents-curl-header-herestring-dotenv: medium
+  agents-wget-header-stdin-dotenv: medium

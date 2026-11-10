@@ -88,7 +88,9 @@
 # (-H"X-Api-Token: $TOKEN"), an equals form
 # (--header=Authorization: Bearer $TOKEN), and an unquoted header
 # whose value continues past the colon
-# (-H Authorization: Bearer $TOKEN). The whole header value is
+# (-H Authorization: Bearer $TOKEN). That unquoted value ends at a
+# shell operator, at an input redirect (< .env, 0<.env, <<<), and at a
+# $(...) or backtick after it. The whole header value is
 # ignored, so a $(...) that sits inside the header rather than the
 # URL stays quiet. A URL containing $( or a backtick is kept, so
 # $(cat .env) inside it still counts. A secret value that is the

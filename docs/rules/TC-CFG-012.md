@@ -97,9 +97,11 @@ value (`-H"X-Api-Token: $TOKEN"`), an equals form
 (`--header=Authorization: Bearer $TOKEN`), and an unquoted header
 whose value continues past the colon
 (`-H Authorization: Bearer $TOKEN`). The unquoted value stops at a
-shell operator (`&`, `&&`, `|`, `||`, `|&`, `;`, or a newline) and at
-a `$(`, backtick, or `<(` that follows the value, with or without
-spaces, so `curl -H Authorization: Bearer $TOKEN & source .env` and
+shell operator (`&`, `&&`, `|`, `||`, `|&`, `;`, or a newline), at
+an input redirect (`<`, `0<`, `<<<`), and at a `$(`, backtick, or `<(`
+that follows the value, with or without spaces, so
+`curl -H Authorization: Bearer $TOKEN & source .env`,
+`curl -H Authorization: Bearer $TOKEN < ./.env.local`, and
 `curl -H Authorization: Bearer $TOKEN $(cat .env)` still count. A
 `$(...)` that sits inside the header value, rather than after it,
 stays quiet. A URL that contains `$(` or a backtick is

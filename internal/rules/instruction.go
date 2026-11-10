@@ -387,15 +387,15 @@ func consumeHeaderTail(s string, i int) int {
 
 // headerStop reports a shell control operator or a following command
 // substitution at k. '&' covers a background command and '&&'. '|'
-// covers '|', '||', and '|&'. '$(' , a backtick, and '<(' end the value
-// only when they start a substitution, so '$TOKEN' stays inside it.
-// '.' ends a clause only when a space or the end of the string follows
-// it, so '.env' is not a stop.
+// covers '|', '||', and '|&'. '<' covers an input redirect (< .env,
+// 0<.env, <<<) and '<('. '$(' ends the value only when it starts a
+// substitution, so '$TOKEN' stays inside it. '.' ends a clause only when
+// a space or the end of the string follows it, so '.env' is not a stop.
 func headerStop(s string, k int) bool {
 	switch s[k] {
-	case '&', '|', ';', '\n', '`':
+	case '&', '|', ';', '\n', '`', '<':
 		return true
-	case '$', '<':
+	case '$':
 		return k+1 < len(s) && s[k+1] == '('
 	case '.':
 		return k+1 == len(s) || s[k+1] == ' ' || s[k+1] == '\t' || s[k+1] == '\n'
