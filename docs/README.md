@@ -82,7 +82,7 @@ output. [Commands](commands.md) lists every command, flag, and exit code.
   [fingerprints](fingerprint.md), [output and sinks](output.md),
   [privacy and redaction](privacy.md).
 - CI and hooks: [GitHub Action](github-action.md),
-  [pre-commit](pre-commit.md).
+  [badge](badge.md), [pre-commit](pre-commit.md).
 - Configuration: [Policy](policy.md),
   [Harness adapters](adapters/README.md),
   [Rules catalog](rules/README.md).

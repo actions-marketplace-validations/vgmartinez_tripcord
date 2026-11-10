@@ -6,6 +6,8 @@ Catch malicious coding-agent configuration before it runs: hooks, MCP servers, s
 
 tripcord reads agent configuration statically, without running the agent, a hook, or a network call, and reports what would run.
 
+Other repositories can show a static [Scanned with Tripcord](docs/badge.md) badge. The image is shields.io; the binary does not fetch it.
+
 ## What it catches
 
 - Session-start and setup hooks that download or run code from the network.

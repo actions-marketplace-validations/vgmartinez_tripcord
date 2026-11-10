@@ -3,7 +3,9 @@
 ## Marketplace action
 
 The root [`action.yml`](../action.yml), listed on the GitHub
-Marketplace as **Tripcord Security**, is the shortest way in:
+Marketplace as **Tripcord Security**, is the shortest way in. A static
+[Scanned with Tripcord](badge.md) badge is Markdown and HTML only; it
+does not call this action.
 
 ```yaml
 name: tripcord

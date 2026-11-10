@@ -48,6 +48,7 @@ var docPages = map[string]string{
 	"output.md":                         "Output-and-Sinks",
 	"privacy.md":                        "Privacy-and-Redaction",
 	"github-action.md":                  "GitHub-Action",
+	"badge.md":                          "Badge",
 	"pre-commit.md":                     "Pre-commit",
 	"policy.md":                         "Policy",
 	"faq.md":                            "FAQ",
@@ -81,7 +82,7 @@ type group struct {
 var sidebar = []group{
 	{"Start", []string{"Home", "Getting-Started", "Installation", "Commands", "FAQ"}},
 	{"Commands", []string{"Scan", "Init", "Hook", "Preopen", "PR-Context", "Fingerprints", "Output-and-Sinks", "Privacy-and-Redaction"}},
-	{"CI and hooks", []string{"GitHub-Action", "Pre-commit"}},
+	{"CI and hooks", []string{"GitHub-Action", "Badge", "Pre-commit"}},
 	{"Configuration", []string{"Policy", "Harness-Adapters", "Rules-Catalog"}},
 	{"Adapters", []string{
 		"Adapter-Claude-Code", "Adapter-Codex", "Adapter-Cursor", "Adapter-GitHub-Copilot",
