@@ -103,8 +103,16 @@ that follows the value, with or without spaces, so
 `curl -H Authorization: Bearer $TOKEN & source .env`,
 `curl -H Authorization: Bearer $TOKEN < ./.env.local`, and
 `curl -H Authorization: Bearer $TOKEN $(cat .env)` still count. A
-`$(...)` that sits inside the header value, rather than after it,
-stays quiet. A URL that contains `$(` or a backtick is
+value glued to the header name follows the same stops, so
+`curl -H Authorization:$(cat .env)`,
+``curl -H Authorization:`cat .env` ``, and
+`curl -H Authorization:"$(cat .env)"` count: a double-quoted part of
+that word is one string unless it holds `$(` or a backtick. A
+single-quoted part (`Authorization:'$(cat .env)'`) is a literal and
+stays quiet. `-H @.env` and `-H "@./.env.local"` make curl send the
+file as headers, so a value that starts with `@` is not ignored. A
+`$(...)` inside a header value that opens with a quote
+(`-H "X-Api-Token: $(cat .env)"`) stays quiet. A URL that contains `$(` or a backtick is
 kept, so `$(cat .env)` inside it still counts. A secret value that is
 the direct object, and whose tail says `come from` or `comes from`
 without naming a local path, is an origin (`Source credentials for the

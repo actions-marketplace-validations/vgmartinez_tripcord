@@ -337,24 +337,72 @@ func consumeCurlValue(s string, i int, flag string) int {
 		return i
 	}
 	if s[i] == '"' || s[i] == '\'' {
-		q := s[i]
-		i++
-		for i < len(s) && s[i] != q {
-			i++
+		if headerFlag(flag) && i+1 < len(s) && s[i+1] == '@' {
+			return i
 		}
-		if i < len(s) {
+		return skipQuoted(s, i)
+	}
+	start := i
+	if !headerFlag(flag) {
+		for i < len(s) && s[i] != ' ' && s[i] != '\t' {
 			i++
 		}
 		return i
 	}
-	start := i
+	end, stopped := consumeHeaderWord(s, start)
+	if !stopped && strings.Contains(s[start:end], ":") {
+		return consumeHeaderTail(s, end)
+	}
+	return end
+}
+
+// consumeHeaderWord reads the first word of an unquoted header value, such
+// as Authorization:$TOKEN or Authorization:"Bearer $TOKEN". A word that
+// starts with '@' names a file curl reads the headers from, so it is not
+// consumed. A shell operator or a substitution ends the word at that byte
+// (stopped is set), so Authorization:$(cat .env) keeps $(cat .env) in the
+// clause. A double-quoted part is one string unless it holds $( or a
+// backtick. A single-quoted part is a literal and is skipped.
+func consumeHeaderWord(s string, start int) (end int, stopped bool) {
+	if start < len(s) && s[start] == '@' {
+		return start, true
+	}
+	i := start
 	for i < len(s) && s[i] != ' ' && s[i] != '\t' {
+		switch {
+		case headerStop(s, i):
+			return i, true
+		case s[i] == '\'':
+			i = skipQuoted(s, i)
+		case s[i] == '"':
+			next := skipQuoted(s, i)
+			if quotedSubstitution(s[i:next]) {
+				return i, true
+			}
+			i = next
+		default:
+			i++
+		}
+	}
+	return i, false
+}
+
+// skipQuoted returns the index after the quote that closes the one at i,
+// or len(s) when it is not closed.
+func skipQuoted(s string, i int) int {
+	q := s[i]
+	i++
+	for i < len(s) && s[i] != q {
 		i++
 	}
-	if headerFlag(flag) && strings.Contains(s[start:i], ":") {
-		return consumeHeaderTail(s, i)
+	if i < len(s) {
+		i++
 	}
 	return i
+}
+
+func quotedSubstitution(part string) bool {
+	return strings.Contains(part, "$(") || strings.Contains(part, "`")
 }
 
 func consumeHeaderTail(s string, i int) int {

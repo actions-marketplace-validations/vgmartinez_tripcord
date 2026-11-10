@@ -88,3 +88,17 @@ positivos:
   agents-curl-header-stdin-fd-glued-dotenv: medium
   agents-curl-header-herestring-dotenv: medium
   agents-wget-header-stdin-dotenv: medium
+  agents-curl-header-glued-subst-dotenv: medium
+  agents-curl-header-glued-quoted-subst-dotenv: medium
+  agents-curl-header-glued-bearer-subst-dotenv: medium
+  agents-curl-header-glued-backtick-dotenv: medium
+  agents-curl-header-glued-quoted-backtick-dotenv: medium
+  agents-curl-header-glued-subst-no-url-dotenv: medium
+  agents-curl-header-equals-glued-subst-dotenv: medium
+  agents-curl-header-glued-read-subst-dotenv: medium
+  agents-curl-header-glued-process-subst-dotenv: medium
+  agents-curl-header-glued-subst-aws: medium
+  agents-wget-header-glued-subst-dotenv: medium
+  agents-curl-header-subst-value-dotenv: medium
+  agents-curl-header-at-file-dotenv: medium
+  agents-curl-header-at-quoted-dotenv: medium

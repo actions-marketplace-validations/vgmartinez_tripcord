@@ -90,9 +90,12 @@
 # whose value continues past the colon
 # (-H Authorization: Bearer $TOKEN). That unquoted value ends at a
 # shell operator, at an input redirect (< .env, 0<.env, <<<), and at a
-# $(...) or backtick after it. The whole header value is
-# ignored, so a $(...) that sits inside the header rather than the
-# URL stays quiet. A URL containing $( or a backtick is kept, so
+# $(...) or backtick after it. A value glued to the name
+# (Authorization:$(cat .env), Authorization:"$(cat .env)") ends at the
+# same stops; a single-quoted part is a literal and is skipped. -H @.env
+# sends the file as headers, so a value that starts with @ is kept. A
+# value that opens with a quote is ignored whole, so a $(...) inside
+# -H "X-Api-Token: $(cat .env)" stays quiet. A URL containing $( or a backtick is kept, so
 # $(cat .env) inside it still counts. A secret value that is the
 # direct object, and whose tail says "come from" or "comes from"
 # without naming a local path, is an origin ("Source credentials for
