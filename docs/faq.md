@@ -12,8 +12,10 @@ no checkout, filter, LFS, hook, or submodule runs
 ## Is there a release, or an npm or PyPI package?
 
 Yes. [GitHub Releases](https://github.com/vgmartinez/tripcord/releases)
-has verified binaries ([Installation](installation.md)). npm and PyPI
-are still not published. `go install` and a source build still work
+has verified binaries, and Homebrew (`brew install
+vgmartinez/tap/tripcord`), npm (`npx tripcord`), and PyPI
+(`uvx tripcord`) install those same binaries
+([Installation](installation.md)). `go install` and a source build still work
 ([Getting started](getting-started.md#build)). The
 [GitHub Action](github-action.md) builds tripcord from source at a pinned
 commit. `init --embed` runs only the binary you place in its cache,

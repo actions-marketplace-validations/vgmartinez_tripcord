@@ -1,0 +1,148 @@
+name: homebrew
+
+# Regenerates Formula/tripcord.rb for the vgmartinez/homebrew-tap
+# repository from a published release and opens a pull request there
+# (brew install vgmartinez/tap/tripcord). It never pushes to the tap's
+# default branch and never rebuilds tripcord: the formula points at the
+# release archives, with the sha256 of each from that release's
+# SHA256SUMS, after scripts/release-fetch.sh has checked the archives and
+# their provenance.
+#
+# It runs when a release is published, or by hand for an existing
+# release tag (workflow_dispatch, tag: vX.Y.Z). The job runs in the
+# homebrew environment, whose secret HOMEBREW_TAP_TOKEN is a
+# fine-grained token for vgmartinez/homebrew-tap only. Without that
+# secret it still generates and prints the formula, then skips the pull
+# request with a notice.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to package (vX.Y.Z)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: homebrew
+  cancel-in-progress: false
+
+jobs:
+  formula:
+    name: formula and tap pull request
+    if: github.repository == 'vgmartinez/tripcord' && (github.event_name == 'workflow_dispatch' || !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: homebrew
+    permissions:
+      contents: read # checkout, and read the release and its assets
+      attestations: read # verify the release archives' build provenance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Tag
+        id: tag
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            release) tag="$RELEASE_TAG" ;;
+            workflow_dispatch) tag="$INPUT_TAG" ;;
+            *)
+              echo "::error::unsupported event ${EVENT_NAME}"
+              exit 1
+              ;;
+          esac
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::tag is not vX.Y.Z; prerelease tags are not packaged"
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: scripts/release-fetch.sh "$TAG" "${RUNNER_TEMP}/dist"
+
+      - name: Generate the formula
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          go run ./scripts/release-packages formula -version "$TAG" -sums "${RUNNER_TEMP}/dist/SHA256SUMS" -out "${RUNNER_TEMP}/tripcord.rb"
+          cat "${RUNNER_TEMP}/tripcord.rb"
+
+      - name: Open the tap pull request
+        shell: bash
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::notice title=homebrew::HOMEBREW_TAP_TOKEN is not set in the homebrew environment. The formula above was generated and checked; no tap pull request was opened."
+            exit 0
+          fi
+          tap=vgmartinez/homebrew-tap
+          tap_url="https://github.com/${tap}.git"
+          version="${TAG#v}"
+          branch="tripcord-${version}"
+          auth=$(printf 'x-access-token:%s' "$TAP_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          # The token reaches git only through this environment, never
+          # through a remote URL or a file in the clone.
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          export GIT_TERMINAL_PROMPT=0
+          export GH_TOKEN="$TAP_TOKEN"
+
+          base=$(gh api "repos/${tap}" --jq .default_branch)
+          if [ -z "$base" ] || [ "$base" = "$branch" ]; then
+            echo "::error::cannot read the default branch of ${tap}"
+            exit 1
+          fi
+          if git ls-remote --exit-code --heads "$tap_url" "$branch" >/dev/null; then
+            echo "::notice title=homebrew::${tap} already has a ${branch} branch; its pull request is open or was merged. Nothing to do."
+            exit 0
+          fi
+
+          dest="${RUNNER_TEMP}/tap"
+          git clone --quiet --depth 1 --branch "$base" "$tap_url" "$dest"
+          mkdir -p "${dest}/Formula"
+          cp -- "${RUNNER_TEMP}/tripcord.rb" "${dest}/Formula/tripcord.rb"
+          git -C "$dest" add Formula/tripcord.rb
+          if git -C "$dest" diff --cached --quiet; then
+            echo "::notice title=homebrew::${tap} ${base} already has this formula. Nothing to do."
+            exit 0
+          fi
+          git -C "$dest" switch --quiet -c "$branch"
+          git -C "$dest" \
+            -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --quiet -m "tripcord ${version}"
+          # A new branch only: the tap's default branch changes when
+          # the pull request is merged.
+          git -C "$dest" push --quiet origin "HEAD:refs/heads/${branch}"
+          body="Formula/tripcord.rb for [tripcord ${TAG}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}), generated by scripts/release-packages from that release's SHA256SUMS in run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          gh pr create --repo "$tap" --base "$base" --head "$branch" --title "tripcord ${version}" --body "$body"

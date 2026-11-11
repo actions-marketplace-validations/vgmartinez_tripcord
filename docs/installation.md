@@ -1,7 +1,79 @@
 # Installation
 
-tripcord is one static binary. There is no npm, PyPI, Homebrew, or
-Docker package.
+tripcord is one static binary. Homebrew, npm, and PyPI install that
+same release binary; none of them builds tripcord. There is no Docker
+image.
+
+| Method | Command | Platforms |
+| --- | --- | --- |
+| [Homebrew](#with-homebrew) | `brew install vgmartinez/tap/tripcord` | macOS, Linux |
+| [npm](#with-npm) | `npx tripcord scan .` | macOS, Linux, Windows |
+| [PyPI](#with-pypi) | `uvx tripcord scan .` or `pip install tripcord` | macOS, Linux, Windows |
+| [Release archive](#from-a-release) | download and verify by hand | macOS, Linux, Windows |
+| [`go install`](#with-go-install) | builds from source | any Go platform |
+
+Every package covers amd64 (x86-64) and arm64. Each package's version is
+the release tag without the `v`: release `v0.1.0` is Homebrew, npm, and
+PyPI version `0.1.0`.
+
+## With Homebrew
+
+```sh
+brew install vgmartinez/tap/tripcord
+tripcord --version
+```
+
+The formula lives in
+[vgmartinez/homebrew-tap](https://github.com/vgmartinez/homebrew-tap).
+It downloads the release archive for your OS and CPU and Homebrew checks
+it against the sha256 in the formula, which is copied from the release's
+`SHA256SUMS`. When a release is published, this repository's `homebrew`
+workflow checks the archives and their build provenance, regenerates the
+formula, and opens a pull request on the tap; the formula changes when
+that pull request is merged.
+
+## With npm
+
+```sh
+npx tripcord scan .
+# or
+npm install -g tripcord
+```
+
+The `tripcord` npm package has no dependencies and no install script.
+It ships a small Node.js launcher and the release's `SHA256SUMS`. On
+first run the launcher downloads the archive for your platform from
+`https://github.com/vgmartinez/tripcord/releases/download/v<version>/`,
+which GitHub redirects to `release-assets.githubusercontent.com`. It
+checks the archive's sha256 against the bundled `SHA256SUMS` and runs
+nothing on a mismatch. The binary is cached in `$TRIPCORD_CACHE_DIR`,
+or by default `$XDG_CACHE_HOME/tripcord` (`~/.cache/tripcord`) on Linux,
+`~/Library/Caches/tripcord` on macOS, and
+`%LOCALAPPDATA%\tripcord\cache` on Windows, and later runs make no
+network request. There is no telemetry. Any platform other than Linux,
+macOS, or Windows on x64 or arm64 gets an error that names it.
+
+The package is published by the `npm` workflow with npm trusted
+publishing, so `npm audit signatures` and the package page show its
+provenance: the workflow run that published it.
+
+## With PyPI
+
+```sh
+uvx tripcord scan .
+# or
+pip install tripcord
+```
+
+Each wheel bundles the unchanged binary from one release archive and a
+`tripcord` command that runs it. The `pypi` workflow checks the
+archives against `SHA256SUMS` and their build provenance before it
+repackages them, and publishes with PyPI trusted publishing. The wheels
+are tagged for Linux on glibc 2.17 or newer and on musl
+(`manylinux_2_17`, `musllinux_1_1`), for the minimum macOS version the
+binary itself declares (macOS 13 for v0.1.0), and for Windows. There is
+no source distribution: on any other platform pip reports that no
+matching distribution was found.
 
 ## From a release
 

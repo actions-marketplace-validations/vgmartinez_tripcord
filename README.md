@@ -18,7 +18,15 @@ Other repositories can show a static [Scanned with Tripcord](docs/badge.md) badg
 
 ## Install
 
-Download an archive for your platform and `SHA256SUMS` from [Releases](https://github.com/vgmartinez/tripcord/releases), then check the checksum and the build provenance:
+```sh
+brew install vgmartinez/tap/tripcord   # macOS and Linux
+npx tripcord scan .                    # npm
+uvx tripcord scan .                    # PyPI (or: pip install tripcord)
+```
+
+Each one installs the release binary and checks it against the release's `SHA256SUMS`; see [Installation](https://github.com/vgmartinez/tripcord/wiki/Installation) for what each verifies.
+
+Or download an archive for your platform and `SHA256SUMS` from [Releases](https://github.com/vgmartinez/tripcord/releases), then check the checksum and the build provenance:
 
 ```sh
 gh release download v0.1.0 --repo vgmartinez/tripcord --pattern 'tripcord_0.1.0_linux_amd64.tar.gz' --pattern SHA256SUMS
@@ -27,7 +35,7 @@ gh attestation verify tripcord_0.1.0_linux_amd64.tar.gz --repo vgmartinez/tripco
 tar -xzf tripcord_0.1.0_linux_amd64.tar.gz tripcord && ./tripcord --version
 ```
 
-Archives exist for linux, darwin, and windows on amd64 and arm64; see [Installation](https://github.com/vgmartinez/tripcord/wiki/Installation). There is no npm or PyPI package.
+Archives exist for linux, darwin, and windows on amd64 and arm64; see [Installation](https://github.com/vgmartinez/tripcord/wiki/Installation).
 
 Or install from source with Go 1.27.3 or newer:
 
@@ -123,7 +131,7 @@ repos:
 The [wiki](https://github.com/vgmartinez/tripcord/wiki) is generated from [`docs/`](docs/README.md):
 
 - [Getting started](https://github.com/vgmartinez/tripcord/wiki/Getting-Started)
-- [Installation](https://github.com/vgmartinez/tripcord/wiki/Installation): release archives, checksums, and provenance
+- [Installation](https://github.com/vgmartinez/tripcord/wiki/Installation): Homebrew, npm, PyPI, release archives, checksums, and provenance
 - [Commands](https://github.com/vgmartinez/tripcord/wiki/Commands) and [exit codes](https://github.com/vgmartinez/tripcord/wiki/Commands#exit-codes)
 - [Policy](https://github.com/vgmartinez/tripcord/wiki/Policy)
 - [Rules catalog](https://github.com/vgmartinez/tripcord/wiki/Rules-Catalog)
