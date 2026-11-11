@@ -370,6 +370,32 @@ func ReadBlobs(ctx context.Context, gitDir string, oids []string) (map[string][]
 	return catBatch(ctx, gitDir, oids, false)
 }
 
+// startCatFileWrites writes each oid to stdin in a goroutine and closes
+// stdin when the list is sent. The caller must read stdout concurrently:
+// writing the whole list first can fill the pipe and deadlock against
+// unread responses.
+func startCatFileWrites(ctx context.Context, stdin io.WriteCloser, oids []string) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		var err error
+		for _, oid := range oids {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+				break
+			}
+			if _, werr := io.WriteString(stdin, oid+"\n"); werr != nil {
+				err = werr
+				break
+			}
+		}
+		if cerr := stdin.Close(); err == nil {
+			err = cerr
+		}
+		done <- err
+	}()
+	return done
+}
+
 // BlobSizes returns object sizes without reading the bytes.
 func BlobSizes(ctx context.Context, gitDir string, oids []string) (map[string]int64, error) {
 	if len(oids) == 0 {
@@ -395,43 +421,32 @@ func BlobSizes(ctx context.Context, gitDir string, oids []string) (map[string]in
 		return nil, fmt.Errorf("%w: %w", ErrGitMissing, err)
 	}
 	out := map[string]int64{}
-	writeErr := func() error {
-		for _, oid := range oids {
-			if _, err := io.WriteString(stdin, oid+"\n"); err != nil {
-				return err
-			}
-		}
-		return nil
-	}()
-	if writeErr == nil {
-		writeErr = stdin.Close()
-	} else {
-		cancel()
-		_ = stdin.Close()
-	}
+	writeDone := startCatFileWrites(catCtx, stdin, oids)
 	resp := bufio.NewReader(stdout)
-	if writeErr == nil {
-		for _, oid := range oids {
-			line, err := resp.ReadString('\n')
-			if err != nil {
-				writeErr = err
-				break
-			}
-			fields := strings.Fields(strings.TrimSpace(line))
-			if len(fields) != 3 || fields[0] != oid || fields[1] != "blob" {
-				writeErr = fmt.Errorf("unexpected cat-file header %q", strings.TrimSpace(line))
-				break
-			}
-			size, err := strconv.ParseInt(fields[2], 10, 64)
-			if err != nil || size < 0 {
-				writeErr = fmt.Errorf("unexpected cat-file header %q", strings.TrimSpace(line))
-				break
-			}
-			out[oid] = size
+	var writeErr error
+	for _, oid := range oids {
+		line, err := resp.ReadString('\n')
+		if err != nil {
+			writeErr = err
+			break
 		}
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) != 3 || fields[0] != oid || fields[1] != "blob" {
+			writeErr = fmt.Errorf("unexpected cat-file header %q", strings.TrimSpace(line))
+			break
+		}
+		size, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil || size < 0 {
+			writeErr = fmt.Errorf("unexpected cat-file header %q", strings.TrimSpace(line))
+			break
+		}
+		out[oid] = size
 	}
 	if writeErr != nil {
 		cancel()
+	}
+	if werr := <-writeDone; writeErr == nil {
+		writeErr = werr
 	}
 	waitErr := cat.Wait()
 	if writeErr != nil {
@@ -783,47 +798,36 @@ func inspectBlobs(ctx context.Context, gitDir string, oids []string) (map[string
 	if err := cat.Start(); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrGitMissing, err)
 	}
-	writeErr := func() error {
-		for _, oid := range oids {
-			if _, err := io.WriteString(stdin, oid+"\n"); err != nil {
-				return err
-			}
-		}
-		return nil
-	}()
-	if writeErr == nil {
-		writeErr = stdin.Close()
-	} else {
-		cancel()
-		_ = stdin.Close()
-	}
+	writeDone := startCatFileWrites(catCtx, stdin, oids)
 	resp := bufio.NewReader(stdout)
-	if writeErr == nil {
-		for _, oid := range oids {
-			line, err := resp.ReadString('\n')
-			if err != nil {
-				writeErr = err
-				break
-			}
-			fields := strings.Fields(strings.TrimSpace(line))
-			if len(fields) == 2 && fields[0] == oid && fields[1] == "missing" {
-				out[oid] = blobInfo{missing: true}
-				continue
-			}
-			if len(fields) != 3 || fields[0] != oid || fields[1] != "blob" {
-				writeErr = fmt.Errorf("unexpected cat-file header %q", strings.TrimSpace(line))
-				break
-			}
-			size, err := strconv.ParseInt(fields[2], 10, 64)
-			if err != nil || size < 0 {
-				writeErr = fmt.Errorf("unexpected cat-file header %q", strings.TrimSpace(line))
-				break
-			}
-			out[oid] = blobInfo{size: size}
+	var writeErr error
+	for _, oid := range oids {
+		line, err := resp.ReadString('\n')
+		if err != nil {
+			writeErr = err
+			break
 		}
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 2 && fields[0] == oid && fields[1] == "missing" {
+			out[oid] = blobInfo{missing: true}
+			continue
+		}
+		if len(fields) != 3 || fields[0] != oid || fields[1] != "blob" {
+			writeErr = fmt.Errorf("unexpected cat-file header %q", strings.TrimSpace(line))
+			break
+		}
+		size, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil || size < 0 {
+			writeErr = fmt.Errorf("unexpected cat-file header %q", strings.TrimSpace(line))
+			break
+		}
+		out[oid] = blobInfo{size: size}
 	}
 	if writeErr != nil {
 		cancel()
+	}
+	if werr := <-writeDone; writeErr == nil {
+		writeErr = werr
 	}
 	waitErr := cat.Wait()
 	if writeErr != nil {
