@@ -1439,16 +1439,27 @@ jobs:
           TRIPCORD_MARKDOWN: ${{ steps.tripcord.outputs.markdown }}
           TRIPCORD_PR_EXIT: ${{ steps.tripcord.outputs.pr-context-exit-code }}
           TRIPCORD_IS_AGENT: ${{ steps.tripcord.outputs.is_agent }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           test "$TRIPCORD_EXIT" = "0"
           test -s "$TRIPCORD_SARIF"
           test -f "$TRIPCORD_MARKDOWN"
           test -n "$TRIPCORD_PR_EXIT"
-          case "$TRIPCORD_IS_AGENT" in
-            true|false) ;;
-            *) echo "no is_agent output" >&2; exit 1 ;;
-          esac
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            case "$TRIPCORD_IS_AGENT" in
+              true|false) ;;
+              *) echo "no is_agent output" >&2; exit 1 ;;
+            esac
+          else
+            # A push event has no pull request: pr-context exits 3 and
+            # emits no is_agent.
+            test "$TRIPCORD_PR_EXIT" = "3"
+            if [ -n "$TRIPCORD_IS_AGENT" ]; then
+              echo "is_agent set without a pull request" >&2
+              exit 1
+            fi
+          fi
 
       - id: tripcord-deny
         name: Root action fails a TC-CFG-014 denial by default
