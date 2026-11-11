@@ -74,6 +74,15 @@ type Options struct {
 	// help, and helpUri then come from the catalog, falling back to the
 	// finding when the rule is not in it.
 	Rules map[string]RuleText
+	// Verbose selects the detailed text view: evidence, fix, and
+	// fingerprint on each finding. JSON, JSONL, SARIF, Markdown, and
+	// GitHub Actions output ignore it.
+	Verbose bool
+	// TextExit, when set, is the process exit the compact text summary
+	// prints. Nil means the summary derives it: exit 3 for a blocking
+	// diagnostic, exit 1 for a finding at or above high, otherwise
+	// exit 0. Other formats ignore it.
+	TextExit *int
 }
 
 // RuleText is catalog metadata for one rule. Empty fields fall back to

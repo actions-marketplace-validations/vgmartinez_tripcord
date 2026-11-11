@@ -56,7 +56,7 @@ func TestSinkRedactsEvidenceKeyParts(t *testing.T) {
 				if strings.Contains(got, keySecret) {
 					t.Errorf("%s output leaks the secret:\n%s", format, got)
 				}
-				if !strings.Contains(got, finding.Fingerprint) {
+				if !strings.Contains(detailText(t, format, finding, testOptions()), finding.Fingerprint) {
 					t.Errorf("%s output lost the fingerprint %s", format, finding.Fingerprint)
 				}
 			}

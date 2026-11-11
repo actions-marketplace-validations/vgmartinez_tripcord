@@ -1,9 +1,64 @@
 # GitHub Action
 
+## Marketplace action
+
+The root [`action.yml`](../action.yml), listed on the GitHub
+Marketplace as **Tripcord Security**, is the shortest way in. A static
+[Scanned with Tripcord](badge.md) badge is Markdown and HTML only; it
+does not call this action.
+
+```yaml
+name: tripcord
+on:
+  pull_request:
+
+jobs:
+  tripcord:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout the repository being scanned
+      pull-requests: read # read pull request reviews
+      security-events: write # upload the SARIF report
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: vgmartinez/tripcord@v0.1.0
+```
+
+For gradual adoption, start in report-only mode. The SARIF upload and
+the optional pull request comment still happen, and findings show up as
+a warning with the finding count instead of failing the job:
+
+```yaml
+      - uses: vgmartinez/tripcord@v0.1.0
+        with:
+          fail-on: none
+```
+
+Remove `fail-on: none` (or set a severity) to enforce. See
+[report-only mode](#report-only-mode).
+
+The root action has the same inputs and outputs as the composite action
+below and forwards every one of them unchanged. It is a thin wrapper:
+its one step runs `vgmartinez/tripcord/.github/actions/tripcord` at a
+full commit SHA, the same commit the reusable workflows pin. A
+composite action's `uses: ./path` resolves against the caller's
+workspace, not this repository, so the delegate is named by repository
+and commit. That composite action builds `tripcord` from source at that
+commit, so `vgmartinez/tripcord@v0.1.0` runs the scanner the `v0.1.0`
+tag pins. A pin to a full commit SHA of this repository works the same
+way.
+
+## Composite action
+
 The composite action at
 [`./.github/actions/tripcord`](../.github/actions/tripcord) builds
 `tripcord` from source and scans a repository. It does not download a
-release binary. No release is published.
+release binary; release archives are on the
+[Releases](https://github.com/vgmartinez/tripcord/releases) page (see
+[Installation](installation.md#from-a-release)).
 
 By default it builds the tree that contains the action
 (`github.action_path`). Set `ref` to build another commit of this
@@ -24,8 +79,32 @@ directory is reported as unreadable, not as empty.
 
 An empty `fail-on` leaves the threshold to the CLI and the repository
 policy. The action passes `--fail-on` only when the caller sets the
-input. The CLI default is enforce mode with fail-on `high`. A locked
-policy can reject a looser value.
+input to a severity (`low`, `medium`, `high`, or `critical`). The CLI
+default is enforce mode with fail-on `high`. A locked policy can reject
+a looser value. `none` is the action's report-only mode, below; it is
+not a CLI value. Any other value reaches the CLI, which exits 3, and
+the job fails.
+
+### Report-only mode
+
+`fail-on: none` publishes everything and fails only on errors
+([#62](https://github.com/vgmartinez/tripcord/issues/62)). It works the
+same in the root action, the composite action, and both reusable
+workflows; the CLI does not change.
+
+- The scans run without `--fail-on`, so the policy's threshold decides
+  what is a finding exit (1).
+- The SARIF upload and the pull request comment run as they do
+  otherwise.
+- A scan exit 1 becomes a `::warning::` with the number of findings in
+  the SARIF report, and the job passes. `scan-exit-code` is still 1.
+- A `pr-context` TC-CFG-014 denial (exit 1) becomes a `::warning::`,
+  and the job passes. `pr-context-exit-code` is still 1.
+- Exit 2, 3, and 4 still fail the job, from the scan or, with
+  `reviews-file`, from `pr-context`. So do an invalid `path` and an
+  unknown `fail-on` value.
+
+The default, an empty `fail-on`, is unchanged.
 
 The action runs three scans with that binary:
 
@@ -38,12 +117,14 @@ It then runs `tripcord pr-context` with the same binary. Set
 `--reviews-file`. An empty value skips the flag. The array stays on
 disk and is not printed. The action outputs `is_agent`, `agents`, and
 `tc-cfg-014` are that command's `GITHUB_OUTPUT` values. After reports
-are published, a TC-CFG-014 denial (exit 1) fails the job. An
+are published, a TC-CFG-014 denial (exit 1) fails the job, unless
+`fail-on` is `none`. An
 unapproved change of more than 64 agent-config paths is that denial:
 the report lists the first 64 paths and `and N more`. With
 `reviews-file`, incomplete or invalid review data (exit 3 or 4) fails
 the job; without it, exits 3 and 4 warn and leave the job green.
-The scan exit code also fails the job after reports are published.
+The scan exit code also fails the job after reports are published,
+except exit 1 with `fail-on: none`.
 
 `pr-context` reads commits between the pull request base and head. The
 checkout of the repository being scanned needs `fetch-depth: 0`. A
@@ -63,9 +144,9 @@ exits 3, which fails the job. A `path` that is not inside a Git
 repository has no history to compare, so the action logs a notice and
 scans without `--base`. Set `base: ""` to scan the head alone.
 The reusable workflows in this repository leave `base` at its default
-and call the composite action pinned at `main@2c80fad`, which defaults
+and call the composite action pinned at `main@d01fb05`, which defaults
 `base` to the pull request's base commit. Another repository pins those
-workflow files at `main@47d6a04`, the commit whose copies call that
+workflow files at `main@12c7476`, the commit whose copies call that
 action.
 
 Publishing runs when the scan recorded an exit code. A pull request
@@ -157,7 +238,7 @@ permissions:
   contents: read # checkout the repository being scanned
   pull-requests: read # read pull request reviews
   security-events: write # upload the SARIF report
-uses: vgmartinez/tripcord/.github/workflows/tripcord-pr.yml@47d6a048c9dee0b26237715a60c933ca7f252032 # main@47d6a04
+uses: vgmartinez/tripcord/.github/workflows/tripcord-pr.yml@12c7476ae05ea2c791ea39ef44bd4f1a0f5f9164 # main@12c7476
 ```
 
 ### Comment
@@ -190,7 +271,7 @@ permissions:
   contents: read # checkout the repository being scanned
   pull-requests: write # create or update the Markdown comment
   security-events: write # upload the SARIF report
-uses: vgmartinez/tripcord/.github/workflows/tripcord-pr-comment.yml@47d6a048c9dee0b26237715a60c933ca7f252032 # main@47d6a04
+uses: vgmartinez/tripcord/.github/workflows/tripcord-pr-comment.yml@12c7476ae05ea2c791ea39ef44bd4f1a0f5f9164 # main@12c7476
 ```
 
 ## Building from source in your own workflow
@@ -198,9 +279,10 @@ uses: vgmartinez/tripcord/.github/workflows/tripcord-pr-comment.yml@47d6a048c9de
 A repository that does not want to call the reusable workflows can build
 `./cmd/tripcord` itself, write SARIF, and upload it. This workflow checks
 out the repository to scan and this repository, and pins every action by
-commit. `ref: main` builds the default branch of this repository; set it
-to a full commit SHA to pin the scanner as well, since no release tag
-exists to pin instead.
+commit. `ref: main` builds the default branch of this repository. Pin
+the scanner with `ref: v0.1.0` or with a full commit SHA. The root
+action is used via `@v0.1.0`, while the reusable workflows stay pinned
+to SHAs on main.
 
 A high finding makes `scan` exit 1, which fails the job. The upload step
 still runs. Uploading SARIF on a private repository requires GitHub Code

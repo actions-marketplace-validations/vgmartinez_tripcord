@@ -25,12 +25,12 @@ policy at the Git root and would block every tool call without one.
 > `timeoutSec` init sets. A Claude Code release older than the
 > `onFailure` field still blocks on exit 2, which every failure the hook
 > reports returns, but not on another status, such as a crash or a
-> missing `bash`. There is no published release, so each machine fills
-> the bootstrap cache itself ([Bootstrap](#bootstrap)).
+> missing `bash`. The bootstrap never downloads anything, so each
+> machine fills the bootstrap cache itself ([Bootstrap](#bootstrap)).
 >
 > The generated `.github/workflows/tripcord.yml` pins the reusable
-> workflow at `main@47d6a04`. `tripcord-pr.yml` at that commit pins the
-> composite action at `main@2c80fad`, which has the `base` input and
+> workflow at `main@12c7476`. `tripcord-pr.yml` at that commit pins the
+> composite action at `main@d01fb05`, which has the `base` input and
 > the embed check, so the generated workflow compares a pull request
 > with its base. This repository's own workflows pin that same action.
 > `TestPinsHaveEmbedCheck` requires every pin to be a full SHA on main,
@@ -259,8 +259,10 @@ calls) come from `/usr/bin` or `/bin`, then from NixOS's
 `/run/current-system/sw/bin` only when that directory is root-owned and
 not group- or world-writable. They never come from the caller's `PATH`.
 
-There is no published release, so fill the cache with a build of the
-commit the pin was made from, on each machine the agents run on:
+Fill the cache on each machine the agents run on, with the `tripcord`
+binary from the release archive for `<version>`
+([Installation](installation.md)), or with a build of the commit the
+pin was made from:
 
 ```sh
 git checkout <pinned commit>
@@ -484,8 +486,8 @@ composite action: the reusable workflow commit the generated
 `tripcord-pr.yml` and `tripcord-pr-comment.yml` call. It fails unless
 the action at each pin has the `base` input and builds a Tripcord with
 the embed check (`internal/embedded`). This tree's workflows pin the
-action at `main@2c80fad`, which has both. The generated workflow calls
-`tripcord-pr.yml` at `main@47d6a04`, and the file there pins the same
+action at `main@d01fb05`, which has both. The generated workflow calls
+`tripcord-pr.yml` at `main@12c7476`, and the file there pins the same
 action, so both paths pass. It reads the pinned commits with `git show`,
 so the clone must have them (`fetch-depth: 0`).
 
@@ -529,13 +531,12 @@ builds the tripcord the generated `tripcord.yml` really runs in CI
 (`tripcord-pr.yml@WorkflowPin`, then its action, built from source the
 way the action does) and scans a fresh embed from this tree's `init`
 with `GITHUB_ACTIONS=true`. It fails on any high TC-CFG-016 finding.
-It fails on this tree: the action at `8b33b1b` predates this tree's
-templates and reports seven highs (six surfaces "written by an older
+Before the action and `WorkflowPin` were repinned past the TC-CFG-016
+version-skew fix, the action at `8b33b1b` reported seven highs on a
+fresh embed from this tree (six surfaces "written by an older
 Tripcord", and the Copilot setup step `init` writes only with
-`--cloud-setup` as missing). It passes once the action and then
-`WorkflowPin` are repinned past the TC-CFG-016 version-skew fix
-([release notes](release-notes.md)), so until then no release can be
-tagged.
+`--cloud-setup` as missing)
+([release notes](release-notes.md)).
 
 `TestVersionSkewCIScanner` also runs on every pull request, alone, in
 the `version-skew e2e` job of `ci.yml`, which sets
@@ -549,9 +550,10 @@ repins the action and `WorkflowPin`.
 once a scanner change lands after the last repin, fail until the repin
 pull requests land; the other tests pass. Without the variable all five
 log that the gate was not requested and pass. No `pull_request` or
-`push` workflow runs the gate (`TestReleaseGateNotInPullRequestCI`). There is no
-release workflow in this repository: run the target before tagging.
-Tagging and releases are Victor's.
+`push` workflow runs the gate (`TestReleaseGateNotInPullRequestCI`).
+[`release.yml`](development.md#releases) builds the archives when a
+`v*` tag is pushed and opens a draft release. Run `make release-gate`
+before tagging. Tagging and publishing the draft are Victor's.
 
 The per-pull-request pin check is `TestPinsReachableFromHead`. It does
 not read `origin/main`. Each pin in the generated workflow,

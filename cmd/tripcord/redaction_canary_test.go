@@ -167,7 +167,8 @@ func canaryRepoFor(t *testing.T, enc canaryEncoding, canaries []redactionCanary)
 // TestRedactionCanaryScan is the acceptance gate for scan: every
 // canary, plain and JSON-escaped, in Claude, Cursor, and MCP config,
 // never appears in any format, every finding's fingerprint appears in
-// every format, and the canaries' hooks are all still reported.
+// every machine format and in text -v, and the canaries' hooks are all
+// still reported. Compact text omits the fingerprint.
 func TestRedactionCanaryScan(t *testing.T) {
 	t.Parallel()
 	for _, enc := range canaryEncodings {
@@ -183,6 +184,7 @@ func TestRedactionCanaryScan(t *testing.T) {
 			}
 			reports := map[string]string{}
 			var jsonl string
+			var verboseText string
 			for _, format := range []string{"json", "jsonl", "sarif", "text", "gha", "md"} {
 				var stdout, stderr bytes.Buffer
 				if code := run([]string{"scan", "--format", format, root}, &stdout, &stderr); code != int(exitcode.Findings) {
@@ -225,9 +227,21 @@ func TestRedactionCanaryScan(t *testing.T) {
 			if want := 2 * len(redactionCanaries); hooks != want {
 				t.Errorf("TC-CFG-001 findings = %d, want %d:\n%s", hooks, want, reports["json"])
 			}
+			{
+				var stdout, stderr bytes.Buffer
+				if code := run([]string{"scan", "--format", "text", "-v", root}, &stdout, &stderr); code != int(exitcode.Findings) {
+					t.Fatalf("text -v: exit %d, stderr %q", code, stderr.String())
+				}
+				verboseText = stdout.String() + stderr.String()
+				assertNoCanary(t, "text -v", verboseText)
+			}
 			for format, report := range reports {
+				checked := report
+				if format == "text" {
+					checked = verboseText
+				}
 				for _, fp := range fingerprints {
-					if !strings.Contains(report, fp) {
+					if !strings.Contains(checked, fp) {
 						t.Errorf("%s lacks fingerprint %s", format, fp)
 					}
 				}

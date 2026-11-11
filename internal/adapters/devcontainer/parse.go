@@ -59,7 +59,15 @@ var settings = map[string]bool{
 // config normalizes a devcontainer.json. The Dev Containers tooling reads
 // it as JSONC (comments and trailing commas).
 func (f *file) config(raw []byte) {
-	tree, warnings, err := kit.DecodeJSON(raw, kit.JSONC, product)
+	// containerEnv, remoteEnv, and build.args are environment maps.
+	// Their keys are case-sensitive, so http_proxy and HTTP_PROXY are
+	// distinct and both are kept. An exact duplicate key is still
+	// reported.
+	tree, warnings, err := kit.DecodeJSONCaseDistinct(raw, kit.JSONC, product, []string{
+		"containerEnv",
+		"remoteEnv",
+		"build.args",
+	})
 	f.WarnAll(warnings)
 	if err != nil {
 		f.Warn("invalid JSON: %v", err)

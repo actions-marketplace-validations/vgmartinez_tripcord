@@ -354,9 +354,11 @@ every scanner, docs, and test change:
    `pinCurrencyPaths` covers changes after it, so A is the scanner the
    new pins ship.
 2. **B** changes only the composite action pins in
-   `.github/workflows/tripcord-pr.yml` and
-   `.github/workflows/tripcord-pr-comment.yml`, to A, with a
-   `# main@` comment that is a prefix of A. Nothing else changes in B.
+   `.github/workflows/tripcord-pr.yml`,
+   `.github/workflows/tripcord-pr-comment.yml`, and the root
+   `action.yml`, to A, with a `# main@` comment that is a prefix of A.
+   Nothing else changes in B. `TestRootActionDelegates` fails when the
+   root action and the reusable workflows pin different commits.
 3. **C** sets `WorkflowPin` (`internal/embedded/pins.go`) to B and
    appends the pin it replaces to the end of `KnownWorkflowPins`; no
    entry is edited or removed. `known_renders.json` gains renders under

@@ -62,6 +62,13 @@ func TestReleaseGatePinnedActionHasEmbedCheck(t *testing.T) {
 			pins[pin] = append(pins[pin], "this tree's "+name)
 		}
 	}
+	rootAction, err := os.ReadFile(filepath.Join("..", "..", rootActionPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pin := range actionPins(t, rootActionPath, string(rootAction)) {
+		pins[pin] = append(pins[pin], "this tree's "+rootActionPath)
+	}
 	if os.Getenv("TRIPCORD_RELEASE_GATE") != "1" {
 		t.Log("release gate not requested; set TRIPCORD_RELEASE_GATE=1 to run it")
 		return

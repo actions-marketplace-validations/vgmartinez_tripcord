@@ -35,7 +35,7 @@ on:
         required: false
         default: "."
       fail-on:
-        description: Inclusive severity passed to tripcord. Empty lets the CLI and policy decide.
+        description: Inclusive severity passed to tripcord (low, medium, high, critical). Empty lets the CLI and policy decide. none is report-only; findings and a TC-CFG-014 denial warn instead of failing the job, while exit 3, exit 4, and an invalid path still fail.
         type: string
         required: false
         default: ""
@@ -108,7 +108,7 @@ jobs:
             }
       - name: Tripcord
         id: tripcord
-        uses: vgmartinez/tripcord/.github/actions/tripcord@2c80fad23b5f317f3bde049a6aa922a35940860b # main@2c80fad # zizmor: ignore[ref-version-mismatch]
+        uses: vgmartinez/tripcord/.github/actions/tripcord@d01fb05f7e31996067c224393f519f699acc5d4a # main@d01fb05 # zizmor: ignore[ref-version-mismatch]
         with:
           ref: ${{ inputs.ref }}
           binary: ${{ inputs.binary }}

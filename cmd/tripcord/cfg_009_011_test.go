@@ -94,8 +94,19 @@ func TestScanHiddenCharsEvidence(t *testing.T) {
 		".github/copilot-instructions.md": "Be brief.\nSee \u202eLEAKtc011bidi\u202c.\n",
 	})
 	for _, format := range scanFormats {
+		args := []string{"scan", "--format", format, root}
+		if format == "text" {
+			var compact, compactErr bytes.Buffer
+			if code := run(args, &compact, &compactErr); code != int(exitcode.Findings) {
+				t.Fatalf("text: exit %d, stderr %q", code, compactErr.String())
+			}
+			if strings.Contains(compact.String()+compactErr.String(), "LEAK") {
+				t.Fatalf("text leaked hidden text:\n%s%s", compact.String(), compactErr.String())
+			}
+			args = []string{"scan", "--format", "text", "-v", root}
+		}
 		var stdout, stderr bytes.Buffer
-		if code := run([]string{"scan", "--format", format, root}, &stdout, &stderr); code != int(exitcode.Findings) {
+		if code := run(args, &stdout, &stderr); code != int(exitcode.Findings) {
 			t.Fatalf("%s: exit %d, stderr %q", format, code, stderr.String())
 		}
 		report := stdout.String() + stderr.String()

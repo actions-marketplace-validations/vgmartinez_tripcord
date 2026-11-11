@@ -1,0 +1,238 @@
+name: release
+
+# A v* tag builds the six release archives, attests their provenance,
+# and creates a draft GitHub Release whose body is that tag's section
+# of docs/release-notes.md. The release is never published from here:
+# a maintainer publishes it, and lists it on the Marketplace, in the
+# GitHub UI.
+#
+# A pull request that changes this file, go.mod, go.sum, or cmd/ runs
+# the same build as a dry run. It uploads the archives and SHA256SUMS
+# as run artifacts and does nothing else: no attestation, no release,
+# and contents: read only.
+#
+# scripts/release-build.sh is the whole build, so rebuilding a commit
+# locally gives the same SHA256SUMS.
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - go.mod
+      - go.sum
+      - cmd/**
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout the commit being built
+    strategy:
+      fail-fast: true
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      # A pull request builds its head commit, not GitHub's merge ref, so
+      # the dry run can be rebuilt from a commit that exists in the repo.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      # No module or build cache: a release must not restore state
+      # another workflow run wrote.
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Version
+        id: version
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            push)
+              if [ "$REF_TYPE" != "tag" ]; then
+                echo "::error::release builds run on a tag push, not ${REF_TYPE}"
+                exit 1
+              fi
+              version="$REF_NAME"
+              ;;
+            pull_request)
+              version="v0.0.0-pr.${PR_NUMBER}"
+              ;;
+            *)
+              echo "::error::unsupported event ${EVENT_NAME}"
+              exit 1
+              ;;
+          esac
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version is not vX.Y.Z or vX.Y.Z-<prerelease>"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        id: build
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PLATFORM: ${{ matrix.goos }}/${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          name=$(scripts/release-build.sh build "${RUNNER_TEMP}/dist" "$VERSION" "$PLATFORM")
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          sha256sum "${RUNNER_TEMP}/dist/${name}"
+
+      - name: Rebuild and compare
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PLATFORM: ${{ matrix.goos }}/${{ matrix.goarch }}
+          NAME: ${{ steps.build.outputs.name }}
+        run: |
+          set -euo pipefail
+          go clean -cache
+          again=$(scripts/release-build.sh build "${RUNNER_TEMP}/again" "$VERSION" "$PLATFORM")
+          test "$again" = "$NAME"
+          cmp "${RUNNER_TEMP}/dist/${NAME}" "${RUNNER_TEMP}/again/${NAME}"
+          echo "a clean rebuild of ${NAME} is byte-identical"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.build.outputs.name }}
+          path: ${{ runner.temp }}/dist/${{ steps.build.outputs.name }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  checksums:
+    name: SHA256SUMS
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Download archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tripcord_*
+          merge-multiple: true
+          path: ${{ runner.temp }}/dist
+
+      # The same listing and sort as scripts/release-build.sh sums.
+      - name: Write SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          cd "${RUNNER_TEMP}/dist"
+          mapfile -t files < <(printf '%s\n' tripcord_*.tar.gz tripcord_*.zip | sort)
+          if [ "${#files[@]}" -ne 6 ]; then
+            echo "::error::expected 6 archives, found ${#files[@]}"
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            test -f "$f"
+          done
+          sha256sum -- "${files[@]}" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload SHA256SUMS
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: SHA256SUMS
+          path: ${{ runner.temp }}/dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  attest:
+    name: attest provenance
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: checksums
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write # sign the provenance with this workflow's OIDC identity
+      attestations: write # store the provenance attestations
+    steps:
+      - name: Download archives and SHA256SUMS
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          merge-multiple: true
+          path: ${{ runner.temp }}/dist
+
+      - name: Verify SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/dist"
+          sha256sum -c SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/dist/tripcord_*
+            ${{ runner.temp }}/dist/SHA256SUMS
+
+  release:
+    name: draft release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: attest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the draft release and upload its assets
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download archives and SHA256SUMS
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          merge-multiple: true
+          path: ${{ runner.temp }}/dist
+
+      # --draft always: publishing is a manual step in the GitHub UI.
+      - name: Create draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/dist"
+          sha256sum -c SHA256SUMS
+          "${GITHUB_WORKSPACE}/scripts/release-build.sh" notes "$TAG" > "${RUNNER_TEMP}/notes.md"
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file "${RUNNER_TEMP}/notes.md" \
+            -- tripcord_* SHA256SUMS

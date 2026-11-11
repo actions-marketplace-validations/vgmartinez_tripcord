@@ -126,7 +126,7 @@ func TestVersionSkewNewerEmbedHasNoHigh(t *testing.T) {
 			}
 			assertScanLocally(t, got)
 			if name == "trusted older release" {
-				code, stdout, stderr := runCLI(t, "scan", "--format", "text", repo)
+				code, stdout, stderr := runCLI(t, "scan", "--format", "text", "-v", repo)
 				if code != int(exitcode.OK) || !strings.Contains(stdout, scanLocally) {
 					t.Fatalf("text: exit %d\n%s\n%s", code, stdout, stderr)
 				}
@@ -176,7 +176,7 @@ func TestVersionSkewKnownPinIsOutdatedLow(t *testing.T) {
 		t.Fatalf("findings = %+v, want %+v", got, want)
 	}
 	assertScanLocally(t, got)
-	code, stdout, stderr := runCLI(t, "scan", "--format", "text", repo)
+	code, stdout, stderr := runCLI(t, "scan", "--format", "text", "-v", repo)
 	if code != int(exitcode.OK) || !strings.Contains(stdout, scanLocally) {
 		t.Fatalf("text: exit %d\n%s\n%s", code, stdout, stderr)
 	}

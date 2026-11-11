@@ -53,10 +53,23 @@ import (
 	"github.com/vgmartinez/tripcord/internal/scriptcheck"
 )
 
-// version is the build version. Override it at link time:
+// version and commit are the build version and the commit it was built
+// from. Override them at link time:
 //
-//	go build -ldflags "-X main.version=vX.Y.Z"
-var version = "dev"
+//	go build -ldflags "-X main.version=vX.Y.Z -X main.commit=<sha>"
+var (
+	version = "dev"
+	commit  = ""
+)
+
+// versionLine is what version and --version print: the version alone
+// when no commit was linked in, so a plain build still prints dev.
+func versionLine() string {
+	if commit == "" {
+		return version + "\n"
+	}
+	return version + " (commit " + commit + ")\n"
+}
 
 const usage = `tripcord is a local coding-agent security scanner.
 
@@ -118,7 +131,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	case "help", "-h", "--help":
 		return writeString(stdout, usage)
 	case "version", "--version":
-		return writeString(stdout, version+"\n")
+		return writeString(stdout, versionLine())
 	case "scan":
 		return runScan(args[1:], stdout, stderr)
 	case "pr-context":
@@ -161,6 +174,9 @@ type scanOptions struct {
 	// stagedDot is set when a --staged path is "."; the working
 	// directory must then be the repository root.
 	stagedDot bool
+	// verbose is -v/--verbose: the detailed text view. Other formats
+	// ignore it.
+	verbose bool
 	// executing is --executing-workflow: the reusable workflow this scan
 	// runs inside, which tripcord-pr.yml's action passes.
 	executing *embedded.WorkflowRef
@@ -641,11 +657,29 @@ func scanTree(ctx context.Context, t scanTarget, opts scanOptions, stdout, stder
 		}
 		findings = append(findings, finding)
 	}
+	blocking, notes := partitionDiagnostics(diagnostics)
+	textExit := int(exitcode.OK)
+	if len(blocking) > 0 {
+		textExit = int(exitcode.Config)
+	} else {
+		for _, finding := range findings {
+			fails, err := effective.Fails(finding.Severity)
+			if err != nil {
+				return t.internalError(stderr, err)
+			}
+			if fails {
+				textExit = int(exitcode.Findings)
+				break
+			}
+		}
+	}
 	handle, err := output.SelectSink(opts.format, opts.output, stdout, output.Options{
 		Redactor:    output.DefaultRedactor,
 		RepoRoot:    root,
 		ToolVersion: version,
 		Rules:       sarifRuleText(catalog),
+		Verbose:     opts.verbose,
+		TextExit:    &textExit,
 	})
 	if err != nil {
 		var pathErr *output.PathError
@@ -654,7 +688,6 @@ func scanTree(ctx context.Context, t scanTarget, opts scanOptions, stdout, stder
 		}
 		return t.internalError(stderr, err)
 	}
-	blocking, notes := partitionDiagnostics(diagnostics)
 	if err := handle.SetDiagnostics(outputDiagnostics(append(append([]adapters.Diagnostic{}, blocking...), notes...))); err != nil {
 		_ = handle.Close()
 		return t.internalError(stderr, err)
@@ -685,16 +718,7 @@ func scanTree(ctx context.Context, t scanTarget, opts scanOptions, stdout, stder
 		}
 		return int(exitcode.Config)
 	}
-	for _, finding := range findings {
-		fails, err := effective.Fails(finding.Severity)
-		if err != nil {
-			return t.internalError(stderr, err)
-		}
-		if fails {
-			return int(exitcode.Findings)
-		}
-	}
-	return int(exitcode.OK)
+	return textExit
 }
 
 var (
@@ -736,6 +760,8 @@ func parseCommandFlags(cmd flagCommand, args []string, stdout io.Writer) (scanOp
 	flags.StringVar(&opts.since, "since", "", "files changed between the ref and HEAD; requires git")
 	flags.StringVar(&opts.base, "base", "", "base revision of a change: also report a Tripcord embed the change removes or weakens (TC-CFG-016); requires git. --since implies it")
 	flags.StringVar(&opts.failOn, "fail-on", "", "low, medium, high, or critical")
+	flags.BoolVar(&opts.verbose, "verbose", false, "text output: evidence, fix, and fingerprint on each finding")
+	flags.BoolVar(&opts.verbose, "v", false, "text output: evidence, fix, and fingerprint on each finding")
 	flags.StringVar(&opts.policy, "policy", "", "policy file")
 	flags.StringVar(&opts.orgPolicy, "org-policy", "", "organization policy file")
 	flags.BoolVar(&opts.staged, "staged", false, "scan Git's staged index; paths are unioned with the staged change set")

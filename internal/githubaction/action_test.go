@@ -466,6 +466,8 @@ func TestTripcordActionPropagatesPolicyExit(t *testing.T) {
 		"TRIPCORD_SCAN_STATUS":       "${{ steps.scan.outputs.exit-code }}",
 		"TRIPCORD_PR_CONTEXT_STATUS": "${{ steps.pr-context.outputs.exit-code }}",
 		"TRIPCORD_REVIEWS_FILE":      "${{ inputs.reviews-file }}",
+		"TRIPCORD_FAIL_ON":           "${{ inputs.fail-on }}",
+		"TRIPCORD_SARIF":             "${{ steps.paths.outputs.sarif }}",
 	}
 	if len(apply.Env) != len(wantEnv) {
 		t.Fatalf("final step env = %#v, want %#v", apply.Env, wantEnv)

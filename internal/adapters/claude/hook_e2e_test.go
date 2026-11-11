@@ -46,7 +46,14 @@ func TestHookColonCredentialNeverRendered(t *testing.T) {
 					if strings.Contains(rendered, secret) {
 						t.Errorf("%s with %s redactor leaks %s:\n%s", format, name, secret, rendered)
 					}
-					if !strings.Contains(rendered, "REDACTED") {
+					shown := rendered
+					if format == output.FormatText {
+						shown = renderVerbose(t, finding, redactor)
+						if strings.Contains(shown, secret) {
+							t.Errorf("text -v with %s redactor leaks %s:\n%s", name, secret, shown)
+						}
+					}
+					if !strings.Contains(shown, "REDACTED") {
 						t.Errorf("%s with %s redactor dropped the command:\n%s", format, name, rendered)
 					}
 				}
@@ -94,7 +101,14 @@ func TestHookDockerGluedPrivateKeyNeverRendered(t *testing.T) {
 			if strings.Contains(rendered, secret) {
 				t.Errorf("%s with %s redactor leaks %s:\n%s", format, name, secret, rendered)
 			}
-			if !strings.Contains(rendered, "REDACTED") {
+			shown := rendered
+			if format == output.FormatText {
+				shown = renderVerbose(t, finding, redactor)
+				if strings.Contains(shown, secret) {
+					t.Errorf("text -v with %s redactor leaks %s:\n%s", name, secret, shown)
+				}
+			}
+			if !strings.Contains(shown, "REDACTED") {
 				t.Errorf("%s with %s redactor dropped the command:\n%s", format, name, rendered)
 			}
 		}
@@ -133,10 +147,20 @@ func hookFinding(t *testing.T, item model.ConfigItem, key, command string) model
 	return finding
 }
 
+func renderVerbose(t *testing.T, finding model.Finding, redactor func(string) string) string {
+	t.Helper()
+	return renderWith(t, output.FormatText, finding, output.Options{Redactor: redactor, RepoRoot: "/work/repo", ToolVersion: "1.2.3", Verbose: true})
+}
+
 func render(t *testing.T, format output.Format, finding model.Finding, redactor func(string) string) string {
 	t.Helper()
+	return renderWith(t, format, finding, output.Options{Redactor: redactor, RepoRoot: "/work/repo", ToolVersion: "1.2.3"})
+}
+
+func renderWith(t *testing.T, format output.Format, finding model.Finding, options output.Options) string {
+	t.Helper()
 	var buffer bytes.Buffer
-	sink, err := output.NewStdoutSink(format, &buffer, output.Options{Redactor: redactor, RepoRoot: "/work/repo", ToolVersion: "1.2.3"})
+	sink, err := output.NewStdoutSink(format, &buffer, options)
 	if err != nil {
 		t.Fatal(err)
 	}

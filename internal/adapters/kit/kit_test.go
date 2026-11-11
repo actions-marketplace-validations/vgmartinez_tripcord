@@ -378,6 +378,28 @@ func TestDecodeJSON(t *testing.T) {
 	}
 }
 
+func TestDecodeJSONCaseDistinctKeepsEnvCase(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"build":{"args":{"http_proxy":"","HTTP_PROXY":"","http_proxy":"x"}},"containerEnv":{"https_proxy":"","HTTPS_PROXY":""},"postCreateCommand":"a","PostCreateCommand":"b"}`)
+	_, warnings, err := DecodeJSONCaseDistinct(raw, JSONC, "Dev Containers", []string{"build.args", "containerEnv", "remoteEnv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(warnings, "\n")
+	if !strings.Contains(got, "duplicate key \"http_proxy\" in build.args") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	if strings.Contains(got, "http_proxy") && strings.Contains(got, "case-variant") && strings.Contains(got, "HTTP_PROXY") {
+		t.Fatalf("env case variants were reported: %v", warnings)
+	}
+	if strings.Contains(got, "https_proxy") && strings.Contains(got, "HTTPS_PROXY") {
+		t.Fatalf("containerEnv case variants were reported: %v", warnings)
+	}
+	if !strings.Contains(got, "case-variant keys \"postCreateCommand\" and \"PostCreateCommand\"") {
+		t.Fatalf("lifecycle case variants were not reported: %v", warnings)
+	}
+}
+
 func TestDecodeJSONCKeepsOffsets(t *testing.T) {
 	t.Parallel()
 	_, _, err := DecodeJSON([]byte("{/* comment */ \"a\": }"), JSONC, "Cursor")

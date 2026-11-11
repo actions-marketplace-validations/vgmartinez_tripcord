@@ -6,11 +6,22 @@ This page is for people changing the scanner. Using it starts at [Getting starte
 
 The module path in `go.mod` is `github.com/vgmartinez/tripcord`. The CLI package is `./cmd/tripcord`. `internal/project.Repository` is `vgmartinez/tripcord`, and a test checks that `github.com/` plus that constant matches the module path.
 
-`main.version` defaults to `dev`. Override it at link time:
+`main.version` defaults to `dev` and `main.commit` to empty. Override them at link time:
 
 ```sh
-go build -ldflags "-X main.version=vX.Y.Z" -o tripcord ./cmd/tripcord
+go build -ldflags "-X main.version=vX.Y.Z -X main.commit=$(git rev-parse HEAD)" -o tripcord ./cmd/tripcord
 ```
+
+`tripcord version` then prints `vX.Y.Z (commit <sha>)`; without a commit it prints the version alone.
+
+## Releases
+
+[`release.yml`](../.github/workflows/release.yml) runs [`scripts/release-build.sh`](../scripts/release-build.sh) for linux, darwin, and windows on amd64 and arm64: `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w -buildid= -X main.version=<tag> -X main.commit=<sha>"`, `SOURCE_DATE_EPOCH` from the commit, and archives with a fixed mtime, mode, owner, and order, plus `SHA256SUMS`. Each build fails unless `NOTICE` and `THIRD_PARTY_NOTICES` cover every module `go version -m` lists, and each is rebuilt after `go clean -cache` and compared byte for byte.
+
+- A `v*` tag attests the archives and `SHA256SUMS` with `actions/attest-build-provenance` and creates a draft GitHub Release whose body is the tag's section of [release notes](release-notes.md). A maintainer publishes it, and lists it on the Marketplace, in the GitHub UI. The workflow never publishes.
+- A pull request that changes `release.yml`, `go.mod`, `go.sum`, or `cmd/` runs the same build as a dry run, with `contents: read` only, and uploads the archives and `SHA256SUMS` as run artifacts.
+
+Run `make release-gate` before tagging.
 
 ## Make targets
 

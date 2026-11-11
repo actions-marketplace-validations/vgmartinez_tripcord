@@ -85,9 +85,19 @@ func TestHugeExcerptIsCapped(t *testing.T) {
 			t.Fatalf("%s is %d bytes", format, len(got))
 		}
 		switch format {
-		case FormatJSON, FormatJSONL, FormatText, FormatMD:
+		case FormatJSON, FormatJSONL, FormatMD:
 			if !strings.Contains(got, "…[truncated ") {
 				t.Fatalf("%s did not mark the truncated excerpt", format)
+			}
+		case FormatText:
+			if strings.Contains(got, strings.Repeat("Q", 64)) {
+				t.Fatal("compact text leaked the excerpt")
+			}
+			verbose := testOptions()
+			verbose.Verbose = true
+			detail := renderWith(t, FormatText, sealAll(t, []model.Finding{finding}), verbose)
+			if !strings.Contains(detail, "…[truncated ") {
+				t.Fatal("verbose text did not mark the truncated excerpt")
 			}
 		case FormatSARIF, FormatGHA:
 		default:

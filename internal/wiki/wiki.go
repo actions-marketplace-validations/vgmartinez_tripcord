@@ -37,6 +37,7 @@ const (
 var docPages = map[string]string{
 	"README.md":                         "Home",
 	"getting-started.md":                "Getting-Started",
+	"installation.md":                   "Installation",
 	"commands.md":                       "Commands",
 	"scan.md":                           "Scan",
 	"init.md":                           "Init",
@@ -47,6 +48,7 @@ var docPages = map[string]string{
 	"output.md":                         "Output-and-Sinks",
 	"privacy.md":                        "Privacy-and-Redaction",
 	"github-action.md":                  "GitHub-Action",
+	"badge.md":                          "Badge",
 	"pre-commit.md":                     "Pre-commit",
 	"policy.md":                         "Policy",
 	"faq.md":                            "FAQ",
@@ -78,9 +80,9 @@ type group struct {
 // sidebar groups pages for _Sidebar. Rule pages are reached from
 // Rules-Catalog.
 var sidebar = []group{
-	{"Start", []string{"Home", "Getting-Started", "Commands", "FAQ"}},
+	{"Start", []string{"Home", "Getting-Started", "Installation", "Commands", "FAQ"}},
 	{"Commands", []string{"Scan", "Init", "Hook", "Preopen", "PR-Context", "Fingerprints", "Output-and-Sinks", "Privacy-and-Redaction"}},
-	{"CI and hooks", []string{"GitHub-Action", "Pre-commit"}},
+	{"CI and hooks", []string{"GitHub-Action", "Badge", "Pre-commit"}},
 	{"Configuration", []string{"Policy", "Harness-Adapters", "Rules-Catalog"}},
 	{"Adapters", []string{
 		"Adapter-Claude-Code", "Adapter-Codex", "Adapter-Cursor", "Adapter-GitHub-Copilot",

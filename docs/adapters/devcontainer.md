@@ -78,8 +78,11 @@ fingerprint key, `sig:s1:` without one); see
 ## Parsing
 
 `devcontainer.json` is parsed as JSONC (comments and trailing commas).
-Duplicate keys use the last value and are reported; keys that differ only
-by case are reported. Nesting deeper than 64 levels, and files larger
+Duplicate keys use the last value and are reported. Keys that differ only
+by case are reported, except in `containerEnv`, `remoteEnv`, and
+`build.args`: those names are case-sensitive, so `http_proxy` and
+`HTTP_PROXY` are distinct keys and are both kept. An exact duplicate in
+those objects is still reported. Nesting deeper than 64 levels, and files larger
 than 1 MiB, fail closed with a diagnostic.
 
 Reads, symlink handling, limits, and diagnostics are those of the

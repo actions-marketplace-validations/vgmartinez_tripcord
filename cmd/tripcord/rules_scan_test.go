@@ -57,8 +57,27 @@ func TestScanConfigRulesEveryFormat(t *testing.T) {
 	var want []string
 	for _, format := range []string{"json", "md", "sarif", "text", "gha"} {
 		for attempt := range 2 {
+			args := []string{"scan", "--format", format, root}
+			if format == "text" {
+				var compact, compactErr bytes.Buffer
+				if code := run(args, &compact, &compactErr); code != int(exitcode.Findings) {
+					t.Fatalf("text: exit code = %d, stderr = %q", code, compactErr.String())
+				}
+				creport := compact.String() + compactErr.String()
+				for _, id := range ruleIDs {
+					if !strings.Contains(creport, id) {
+						t.Fatalf("text: no %s in report:\n%s", id, creport)
+					}
+				}
+				for _, secret := range secrets {
+					if strings.Contains(creport, secret) {
+						t.Fatalf("text: report leaks %q:\n%s", secret, creport)
+					}
+				}
+				args = []string{"scan", "--format", "text", "-v", root}
+			}
 			var stdout, stderr bytes.Buffer
-			if code := run([]string{"scan", "--format", format, root}, &stdout, &stderr); code != int(exitcode.Findings) {
+			if code := run(args, &stdout, &stderr); code != int(exitcode.Findings) {
 				t.Fatalf("%s: exit code = %d, stderr = %q", format, code, stderr.String())
 			}
 			report := stdout.String() + stderr.String()
@@ -207,7 +226,8 @@ func TestScanMediumPermissionExitsZero(t *testing.T) {
 	if code := run([]string{"scan", "--format", "text", root}, &stdout, &stderr); code != int(exitcode.OK) {
 		t.Fatalf("exit %d stderr %q\n%s", code, stderr.String(), stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "MEDIUM TC-CFG-004") || strings.Contains(stdout.String(), "HIGH TC-CFG-004") {
+	visible := regexp.MustCompile(`\x1b]8;;[^\x1b]*\x1b\\`).ReplaceAllString(stdout.String(), "")
+	if !strings.Contains(visible, "MEDIUM TC-CFG-004") || strings.Contains(visible, "HIGH TC-CFG-004") {
 		t.Fatalf("stdout = %s", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "1 finding(s)") {

@@ -1,0 +1,44 @@
+name: Rule proposal
+description: Propose a new detection rule or a change to an existing one.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Behavior to detect
+      description: What the agent configuration makes run, and in which harness (Claude Code, Cursor, Copilot, Codex, Gemini CLI, ...).
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: A public report, advisory, or paper that shows this in the wild. Report unpublished malicious configurations privately instead; see SECURITY.md.
+    validations:
+      required: true
+  - type: textarea
+    id: positive
+    attributes:
+      label: Positive example
+      description: A minimal tree the rule must flag, in the corpus txtar format (`-- path --` before each file). Use placeholder hosts and no real secrets.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: negative
+    attributes:
+      label: Negative example
+      description: A close, safe tree the rule must not flag, in the same format.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: severity
+    attributes:
+      label: Proposed severity
+      placeholder: high
+  - type: textarea
+    id: related
+    attributes:
+      label: Related rules
+      description: Existing rules that overlap, and why they do not cover this.

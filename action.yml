@@ -1,0 +1,86 @@
+name: Tripcord Security
+description: Catch malicious coding-agent config (hooks, MCP servers, skills, setup commands) in pull requests, with SARIF and a comment.
+author: The Tripcord Authors
+branding:
+  icon: shield
+  color: orange
+# The Marketplace entry point, for uses: vgmartinez/tripcord@<ref>. It
+# only forwards every input and output to .github/actions/tripcord. A
+# composite's uses: ./path resolves against the caller's workspace, not
+# this repository, so the delegate is named by repository and commit.
+# The repin chain moves this pin with the reusable workflows' action pin
+# (TestRootActionDelegates).
+inputs:
+  ref:
+    description: Git ref of this action's repository to build. Empty builds the checkout that contains the action.
+    required: false
+    default: ""
+  binary:
+    description: Existing tripcord binary. When set, the source build is skipped and nothing is downloaded.
+    required: false
+    default: ""
+  path:
+    description: Repository path to scan.
+    required: false
+    default: .
+  fail-on:
+    description: Inclusive severity passed to tripcord (low, medium, high, critical). Empty lets the CLI and policy decide. none is report-only; findings and a TC-CFG-014 denial warn instead of failing the job, while exit 3, exit 4, and an invalid path still fail.
+    required: false
+    default: ""
+  upload-sarif:
+    description: Upload the SARIF report to GitHub code scanning.
+    required: false
+    default: "true"
+  comment:
+    description: Post the Markdown report to a pull request.
+    required: false
+    default: "false"
+  github-token:
+    description: Token used for a ref checkout, SARIF upload, and an optional pull-request comment.
+    required: false
+    default: ${{ github.token }}
+  reviews-file:
+    description: JSON array of GitHub pull request reviews for pr-context. Empty skips --reviews-file.
+    required: false
+    default: ""
+  base:
+    description: Base commit the scan compares a Tripcord embed with (scan --base), so a pull request that removes or weakens the guard fails TC-CFG-016. The checkout must contain it (fetch-depth 0). Empty scans the head alone.
+    required: false
+    default: ${{ github.event.pull_request.base.sha }}
+outputs:
+  scan-exit-code:
+    description: Exit code from the scans. The job fails with this code after publishing, except exit 1 with fail-on none.
+    value: ${{ steps.tripcord.outputs.scan-exit-code }}
+  sarif:
+    description: Path to the SARIF report.
+    value: ${{ steps.tripcord.outputs.sarif }}
+  markdown:
+    description: Path to the Markdown report.
+    value: ${{ steps.tripcord.outputs.markdown }}
+  is_agent:
+    description: pr-context is_agent output.
+    value: ${{ steps.tripcord.outputs.is_agent }}
+  agents:
+    description: pr-context agents output, comma-separated.
+    value: ${{ steps.tripcord.outputs.agents }}
+  pr-context-exit-code:
+    description: Exit code from pr-context.
+    value: ${{ steps.tripcord.outputs.pr-context-exit-code }}
+  tc-cfg-014:
+    description: TC-CFG-014 outcome from pr-context, when it is not clear.
+    value: ${{ steps.tripcord.outputs.tc-cfg-014 }}
+runs:
+  using: composite
+  steps:
+    - id: tripcord
+      uses: vgmartinez/tripcord/.github/actions/tripcord@d01fb05f7e31996067c224393f519f699acc5d4a # main@d01fb05 # zizmor: ignore[ref-version-mismatch]
+      with:
+        ref: ${{ inputs.ref }}
+        binary: ${{ inputs.binary }}
+        path: ${{ inputs.path }}
+        fail-on: ${{ inputs.fail-on }}
+        upload-sarif: ${{ inputs.upload-sarif }}
+        comment: ${{ inputs.comment }}
+        github-token: ${{ inputs.github-token }}
+        reviews-file: ${{ inputs.reviews-file }}
+        base: ${{ inputs.base }}
