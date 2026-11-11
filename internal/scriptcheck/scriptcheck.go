@@ -84,6 +84,7 @@ func Annotate(root string, items []model.ConfigItem) error {
 			}
 		}
 	}
+	annotateFetchNotRun(items)
 	return annotateChecksums(resolvedRoot, items)
 }
 
