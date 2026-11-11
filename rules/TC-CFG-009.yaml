@@ -80,7 +80,10 @@
 # that form keeps the finding. Extracting or cloning into bin, sbin,
 # libexec, node_modules, vendor, site-packages, or hooks keeps it too.
 # What a committed script, build file, or manifest does with a fetched
-# name is not read.
+# name is not read. A committed package.json that names a fetched
+# directory with file:./<cloned dir>, followed by npm install, is not
+# inspected, so that fetch may be suppressed. A git clone as the last
+# command is not treated as a fetch.
 #
 # Not read: RUN lines of a Dockerfile, OCI Feature references
 # (ghcr.io/...:1), a blueprint uses: action, and what a fetched script

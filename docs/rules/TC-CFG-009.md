@@ -257,7 +257,13 @@ Still reported: `tar -xzf tool.tar.gz && ./tool/install.sh`,
   is not read.
 - For fetched data that nothing runs (see above), a committed script,
   build file, or manifest that a setup command runs is not read: one
-  that runs a fetched file or directory by name is not seen.
+  that runs a fetched file or directory by name is not seen. A
+  committed `package.json` that names a fetched directory with
+  `file:./<cloned dir>`, followed by `npm install`, is not inspected,
+  so that fetch may be suppressed.
+- A `git clone` is not treated as a fetch when it is the last command
+  in the script. The fetch risk is only raised when another command
+  follows the clone.
 - The checksum itself is not compared with anything: the rule checks
   that a check runs against a hash committed to the repository, not
   that the hash is right.
