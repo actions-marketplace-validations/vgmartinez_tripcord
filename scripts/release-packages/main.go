@@ -28,6 +28,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
 	"crypto/sha256"
 	"debug/macho"
@@ -36,6 +37,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
@@ -539,13 +541,15 @@ func wheel(ver string, t target, tags []string, p payload, pyFiles []wheelFile, 
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	for _, f := range files {
-		h := &zip.FileHeader{Name: f.name, Method: zip.Deflate, Modified: modified}
-		h.SetMode(f.mode)
-		w, err := zw.CreateHeader(h)
+		h, data, err := rawEntry(f, modified)
 		if err != nil {
 			return "", nil, err
 		}
-		if _, err := w.Write(f.data); err != nil {
+		w, err := zw.CreateRaw(h)
+		if err != nil {
+			return "", nil, err
+		}
+		if _, err := w.Write(data); err != nil {
 			return "", nil, err
 		}
 	}
@@ -554,6 +558,48 @@ func wheel(ver string, t target, tags []string, p payload, pyFiles []wheelFile, 
 	}
 	name := fmt.Sprintf("tripcord-%s-py3-none-%s.whl", ver, strings.Join(tags, "."))
 	return name, buf.Bytes(), nil
+}
+
+// rawEntry deflates f and returns a complete header for
+// zip.Writer.CreateRaw. CreateHeader streams each entry and so sets
+// general purpose flag bit 3 and writes a data descriptor after the
+// data, which PyPI rejects (https://docs.pypi.org/archives). With the
+// CRC-32 and both sizes known up front and bit 3 clear, CreateRaw puts
+// them in the local header and writes no descriptor. CreateRaw also
+// adds no extra fields: no extended timestamp, and no zip64 field,
+// which it writes only at 4 GiB; maxEntry keeps a wheel far below that.
+func rawEntry(f wheelFile, modified time.Time) (*zip.FileHeader, []byte, error) {
+	var comp bytes.Buffer
+	// Level 5 is what archive/zip's own Deflate compressor uses.
+	fw, err := flate.NewWriter(&comp, 5)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := fw.Write(f.data); err != nil {
+		return nil, nil, err
+	}
+	if err := fw.Close(); err != nil {
+		return nil, nil, err
+	}
+	h := &zip.FileHeader{
+		Name:               f.name,
+		Method:             zip.Deflate,
+		Modified:           modified,
+		CRC32:              crc32.ChecksumIEEE(f.data),
+		CompressedSize64:   uint64(comp.Len()),
+		UncompressedSize64: uint64(len(f.data)),
+	}
+	h.SetMode(f.mode)
+	// CreateRaw writes these fields as given; CreateHeader would have
+	// set them. The names are ASCII, so the UTF-8 flag stays clear.
+	// CreateRaw ignores Modified and writes only the MS-DOS time, so the
+	// deprecated fields are the way to set the entry time.
+	h.CreatorVersion = h.CreatorVersion&0xff00 | 20
+	h.ReaderVersion = 20
+	h.ModifiedDate = uint16(modified.Day() + int(modified.Month())<<5 + (modified.Year()-1980)<<9) //nolint:staticcheck // see above
+	h.ModifiedTime = uint16(modified.Second()/2 + modified.Minute()<<5 + modified.Hour()<<11)      //nolint:staticcheck // see above
+	h.Flags &^= 0x8
+	return h, comp.Bytes(), nil
 }
 
 // npmFiles are the files of packaging/npm that ship; tests stay behind.
