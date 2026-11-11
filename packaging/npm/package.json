@@ -1,0 +1,38 @@
+{
+  "name": "tripcord",
+  "version": "0.0.0-dev",
+  "description": "Catch malicious coding-agent config before it runs",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/vgmartinez/tripcord",
+  "bugs": {
+    "url": "https://github.com/vgmartinez/tripcord/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vgmartinez/tripcord.git",
+    "directory": "packaging/npm"
+  },
+  "bin": {
+    "tripcord": "bin/tripcord.js"
+  },
+  "files": [
+    "bin/tripcord.js",
+    "lib/tripcord.js",
+    "SHA256SUMS"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "scripts": {
+    "test": "node --test test/tripcord.test.js"
+  }
+}

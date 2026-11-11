@@ -2,8 +2,9 @@
 
 v0.1.0 is the tagged release of this tree: verified binaries on
 [GitHub Releases](https://github.com/vgmartinez/tripcord/releases),
-described in [Release notes](release-notes.md). There is no npm or
-PyPI package. `main` continues past that tag.
+described in [Release notes](release-notes.md), and the same binaries
+through Homebrew, npm, and PyPI ([Installation](installation.md)).
+`main` continues past that tag.
 
 ## In this tree
 

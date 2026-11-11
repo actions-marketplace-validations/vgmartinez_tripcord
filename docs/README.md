@@ -24,10 +24,17 @@ and before a commit ([pre-commit](pre-commit.md)).
 
 ## Install
 
-Download a release archive from
+```sh
+brew install vgmartinez/tap/tripcord   # macOS and Linux
+npx tripcord scan .                    # npm
+uvx tripcord scan .                    # PyPI (or: pip install tripcord)
+```
+
+All three install the release binary and check it against the
+release's `SHA256SUMS` ([Installation](installation.md)). You can also
+download a release archive from
 [Releases](https://github.com/vgmartinez/tripcord/releases) and verify
-it ([Installation](installation.md)), or install from source with
-Go 1.27.3 or newer. There is no npm or PyPI package.
+it yourself, or install from source with Go 1.27.3 or newer:
 
 ```sh
 go install github.com/vgmartinez/tripcord/cmd/tripcord@main

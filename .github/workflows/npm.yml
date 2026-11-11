@@ -1,0 +1,167 @@
+name: npm
+
+# Publishes the npm package tripcord (npx tripcord) for a published
+# release. The package is a dependency-free shim, packaging/npm, plus the
+# release's SHA256SUMS: on first run it downloads the release archive for
+# its platform from github.com and runs it only if its sha256 matches.
+# Nothing is rebuilt. The version is the tag without the v.
+#
+# It runs when a release is published, or by hand for an existing
+# release tag (workflow_dispatch, tag: vX.Y.Z). The stage job checks the
+# release (scripts/release-fetch.sh), stages and tests the package, and
+# packs it. The publish job, in the npm environment, publishes that
+# tarball with npm trusted publishing (OIDC): no npm token is stored
+# anywhere, and npm records the provenance of this workflow run.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to package (vX.Y.Z)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: npm
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    name: stage and test
+    if: github.repository == 'vgmartinez/tripcord' && (github.event_name == 'workflow_dispatch' || !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout, and read the release and its assets
+      attestations: read # verify the release archives' build provenance
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Tag
+        id: tag
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            release) tag="$RELEASE_TAG" ;;
+            workflow_dispatch) tag="$INPUT_TAG" ;;
+            *)
+              echo "::error::unsupported event ${EVENT_NAME}"
+              exit 1
+              ;;
+          esac
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::tag is not vX.Y.Z; prerelease tags are not packaged"
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: scripts/release-fetch.sh "$TAG" "${RUNNER_TEMP}/dist"
+
+      - name: Shim tests
+        working-directory: packaging/npm
+        run: node --test test/tripcord.test.js
+
+      # The staged shim downloads this runner's archive from the release,
+      # checks it against the SHA256SUMS it ships, and runs it.
+      - name: Stage, smoke test, and pack
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          pkg="${RUNNER_TEMP}/npm"
+          go run ./scripts/release-packages npm -version "$TAG" -sums "${RUNNER_TEMP}/dist/SHA256SUMS" -src packaging/npm -license LICENSE -out "$pkg"
+          cmp "${RUNNER_TEMP}/dist/SHA256SUMS" "${pkg}/SHA256SUMS"
+          got=$(TRIPCORD_CACHE_DIR="${RUNNER_TEMP}/npm-cache" node "${pkg}/bin/tripcord.js" --version)
+          echo "$got"
+          case "$got" in
+            "${TAG} (commit "*")") ;;
+            *)
+              echo "::error::the staged shim printed an unexpected version"
+              exit 1
+              ;;
+          esac
+          mkdir -p "${RUNNER_TEMP}/tarball"
+          (cd "$pkg" && npm pack --pack-destination "${RUNNER_TEMP}/tarball")
+          tar -tzf "${RUNNER_TEMP}/tarball/tripcord-${TAG#v}.tgz"
+
+      - name: Upload the package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/tarball/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: publish to npm
+    needs: stage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      id-token: write # npm trusted publishing and provenance
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Download the package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-package
+          path: ${{ runner.temp }}/tarball
+
+      # Trusted publishing needs npm 11.5.1 or newer. npm view fails for
+      # a version that is not on the registry yet; a version that is
+      # already there is left alone (npm versions are immutable).
+      - name: Publish
+        shell: bash
+        env:
+          TAG: ${{ needs.stage.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          npm_version=$(npm --version)
+          if [ "$(printf '%s\n' 11.5.1 "$npm_version" | sort -V | head -n1)" != 11.5.1 ]; then
+            echo "::error::npm ${npm_version} is older than 11.5.1, which trusted publishing needs"
+            exit 1
+          fi
+          if npm view "tripcord@${version}" version >/dev/null 2>&1; then
+            echo "::notice title=npm::tripcord@${version} is already on npm. Nothing to publish."
+            exit 0
+          fi
+          npm publish "${RUNNER_TEMP}/tarball/tripcord-${version}.tgz" --provenance --access public

@@ -1,0 +1,134 @@
+name: pypi
+
+# Publishes the PyPI package tripcord (uvx tripcord, pip install
+# tripcord) for a published release: one platform wheel per release
+# archive, each bundling that archive's binary unchanged, built by
+# scripts/release-packages after scripts/release-fetch.sh has checked
+# the archives against SHA256SUMS and their provenance. Nothing is
+# rebuilt and there is no sdist. The version is the tag without the v.
+#
+# It runs when a release is published, or by hand for an existing
+# release tag (workflow_dispatch, tag: vX.Y.Z). The build job builds and
+# smoke tests the wheels; the publish job, in the pypi environment,
+# uploads them with PyPI trusted publishing (OIDC). No PyPI token is
+# stored anywhere.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to package (vX.Y.Z)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: pypi
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build wheels
+    if: github.repository == 'vgmartinez/tripcord' && (github.event_name == 'workflow_dispatch' || !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout, and read the release and its assets
+      attestations: read # verify the release archives' build provenance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Tag
+        id: tag
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            release) tag="$RELEASE_TAG" ;;
+            workflow_dispatch) tag="$INPUT_TAG" ;;
+            *)
+              echo "::error::unsupported event ${EVENT_NAME}"
+              exit 1
+              ;;
+          esac
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::tag is not vX.Y.Z; prerelease tags are not packaged"
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: scripts/release-fetch.sh "$TAG" "${RUNNER_TEMP}/dist"
+
+      # Installs this runner's wheel offline into a fresh virtualenv and
+      # runs the tripcord entry point.
+      - name: Build and smoke test the wheels
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          wheels="${RUNNER_TEMP}/wheels"
+          go run ./scripts/release-packages wheels -version "$TAG" -dist "${RUNNER_TEMP}/dist" -src packaging/pypi -out "$wheels"
+          ls -l "$wheels"
+          test "$(find "$wheels" -name '*.whl' | wc -l)" -eq 6
+          venv="${RUNNER_TEMP}/venv"
+          python3 -m venv "$venv"
+          "${venv}/bin/python" -m pip install --quiet --no-index --find-links "$wheels" "tripcord==${TAG#v}"
+          got=$("${venv}/bin/tripcord" --version)
+          echo "$got"
+          case "$got" in
+            "${TAG} (commit "*")") ;;
+            *)
+              echo "::error::the installed wheel printed an unexpected version"
+              exit 1
+              ;;
+          esac
+
+      - name: Upload the wheels
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pypi-wheels
+          path: ${{ runner.temp }}/wheels/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write # PyPI trusted publishing and attestations
+    steps:
+      - name: Download the wheels
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pypi-wheels
+          path: ${{ runner.temp }}/wheels
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: ${{ runner.temp }}/wheels
