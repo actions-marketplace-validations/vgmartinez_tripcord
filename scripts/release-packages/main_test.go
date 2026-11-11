@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 var update = flag.Bool("update", false, "rewrite testdata/tripcord.rb.golden")
@@ -165,12 +167,18 @@ var fixtureTime = time.Date(2026, 11, 11, 7, 18, 0, 0, time.UTC)
 
 func fakeArchive(t *testing.T, tg target, extra string) []byte {
 	t.Helper()
+	return fakeArchiveWith(t, tg, fakeBinary(tg), extra)
+}
+
+// fakeArchiveWith is fakeArchive with bin as the binary.
+func fakeArchiveWith(t *testing.T, tg target, bin []byte, extra string) []byte {
+	t.Helper()
 	files := []struct {
 		name string
 		data []byte
 		mode int64
 	}{
-		{tg.binary(), fakeBinary(tg), 0o755},
+		{tg.binary(), bin, 0o755},
 		{"LICENSE", []byte("Apache License 2.0\n"), 0o644},
 		{"NOTICE", []byte("notice\n"), 0o644},
 		{"THIRD_PARTY_NOTICES", []byte("third party\n"), 0o644},
@@ -220,6 +228,13 @@ func fakeArchive(t *testing.T, tg target, extra string) []byte {
 // unexpected entry to the linux/amd64 archive.
 func fakeDist(t *testing.T, extra string) string {
 	t.Helper()
+	return fakeDistWith(t, extra, nil)
+}
+
+// fakeDistWith is fakeDist with bins replacing the fake binary of the
+// targets it names.
+func fakeDistWith(t *testing.T, extra string, bins map[target][]byte) string {
+	t.Helper()
 	dir := t.TempDir()
 	var sums strings.Builder
 	for _, tg := range targets {
@@ -228,6 +243,9 @@ func fakeDist(t *testing.T, extra string) string {
 			e = extra
 		}
 		raw := fakeArchive(t, tg, e)
+		if bin, ok := bins[tg]; ok {
+			raw = fakeArchiveWith(t, tg, bin, e)
+		}
 		name := tg.archive(fixtureVersion)
 		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o644); err != nil {
 			t.Fatal(err)
@@ -504,4 +522,337 @@ func TestPackageTextNamesOnlyTripcord(t *testing.T) {
 			t.Errorf("%s does not name the license", p)
 		}
 	}
+}
+
+// TestWheelsHaveNoDataDescriptors walks the raw bytes of every built
+// wheel. PyPI rejects a wheel whose ZIP uses data descriptors (general
+// purpose flag bit 3, https://docs.pypi.org/archives), and also one
+// with prepended or trailing data, comments, duplicate names or extra
+// fields, unprintable names, or a central directory that does not
+// match the entries it lists.
+func TestWheelsHaveNoDataDescriptors(t *testing.T) {
+	dist := fakeDist(t, "")
+	out := t.TempDir()
+	var stdout bytes.Buffer
+	if err := run([]string{"wheels", "-version", "v" + fixtureVersion, "-dist", dist, "-src", pypiSrc, "-out", out}, &stdout); err != nil {
+		t.Fatal(err)
+	}
+	names := strings.Fields(stdout.String())
+	if len(names) != len(targets) {
+		t.Fatalf("wheels = %v, want %d", names, len(targets))
+	}
+	for _, n := range names {
+		raw, err := os.ReadFile(filepath.Join(out, n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := checkPyPIZip(raw); err != nil {
+			t.Errorf("%s: %v", n, err)
+		}
+	}
+}
+
+// TestCheckPyPIZipRejectsDataDescriptors keeps the checker honest: a
+// ZIP from archive/zip's CreateHeader, which streams every entry with a
+// data descriptor, must fail it.
+func TestCheckPyPIZipRejectsDataDescriptors(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.CreateHeader(&zip.FileHeader{Name: "a.txt", Method: zip.Deflate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.Write([]byte("hello\n"))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkPyPIZip(buf.Bytes()); err == nil || !strings.Contains(err.Error(), "data descriptor") {
+		t.Fatalf("checkPyPIZip = %v, want a data descriptor error", err)
+	}
+}
+
+const (
+	zipLocalSig      = 0x04034b50
+	zipCentralSig    = 0x02014b50
+	zipEndSig        = 0x06054b50
+	zipDescriptorSig = 0x08074b50
+	zipLocalLen      = 30
+	zipCentralLen    = 46
+	zipEndLen        = 22
+)
+
+type zipCentral struct {
+	flags, method         uint16
+	crc, csize, usize     uint32
+	offset                uint32
+	name                  string
+	extra                 []byte
+	commentLen, diskStart uint16
+}
+
+// checkPyPIZip parses raw as a ZIP and returns the first property PyPI
+// would reject, or the first local header that disagrees with the
+// central directory.
+func checkPyPIZip(raw []byte) error {
+	le := binary.LittleEndian
+	if len(raw) < zipEndLen {
+		return fmt.Errorf("%d bytes is too short for a ZIP", len(raw))
+	}
+	// No archive comment: the end record is exactly the last 22 bytes.
+	end := len(raw) - zipEndLen
+	if le.Uint32(raw[end:]) != zipEndSig {
+		return errors.New("the last 22 bytes are not an end of central directory record (archive comment or trailing data)")
+	}
+	disk, cdDisk := le.Uint16(raw[end+4:]), le.Uint16(raw[end+6:])
+	onDisk, total := le.Uint16(raw[end+8:]), le.Uint16(raw[end+10:])
+	cdSize, cdOff := le.Uint32(raw[end+12:]), le.Uint32(raw[end+16:])
+	if disk != 0 || cdDisk != 0 || onDisk != total {
+		return fmt.Errorf("multi-disk archive: disk %d, central directory disk %d, entries %d of %d", disk, cdDisk, onDisk, total)
+	}
+	if le.Uint16(raw[end+20:]) != 0 {
+		return errors.New("archive comment")
+	}
+	if uint64(cdOff)+uint64(cdSize) != uint64(end) {
+		return fmt.Errorf("central directory %d+%d does not end at the end record %d", cdOff, cdSize, end)
+	}
+	if bytes.Contains(raw[:end], []byte("PK\x06\x06")) || bytes.Contains(raw[:end], []byte("PK\x06\x07")) {
+		return errors.New("zip64 end of central directory record")
+	}
+	// Central directory.
+	var cd []zipCentral
+	seen := map[string]bool{}
+	p := int(cdOff)
+	for i := 0; i < int(total); i++ {
+		if p+zipCentralLen > end || le.Uint32(raw[p:]) != zipCentralSig {
+			return fmt.Errorf("central directory entry %d is not at %d", i, p)
+		}
+		nl, el, cl := int(le.Uint16(raw[p+28:])), int(le.Uint16(raw[p+30:])), int(le.Uint16(raw[p+32:]))
+		if p+zipCentralLen+nl+el+cl > end {
+			return fmt.Errorf("central directory entry %d runs past the directory", i)
+		}
+		c := zipCentral{
+			flags:      le.Uint16(raw[p+8:]),
+			method:     le.Uint16(raw[p+10:]),
+			crc:        le.Uint32(raw[p+16:]),
+			csize:      le.Uint32(raw[p+20:]),
+			usize:      le.Uint32(raw[p+24:]),
+			commentLen: uint16(cl),
+			diskStart:  le.Uint16(raw[p+34:]),
+			offset:     le.Uint32(raw[p+42:]),
+			name:       string(raw[p+zipCentralLen : p+zipCentralLen+nl]),
+			extra:      raw[p+zipCentralLen+nl : p+zipCentralLen+nl+el],
+		}
+		if c.flags&0x8 != 0 {
+			return fmt.Errorf("%s: central directory flags %#04x set bit 3 (data descriptor)", c.name, c.flags)
+		}
+		if c.commentLen != 0 {
+			return fmt.Errorf("%s: member comment", c.name)
+		}
+		if c.diskStart != 0 {
+			return fmt.Errorf("%s: disk start %d", c.name, c.diskStart)
+		}
+		if err := checkZipName(c.name); err != nil {
+			return err
+		}
+		if seen[c.name] {
+			return fmt.Errorf("%s: duplicate entry", c.name)
+		}
+		seen[c.name] = true
+		if err := checkZipExtra(c.name, c.extra); err != nil {
+			return err
+		}
+		cd = append(cd, c)
+		p += zipCentralLen + nl + el + cl
+	}
+	if p != end {
+		return fmt.Errorf("central directory has %d bytes after its %d entries", end-p, total)
+	}
+	// Local headers, in order from byte 0: no prepended data, no gaps,
+	// no data descriptor after any entry's data, and the last entry's
+	// data ends where the central directory starts.
+	p = 0
+	for _, c := range cd {
+		if int(c.offset) != p {
+			return fmt.Errorf("%s: local header at %d, want %d (data between entries)", c.name, c.offset, p)
+		}
+		if p+zipLocalLen > int(cdOff) || le.Uint32(raw[p:]) != zipLocalSig {
+			return fmt.Errorf("%s: no local file header at %d", c.name, p)
+		}
+		flags := le.Uint16(raw[p+6:])
+		if flags&0x8 != 0 {
+			return fmt.Errorf("%s: local header flags %#04x set bit 3 (data descriptor)", c.name, flags)
+		}
+		if flags != c.flags || le.Uint16(raw[p+8:]) != c.method {
+			return fmt.Errorf("%s: local flags/method %#04x/%d, central %#04x/%d", c.name, flags, le.Uint16(raw[p+8:]), c.flags, c.method)
+		}
+		crc, csize, usize := le.Uint32(raw[p+14:]), le.Uint32(raw[p+18:]), le.Uint32(raw[p+22:])
+		if crc != c.crc || csize != c.csize || usize != c.usize {
+			return fmt.Errorf("%s: local crc/sizes %08x/%d/%d, central %08x/%d/%d", c.name, crc, csize, usize, c.crc, c.csize, c.usize)
+		}
+		nl, el := int(le.Uint16(raw[p+26:])), int(le.Uint16(raw[p+28:]))
+		if p+zipLocalLen+nl+el > int(cdOff) {
+			return fmt.Errorf("%s: local header runs into the central directory", c.name)
+		}
+		if name := string(raw[p+zipLocalLen : p+zipLocalLen+nl]); name != c.name {
+			return fmt.Errorf("local name %q, central %q", name, c.name)
+		}
+		if err := checkZipExtra(c.name, raw[p+zipLocalLen+nl:p+zipLocalLen+nl+el]); err != nil {
+			return err
+		}
+		p += zipLocalLen + nl + el + int(csize)
+		if p > int(cdOff) {
+			return fmt.Errorf("%s: data runs into the central directory", c.name)
+		}
+		if p+4 <= int(cdOff) && le.Uint32(raw[p:]) == zipDescriptorSig {
+			return fmt.Errorf("%s: data descriptor after the entry's data", c.name)
+		}
+	}
+	if p != int(cdOff) {
+		return fmt.Errorf("%d bytes between the last entry and the central directory", int(cdOff)-p)
+	}
+	return nil
+}
+
+// checkZipName rejects names that are not UTF-8 or that hold a byte
+// in 0x00-0x20 or 0x7f.
+func checkZipName(name string) error {
+	if !utf8.ValidString(name) {
+		return fmt.Errorf("%q: name is not UTF-8", name)
+	}
+	for _, r := range name {
+		if r <= 0x20 || r == 0x7f {
+			return fmt.Errorf("%q: unprintable character %U in name", name, r)
+		}
+	}
+	return nil
+}
+
+// checkZipExtra rejects a malformed extra field or one ID twice.
+func checkZipExtra(name string, extra []byte) error {
+	ids := map[uint16]bool{}
+	for len(extra) > 0 {
+		if len(extra) < 4 {
+			return fmt.Errorf("%s: truncated extra field", name)
+		}
+		id, size := binary.LittleEndian.Uint16(extra), int(binary.LittleEndian.Uint16(extra[2:]))
+		if 4+size > len(extra) {
+			return fmt.Errorf("%s: extra field %#04x runs past the header", name, id)
+		}
+		if ids[id] {
+			return fmt.Errorf("%s: extra field %#04x appears twice", name, id)
+		}
+		ids[id] = true
+		extra = extra[4+size:]
+	}
+	return nil
+}
+
+// TestWheelsInstallWithPip builds a real binary for this host, wraps it
+// in fixture release archives, and checks that every wheel passes
+// python -m zipfile -t and that pip installs this host's wheel into a
+// fresh virtualenv whose tripcord entry point runs the binary. It needs
+// python and network-free pip, so it runs only with TRIPCORD_WHEEL_PIP=1
+// (ci.yml's wheels job, on Linux, macOS, and Windows).
+func TestWheelsInstallWithPip(t *testing.T) {
+	if os.Getenv("TRIPCORD_WHEEL_PIP") != "1" {
+		t.Skip("set TRIPCORD_WHEEL_PIP=1 to run python -m zipfile and pip on the wheels")
+	}
+	host := target{runtime.GOOS, runtime.GOARCH}
+	idx := slices.Index(targets, host)
+	if idx < 0 {
+		t.Fatalf("%s/%s is not a release target", host.GOOS, host.GOARCH)
+	}
+	py := findPython(t)
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A tiny stand-in for tripcord that prints its version the way the
+	// release binary does, built like a release: static, for this host.
+	src := t.TempDir()
+	mainGo := "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\t\"strings\"\n)\n\nfunc main() {\n\tfmt.Println(\"v" + fixtureVersion + " (commit pip)\", strings.Join(os.Args[1:], \" \"))\n}\n"
+	if err := os.WriteFile(filepath.Join(src, "main.go"), []byte(mainGo), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "go.mod"), []byte("module example.invalid/fakebin\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(t.TempDir(), host.binary())
+	build := exec.Command(goBin, "build", "-trimpath", "-o", exe, ".")
+	build.Dir = src
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+host.GOOS, "GOARCH="+host.GOARCH, "GOFLAGS=", "GOWORK=off", "GOTOOLCHAIN=local")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	bin, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dist := fakeDistWith(t, "", map[target][]byte{host: bin})
+	out := t.TempDir()
+	var stdout bytes.Buffer
+	if err := run([]string{"wheels", "-version", "v" + fixtureVersion, "-dist", dist, "-src", pypiSrc, "-out", out}, &stdout); err != nil {
+		t.Fatal(err)
+	}
+	names := strings.Fields(stdout.String())
+	if len(names) != len(targets) {
+		t.Fatalf("wheels = %v, want %d", names, len(targets))
+	}
+	for _, n := range names {
+		whl := filepath.Join(out, n)
+		raw, err := os.ReadFile(whl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := checkPyPIZip(raw); err != nil {
+			t.Errorf("%s: %v", n, err)
+		}
+		if b, err := exec.Command(py, "-m", "zipfile", "-t", whl).CombinedOutput(); err != nil {
+			t.Errorf("python -m zipfile -t %s: %v\n%s", n, err, b)
+		}
+	}
+	venv := filepath.Join(t.TempDir(), "venv")
+	if b, err := exec.Command(py, "-m", "venv", venv).CombinedOutput(); err != nil {
+		t.Fatalf("python -m venv: %v\n%s", err, b)
+	}
+	scripts, exeSuffix := "bin", ""
+	if runtime.GOOS == "windows" {
+		scripts, exeSuffix = "Scripts", ".exe"
+	}
+	vpy := filepath.Join(venv, scripts, "python"+exeSuffix)
+	// The host wheel by path: pip refuses it unless its tags match.
+	pip := exec.Command(vpy, "-m", "pip", "install", "--no-index", "--find-links", out, "--disable-pip-version-check", "--no-cache-dir", filepath.Join(out, names[idx]))
+	if b, err := pip.CombinedOutput(); err != nil {
+		t.Fatalf("pip install %s: %v\n%s", names[idx], err, b)
+	}
+	got, err := exec.Command(filepath.Join(venv, scripts, "tripcord"+exeSuffix), "--version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("tripcord --version: %v\n%s", err, got)
+	}
+	if want := "v" + fixtureVersion + " (commit pip) --version"; strings.TrimRight(string(got), "\r\n") != want {
+		t.Fatalf("tripcord --version printed %q, want %q", got, want)
+	}
+}
+
+// findPython returns the first of python3 and python on PATH that
+// runs. Windows tries python first: there python3 can be the Microsoft
+// Store alias, which exists but does not run Python.
+func findPython(t *testing.T) string {
+	t.Helper()
+	names := []string{"python3", "python"}
+	if runtime.GOOS == "windows" {
+		names = []string{"python", "python3"}
+	}
+	for _, n := range names {
+		p, err := exec.LookPath(n)
+		if err != nil {
+			continue
+		}
+		if v, err := exec.Command(p, "-c", "import sys; print(sys.version)").Output(); err == nil {
+			t.Logf("python: %s %s", p, strings.TrimSpace(string(v)))
+			return p
+		}
+	}
+	t.Fatal("TRIPCORD_WHEEL_PIP=1 but no python3 or python on PATH runs")
+	return ""
 }

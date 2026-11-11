@@ -92,6 +92,7 @@ jobs:
           go run ./scripts/release-packages wheels -version "$TAG" -dist "${RUNNER_TEMP}/dist" -src packaging/pypi -out "$wheels"
           ls -l "$wheels"
           test "$(find "$wheels" -name '*.whl' | wc -l)" -eq 6
+          for whl in "$wheels"/*.whl; do python3 -m zipfile -t "$whl"; done
           venv="${RUNNER_TEMP}/venv"
           python3 -m venv "$venv"
           "${venv}/bin/python" -m pip install --quiet --no-index --find-links "$wheels" "tripcord==${TAG#v}"
