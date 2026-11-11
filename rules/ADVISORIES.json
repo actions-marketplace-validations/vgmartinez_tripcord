@@ -482,6 +482,26 @@
       ],
       "added": "tripcord/core@2026.11",
       "reviewed": "2026-11-10"
+    },
+    {
+      "id": "TCA-2026-0024",
+      "aliases": ["CVE-2026-124503", "GHSA-qh7q-jmc7-rc7j"],
+      "summary": "mcp-atlassian before 0.24.1 has a path traversal in validate_safe_path (src/mcp_atlassian/utils/io.py) that lets the upload guard read files outside the intended directory",
+      "severity": "high",
+      "affected": [
+        {
+          "ecosystem": "pypi",
+          "name": "mcp-atlassian",
+          "ranges": [{"fixed": "0.24.1"}]
+        }
+      ],
+      "refs": [
+        "https://osv.dev/vulnerability/CVE-2026-124503",
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-124503",
+        "https://github.com/sooperset/mcp-atlassian/security/advisories/GHSA-qh7q-jmc7-rc7j"
+      ],
+      "added": "tripcord/core@2026.11",
+      "reviewed": "2026-11-11"
     }
   ]
 }
