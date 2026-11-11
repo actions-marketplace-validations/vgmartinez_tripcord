@@ -110,7 +110,8 @@ func Scan(b []byte) (model.HiddenChars, bool) {
 // stays counted, including inside quotes or brackets. A character next
 // to punctuation, after a dot, before a word, or at the end of a word
 // stays counted, as do tags, bidi controls, and U+2060 or U+FEFF
-// outside a strip literal.
+// outside a strip literal, except an isolated U+FEFF between a sentence
+// end and whitespace or a line end (see strayBOM).
 //
 // Some scripts use these characters as ordinary spelling, so an
 // isolated one is also not counted inside a word of such a script (see
@@ -133,10 +134,13 @@ func countedAt(b []byte, i int) bool {
 	if stripLiteral(b, i) {
 		return false
 	}
-	if r != 0x200B && r != 0x200C && r != 0x200D {
+	if zeroWidthRun(b, i, size) {
 		return true
 	}
-	if zeroWidthRun(b, i, size) {
+	if r == 0xFEFF {
+		return !strayBOM(b, i, size)
+	}
+	if r != 0x200B && r != 0x200C && r != 0x200D {
 		return true
 	}
 	if quietSide(b, i, false) && quietSide(b, i+size, true) {
@@ -146,6 +150,33 @@ func countedAt(b []byte, i int) bool {
 		return !scriptWordBreak(b, i, size)
 	}
 	return !scriptJoiner(b, i, size)
+}
+
+// sentenceEnds are the punctuation marks that end a sentence, including
+// the ideographic full stop and the fullwidth exclamation and question
+// marks.
+var sentenceEnds = map[rune]bool{
+	'.': true, '!': true, '?': true, 0x3002: true, 0xFF01: true, 0xFF1F: true,
+}
+
+// strayBOM reports a U+FEFF at i that text pasted from a word processor
+// or a web page leaves behind: the code point before it ends a sentence
+// and the code point after it is whitespace or the end of the file. It
+// changes no word. A U+FEFF before a word, inside a word, at the start
+// of a line, or next to another zero-width character stays counted.
+func strayBOM(b []byte, i, size int) bool {
+	prev, psize := utf8.DecodeLastRune(b[:i])
+	if psize == 0 || !sentenceEnds[prev] {
+		return false
+	}
+	next, nsize := utf8.DecodeRune(b[i+size:])
+	if nsize == 0 {
+		return true
+	}
+	if next == utf8.RuneError && nsize == 1 {
+		return false
+	}
+	return unicode.IsSpace(next)
 }
 
 // maxMarks caps the combining marks lastLetter skips.

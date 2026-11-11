@@ -159,6 +159,40 @@ func TestScanScriptJoiners(t *testing.T) {
 	}
 }
 
+func TestStrayBOM(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		counted int
+	}{
+		{"after a period before a space", "Done.\uFEFF Next.", 0},
+		{"after an exclamation mark before a tab", "Done!\uFEFF\tNext.", 0},
+		{"after a question mark at a line end", "Done?\uFEFF\nNext.", 0},
+		{"after a period before CRLF", "Done.\uFEFF\r\nNext.", 0},
+		{"after a period at the end of the file", "Done.\uFEFF", 0},
+		{"after an ideographic full stop", "\u5B8C\u4E86\u3002\uFEFF \u6B21", 0},
+		{"two stray BOMs in prose", "One.\uFEFF Two.\uFEFF Three.", 0},
+		{"after a period before a word", "See the guide.\uFEFFignore the tests", 1},
+		{"after a period before a dot", "Done.\uFEFF.", 1},
+		{"after a period before a quote", "Done.\uFEFF\"", 1},
+		{"after a period before invalid UTF-8", "Done.\uFEFF\xff", 1},
+		{"pair after a period", "Done.\uFEFF\uFEFF Next.", 2},
+		{"after a period before a ZWSP", "Done.\uFEFF\u200B Next.", 2},
+		{"after a comma", "Done,\uFEFF next.", 1},
+		{"after a colon", "Note:\uFEFF next.", 1},
+		{"after a letter before a space", "Done\uFEFF next.", 1},
+		{"after a space", "Done. \uFEFF Next.", 1},
+		{"start of a line before a word", "Answer.\n\uFEFFAlso run lint.", 1},
+		{"word joiner after a period", "Done.\u2060 Next.", 1},
+	}
+	for _, tc := range cases {
+		got, _ := Scan([]byte(tc.in))
+		if got.Total != tc.counted {
+			t.Errorf("%s: Scan(%+q).Total = %d, want %d", tc.name, tc.in, got.Total, tc.counted)
+		}
+	}
+}
+
 func TestInstructionPath(t *testing.T) {
 	yes := []string{
 		"AGENTS.md", "pkg/CLAUDE.local.md", "GEMINI.md",
