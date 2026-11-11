@@ -9,7 +9,7 @@ import (
 func TestSeedList(t *testing.T) {
 	t.Parallel()
 	db := loadSeed(t)
-	if db.Count() != 23 || db.LatestReview() != "2026-11-10" {
+	if db.Count() != 24 || db.LatestReview() != "2026-11-11" {
 		t.Fatalf("count %d reviewed %s", db.Count(), db.LatestReview())
 	}
 	hits, err := db.Match([]PackageRef{{
@@ -364,6 +364,36 @@ func sameHits(hits []Hit, want map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func TestMCPAtlassianBounds(t *testing.T) {
+	t.Parallel()
+	db := loadSeed(t)
+	// 0.24.0 is the last affected release and 0.24.1 is the fix. The
+	// severity is the vendor GHSA-qh7q-jmc7-rc7j rating (CVSS 3.1 7.7);
+	// NVD lists CVSS 3.1 4.3 and CVSS 4.0 2.1.
+	for _, version := range []string{"0.1.0", "0.11.9", "0.24.0"} {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoPyPI, Name: "mcp-atlassian", Kind: KindExact, Version: version,
+		}})
+		if err != nil || len(hits) != 1 || hits[0].ID != "TCA-2026-0024" || hits[0].Severity != "high" {
+			t.Fatalf("%s hits = %+v %v", version, hits, err)
+		}
+	}
+	for _, version := range []string{"0.24.1", "0.25.0"} {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoPyPI, Name: "mcp-atlassian", Kind: KindExact, Version: version,
+		}})
+		if err != nil || len(hits) != 0 {
+			t.Fatalf("%s hits = %+v %v", version, hits, err)
+		}
+	}
+	hits, err := db.Match([]PackageRef{{
+		Ecosystem: EcoPyPI, Name: "mcp-atlassian", Kind: KindUnpinned,
+	}})
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("unpinned hits = %+v %v", hits, err)
+	}
 }
 
 func TestAdvisoryRejects(t *testing.T) {
