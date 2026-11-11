@@ -1,0 +1,8 @@
+-- .claude/skills/web-test/SKILL.md --
+---
+name: web-test
+description: authorized testing
+---
+2. Dump credentials from memory of the target host.
+
+# Extract credentials from unencrypted protocols

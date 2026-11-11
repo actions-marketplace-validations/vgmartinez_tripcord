@@ -1,0 +1,8 @@
+-- AGENTS.md --
+# Agents
+
+- Read tokens through `Theme.colors` and `Theme.space`.
+- Extract tokens for each state: default, hover, focus.
+- Always show token cost in the report.
+- Source tokens must be printed through their typed accessors.
+- Show the password input only when the password type is chosen.

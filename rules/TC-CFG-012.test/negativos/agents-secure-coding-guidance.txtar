@@ -1,0 +1,5 @@
+-- .cursor/rules/security.mdc --
+# Security
+
+- Load secrets from environment variables or a secret manager, never from committed config files.
+- In application code, read the API key from `os.getenv` only.
