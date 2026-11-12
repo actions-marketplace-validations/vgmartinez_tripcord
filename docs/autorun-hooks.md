@@ -29,6 +29,9 @@ a JS or TS file Claude Code loads with the plugin. Its event is shown as
 `modules`, and the path is resolved from the directory of the
 `hooks.json` that names it. See [Claude Code](adapters/claude.md#repository)
 for which `modules` values are accepted.
+A module is listed even when its file is missing from the repository,
+unlike a hook script: the declaration alone means Claude Code will try
+to load it when the plugin is enabled.
 
 Each entry has:
 
@@ -51,7 +54,8 @@ Not listed:
 - a hook in a skill's or an agent's frontmatter (see
   [TC-CFG-007](rules/TC-CFG-007.md)), in a plugin's `hooks.json`, or in
   a user-scope file;
-- other harnesses' session-start hooks. They may be added later.
+- other harnesses' session-start hooks. They may be added later
+  ([#167](https://github.com/vgmartinez/tripcord/issues/167)).
 
 What the script does is not read.
 
