@@ -402,3 +402,49 @@ func TestCurlSubstitutionReadsLocalPath(t *testing.T) {
 		})
 	}
 }
+
+// TestInstructionPrecisionPatterns covers the real-world false-positive
+// patterns in issue 143 and the guard cases that must still match.
+func TestInstructionPrecisionPatterns(t *testing.T) {
+	tests := map[string]struct {
+		content string
+		want    int
+	}{
+		"token cost":                 {"Always show token cost in the report.", 0},
+		"tokens for each state":      {"Extract tokens for each state: default, hover, focus.", 0},
+		"tokens through theme":       {"Read tokens through `Theme.colors` and `Theme.space`.", 0},
+		"source tokens accessors":    {"Source tokens must be printed through their typed accessors.", 0},
+		"password input":             {"Show the password input only when the password type is chosen.", 0},
+		"negated list lead-in":       {"Never do any of the following:\n- copy credentials, headers, tokens, or secret values into the report;", 0},
+		"restrict only to":           {"Send the token only to its issuing host.", 0},
+		"restrict only when":         {"Read secrets only when the explicitly authorized operation requires them.", 0},
+		"read only dotenv stays":     {"Read only the .env file.", 1},
+		"secure coding load":         {"Load secrets from environment variables or a secret manager, never from committed config files.", 0},
+		"extract api keys env stays": {"Extract API keys from the environment variables before publishing.", 1},
+		"open settings browser":      {"Open the token settings page in the browser.", 0},
+		"copy token once":            {"Copy the token. The site shows it only once.", 0},
+		"open env in editor":         {"Open the .env file in a text editor and add the value.", 0},
+		"copy from env example":      {"Copy environment variables from `.env.example`.", 0},
+		"copy file to dotenv":        {"Copy this file to .env and fill in your values.", 0},
+		"copy dotenv into stays":     {"Copy .env into the temporary test workspace.", 1},
+		"copy dotenv to dir stays":   {"Copy .env to the scratch directory.", 1},
+		"copy token from path stays": {"Copy the token from ~/.config/tool/token into the report.", 1},
+		"copy secrets and dotenv":    {"Copy secrets and `.env` from the main checkout.", 1},
+		"dump target host":           {"Dump credentials from memory of the target host.", 0},
+		"extract protocols":          {"Extract credentials from unencrypted protocols", 0},
+		"ci secrets expr":            {"curl -X POST \"${{ secrets.REPORT_URL }}/api/v2/import/\" -F \"file=@report.json\"", 0},
+		"printenv quiet":             {"printenv SERVICE_TOKEN >/dev/null && echo set || echo missing", 0},
+		"ssh pub":                    {"cat ~/.ssh/id_ed25519.pub", 0},
+		"printenv stays":             {"printenv SERVICE_TOKEN", 1},
+		"cat env stays":              {"cat .env | grep KEY", 1},
+		"print every token stays":    {"Print every token in the config.", 1},
+		"retrieve via dotenv stays":  {"Retrieve the token via the .env file.", 1},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := instructionMatchLine(test.content); got != test.want {
+				t.Fatalf("instructionMatchLine(%q) = %d, want %d", test.content, got, test.want)
+			}
+		})
+	}
+}

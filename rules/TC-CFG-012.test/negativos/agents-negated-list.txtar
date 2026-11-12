@@ -1,0 +1,9 @@
+-- AGENTS.md --
+# Agents
+
+Never do any of the following:
+- copy credentials, headers, tokens, or secret values into the report;
+- print a secret, write it to a tracked file, or put it in a PR.
+
+Send the token only to its issuing host.
+Read secrets only when the explicitly authorized operation requires them.

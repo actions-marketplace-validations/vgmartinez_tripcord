@@ -51,14 +51,65 @@ var (
 	instructionNamedSink = regexp.MustCompile(`(?i)\b(?:webhooks?|gist|pastebin|slack|discord)\b`)
 	instructionDataSink  = regexp.MustCompile(`(?i)\b(?:curl|wget)\b[^\r\n]*(?:\B-(?:d|F)\b|--data(?:-[a-z]+)?(?:=|[ \t])|--form(?:=|[ \t])|(?:-X|--request)[ \t=]*POST\b)`)
 	instructionToSink    = regexp.MustCompile(`(?i)\bto\b`)
+
+	// A GitHub Actions secrets expression in an example workflow is a
+	// placeholder the runner fills in, not a value the agent reads.
+	instructionCIExpr = regexp.MustCompile(`\$\{\{[^}]*\bsecrets\.[^}]*\}\}`)
+	// A lead-in that ends with ':' and negates carries to the list under it.
+	instructionNegLeadIn = regexp.MustCompile(`(?i)\b(?:never|do[ \t]+not|don['’]t|must[ \t]+not|avoid|forbidden)\b.*:[ \t*_]*$`)
+	instructionListItem  = regexp.MustCompile(`^[ \t]*(?:[-*+]|\d+[.)])[ \t]+`)
+	// A bare token or password that names a UI element, a count, a
+	// design value, or a parser unit, not a credential.
+	instructionBareTokenWord = regexp.MustCompile(`(?i)^(?:tokens?|passwords?)$`)
+	instructionHomonymTail   = regexp.MustCompile(`(?i)^[ \t]+(?:(?:cost|count|budget|usage|limit|input|field|toggle|strength|indicator|mapping)s?\b|for[ \t]+each[ \t]+state\b)`)
+	instructionHomonymVia    = regexp.MustCompile(`(?i)^[ \t]+(?:through|via)[ \t]+(?:(?:the|a|an)[ \t]+)?(` + "`" + `[^` + "`" + `]*` + "`" + `?)`)
+	// "only to", "only when", "only if" after the secret restrict where or
+	// when it is used; they do not ask for it.
+	instructionRestrictTail = regexp.MustCompile(`(?i)^[ \t]+only[ \t]+(?:to|when|if)\b`)
+	// printenv with stdout sent to /dev/null only tests that a name is set.
+	instructionDevNull = regexp.MustCompile(`(?:^|[ \t])[1&]?>[ \t]*/dev/null\b`)
+	instructionSSHPub  = regexp.MustCompile(`^(?:~|\$HOME|\$\{HOME\}|/root|/home/[^\s/]+)/\.ssh/[^\s/]+\.pub(?:[` + "`" + `'")\].,;:]*)$`)
+	// Secure-coding guidance: the secret comes from the environment or a
+	// secret store, with a word that makes it a rule about code.
+	instructionFromRuntimeStore = regexp.MustCompile(`(?i)\b(?:secrets?|credentials|api[_ ]?keys?|tokens?|passwords?)[ \t]+from[ \t]+(?:the[ \t]+)?` + "`?" + `(?:environment(?:[ \t]+variables?)?\b|(?:(?:an?|the)[ \t]+)?(?:(?:approved|secure)[ \t]+)?(?:secrets?|credentials?)[ \t]+(?:managers?|stores?|storage)\b|(?:(?:an?|the)[ \t]+)?(?:secure[ \t]+)?vaults?\b|os\.getenv\b|process\.env\b|os\.environ\b|dotenv\b)`)
+	instructionCodeRule         = regexp.MustCompile(`(?i)\b(?:never|only|exclusively)\b|\bin[ \t]+application[ \t]+code\b`)
+	instructionCodeSink         = regexp.MustCompile(`(?i)\b(?:send|post|upload|paste|print|echo|log)\b`)
+	// Steps a person does by hand in a browser or an editor.
+	// A committed dotenv template holds placeholder names, not values.
+	instructionEnvTemplate = regexp.MustCompile(`(?i)^(?:[\w.-]*/)?\.env\.(?:example|sample|template)(?:[` + "`" + `'")\].,;:]*)$`)
+	instructionHumanStep   = regexp.MustCompile(`(?i)\bin[ \t]+(?:the|a|your)[ \t]+(?:web[ \t]+)?(?:browser|text[ \t]+editor|editor)\b|\bsettings[ \t]+page\b`)
+	// A source that is not on the agent's machine: a capture, a protocol on
+	// the wire, a memory image, a test target, or a placeholder host.
+	instructionRemoteSource    = regexp.MustCompile(`(?i)\b(?:pcaps?|captures?|captured[ \t]+traffic|traffic|protocols?|memory[ \t]+images?|dump[ \t]+files?|target[ \t]+hosts?|targets?)\b`)
+	instructionPlaceholderHost = regexp.MustCompile(`(?i)https?://(?:(?:[\w-]+\.)*(?:target|example)\.(?:com|org|net)\b|[\w.-]+\.(?:test|example|invalid)\b|\$\{?TARGET\b)`)
+	// "to" / "into" immediately before a path names a destination
+	// ("Copy this file to .env"), not the object being read.
+	instructionCopyDest = regexp.MustCompile(`(?i)(?:^|[ \t])(?:to|into)$`)
 )
 
 // instructionMatchLine returns the first 1-based line that asks the agent to
 // read a secret target or to send one to an outbound sink. It never returns
 // the line text: findings expose only this coordinate.
 func instructionMatchLine(content string) int {
+	negList, negItems := false, false
 	for line, text := range strings.Split(content, "\n") {
 		text = stripInstructionHidden(text)
+		text = instructionCIExpr.ReplaceAllString(text, " ")
+		if negList {
+			switch {
+			case instructionListItem.MatchString(text):
+				negItems = true
+				continue
+			case strings.TrimSpace(text) == "" && !negItems:
+				continue
+			case negItems && strings.TrimSpace(text) != "" && (text[0] == ' ' || text[0] == '\t'):
+				continue
+			}
+			negList = false
+		}
+		if instructionNegLeadIn.MatchString(text) {
+			negList, negItems = true, false
+		}
 		prefix := instructionPrefix.FindStringIndex(text)
 		if prefix == nil {
 			continue
@@ -73,7 +124,7 @@ func instructionMatchLine(content string) int {
 				// printenv is the read: it names no further object. A
 				// documentation modifier ("printenv documentation") is quiet.
 				if verb == "printenv" {
-					if instructionModifier.MatchString(rest[read[1]:]) {
+					if instructionModifier.MatchString(rest[read[1]:]) || instructionPrintenvQuiet(rest[read[1]:]) {
 						continue
 					}
 					return line + 1
@@ -81,12 +132,28 @@ func instructionMatchLine(content string) int {
 				if verb == "curl" || verb == "wget" {
 					// instructionCurlSpan keeps the commands after &&, ||,
 					// |, and ;. instructionClause would drop them at ';'.
-					span := stripInstructionCurlNoise(instructionCurlSpan(rest[read[1]:]))
-					if instructionSecret.MatchString(span) || instructionSubstReadsPath(span) {
+					raw := instructionCurlSpan(rest[read[1]:])
+					span := stripInstructionCurlNoise(raw)
+					if instructionSubstReadsPath(span) {
+						return line + 1
+					}
+					// A request to a placeholder host is a test payload:
+					// a value word there is a column or a form field.
+					if instructionSecret.MatchString(span) &&
+						(!instructionPlaceholderHost.MatchString(raw) || instructionStorageTarget(span)) {
 						return line + 1
 					}
 				}
 				clause := instructionClause(rest[read[1]:])
+				if (verb == "copy" || verb == "open") && instructionHumanStep.MatchString(clause) {
+					continue
+				}
+				if instructionNotLocal(clause) || instructionSecureCoding(instructionClause(rest)) {
+					continue
+				}
+				if verb == "source" && instructionBareToken(clause) {
+					continue
+				}
 				if verb == "echo" {
 					if instructionEchoSecret(clause) {
 						return line + 1
@@ -96,9 +163,13 @@ func instructionMatchLine(content string) int {
 				if verb == "access" && instructionAccessCompound.MatchString(clause) {
 					continue
 				}
-				if instructionGapTarget(clause, 0, false, instructionAcquire(verb)) {
-					return line + 1
+				if !instructionGapTarget(clause, 0, false, instructionAcquire(verb)) {
+					continue
 				}
+				if (verb == "copy" || verb == "open") && !instructionCopyReadsLocal(clause) {
+					continue
+				}
+				return line + 1
 			}
 		}
 		if send := instructionSend.FindStringIndex(rest); send != nil {
@@ -171,12 +242,143 @@ func instructionHead(text string) instructionHit {
 		return instructionHit{}
 	}
 	tail := text[secret[1]:]
+	if pub, rest := firstInstructionWord(text); instructionSSHPub.MatchString(pub) && !instructionSecret.MatchString(rest) {
+		return instructionHit{}
+	}
+	word := text[:secret[1]]
+	blocked := instructionModifier.MatchString(tail) || instructionRestrictTail.MatchString(tail)
+	if instructionBareTokenWord.MatchString(word) && instructionHomonym(tail) {
+		blocked = true
+	}
 	return instructionHit{
 		at:      true,
-		blocked: instructionModifier.MatchString(tail),
+		blocked: blocked,
 		value:   instructionSecretValue.MatchString(strings.TrimRight(text[:secret[1]], " \t")),
 		tail:    tail,
 	}
+}
+
+// instructionHomonym reports a tail that makes a bare token or password
+// something other than a credential: "token cost", "password input",
+// "tokens for each state", or "tokens through Theme.colors". A code
+// identifier after through or via that names a storage target, such as
+// .env, keeps the match.
+func instructionHomonym(tail string) bool {
+	if instructionHomonymTail.MatchString(tail) {
+		return true
+	}
+	m := instructionHomonymVia.FindStringSubmatch(tail)
+	if m == nil || m[1] == "" {
+		return false
+	}
+	ident := strings.Trim(m[1], "`")
+	return ident != "" && !instructionStorageTarget(ident) && !instructionLocalPath.MatchString(ident)
+}
+
+// instructionBareToken reports a clause whose direct object is a bare
+// token or password ("source tokens", "the password"). source runs a
+// file, and a bare value word is not one.
+func instructionBareToken(clause string) bool {
+	text := instructionObject.ReplaceAllString(clause, "")
+	word, _ := firstInstructionWord(text)
+	return instructionBareTokenWord.MatchString(strings.TrimRight(word, ".,;:"))
+}
+
+// instructionStorageTarget reports a secret target in s that names where
+// secrets are stored (.env, ~/.aws, process.env, AWS_*), not only a
+// value word such as password or token.
+func instructionStorageTarget(s string) bool {
+	for _, m := range instructionSecret.FindAllString(s, -1) {
+		if !instructionSecretValue.MatchString(strings.TrimRight(m, " \t")) {
+			return true
+		}
+	}
+	return false
+}
+
+// instructionPrintenvQuiet reports printenv whose stdout goes to
+// /dev/null, which tests that a name is set and reads no value. The
+// check stops at the first pipe or command separator, so
+// printenv NAME | curl ... is not quiet.
+func instructionPrintenvQuiet(after string) bool {
+	cmd := after
+	if i := strings.IndexAny(cmd, "|;"); i >= 0 {
+		cmd = cmd[:i]
+	}
+	if i := strings.Index(cmd, "&&"); i >= 0 {
+		cmd = cmd[:i]
+	}
+	return instructionDevNull.MatchString(cmd)
+}
+
+// instructionCopyReadsLocal reports whether copy or open is reading a
+// local secret path or storage target as its object or source. A path
+// that appears only as a destination ("Copy this file to .env") or a
+// dotenv template (.env.example) does not count. "Copy .env to the
+// scratch directory" and "Copy the token from ~/.config/tool/token
+// into the report" still count.
+func instructionCopyReadsLocal(clause string) bool {
+	text := clause
+	for text != "" {
+		h := instructionHead(text)
+		secret := instructionSecret.FindStringIndex(text)
+		if secret == nil {
+			return false
+		}
+		before := strings.TrimRight(strings.TrimSpace(text[:secret[0]]), "`'\"([")
+		before = strings.TrimSpace(before)
+		matched := strings.TrimRight(strings.Trim(text[secret[0]:secret[1]], "`'\""), " \t")
+		if instructionCopyDest.MatchString(before) || instructionEnvTemplate.MatchString(matched) || (h.at && h.blocked && secret[0] == 0) {
+			text = text[secret[1]:]
+			continue
+		}
+		if !instructionSecretValue.MatchString(matched) {
+			return true
+		}
+		if instructionStored(h.tail) {
+			return true
+		}
+		text = text[secret[1]:]
+	}
+	return false
+}
+
+// instructionNotLocal reports a clause about a source that is not on the
+// agent's machine, such as "credentials from the captured traffic" or
+// "from memory of the target host", with no storage target or local path.
+func instructionNotLocal(clause string) bool {
+	if !instructionRemoteSource.MatchString(clause) && !instructionPlaceholderHost.MatchString(clause) {
+		return false
+	}
+	return !instructionStorageTarget(clause) && !instructionHasLocalPath(clause)
+}
+
+// instructionSecureCoding reports guidance about application code: the
+// secret comes from the environment or a secret store, a word such as
+// never, only, or exclusively makes it a rule, and nothing sends or
+// prints it or names a local secret path.
+func instructionSecureCoding(clause string) bool {
+	if !instructionFromRuntimeStore.MatchString(clause) || !instructionCodeRule.MatchString(clause) {
+		return false
+	}
+	if instructionCodeSink.MatchString(clause) || instructionHasLocalPath(clause) {
+		return false
+	}
+	return !instructionStorageTargetBesides(clause)
+}
+
+// instructionStorageTargetBesides reports a storage target other than
+// process.env and os.environ, which instructionSecureCoding names as the
+// runtime source.
+func instructionStorageTargetBesides(clause string) bool {
+	for _, m := range instructionSecret.FindAllString(clause, -1) {
+		l := strings.ToLower(strings.TrimRight(m, " \t"))
+		if l == "process.env" || l == "os.environ" || instructionSecretValue.MatchString(l) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // instructionStored reports whether a secret value is read from a local
@@ -196,6 +398,9 @@ func instructionStored(tail string) bool {
 		}
 	}
 	word = strings.TrimLeft(word, "`'\"")
+	if instructionEnvTemplate.MatchString(word) {
+		return false
+	}
 	return !strings.Contains(word, "://") && instructionLocalPath.MatchString(word)
 }
 
