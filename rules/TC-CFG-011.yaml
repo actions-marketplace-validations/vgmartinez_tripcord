@@ -28,7 +28,9 @@
 # span or a repeated code point is a run and stays counted. A
 # zero-width character next to punctuation, after a dot, before a word,
 # or at the end of a word stays counted. Tags, bidi controls, zero-width
-# runs, and U+2060 or U+FEFF outside a strip literal stay counted.
+# runs, and U+2060 or U+FEFF outside a strip literal stay counted, except
+# an isolated U+FEFF between a sentence end (. ! ? and the ideographic
+# and fullwidth forms) and whitespace or a line end.
 #
 # Script spelling is not counted: an isolated U+200C or U+200D between
 # letters of the same joining script (Arabic-script and Brahmic,

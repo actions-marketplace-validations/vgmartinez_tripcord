@@ -40,3 +40,5 @@ positivos:
   agents-zwsp-latin-in-thai-file: high
   agents-zwsp-persian: high
   agents-zwsp-thai-word-edge: high
+  agents-bom-after-dot-before-word: high
+  agents-bom-pair-after-sentence: high

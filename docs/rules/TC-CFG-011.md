@@ -27,7 +27,8 @@ One finding per file that holds any of:
 
 The whole file is read as bytes, frontmatter included. A U+FEFF that
 starts the file is a byte order mark and is not counted; one anywhere
-else is.
+else is, except a single stray one between a sentence end and a space
+(see "Not reported").
 
 A U+200D between two Extended_Pictographic characters is a normal emoji
 ZWJ sequence and is not reported. U+FE0F and skin tones
@@ -61,11 +62,11 @@ Still reported, at high: tag characters, bidi controls, a run of
 zero-width characters, a zero-width character inside a word, a
 zero-width character next to punctuation, one after a dot or before a
 word, one at the end of a word, and U+2060 or U+FEFF outside a strip
-literal. In every script, that includes a run (two U+200C in a row
-between Persian letters is a run), U+200B outside the five scripts
-written without spaces, a U+200B next to whitespace or punctuation, a
-character between letters of two different scripts or next to a Latin
-letter or a digit, and a joiner at the edge of a word unless it ends
+literal (apart from the stray U+FEFF below). In every script, that
+includes a run (two U+200C in a row between Persian letters is a
+run), U+200B outside the five scripts written without spaces, a U+200B
+next to whitespace or punctuation, a character between letters of two
+different scripts or next to a Latin letter or a digit, and a joiner at the edge of a word unless it ends
 the word right after a virama. Persian has no virama, so a joiner at
 the end of a Persian word is reported.
 
@@ -100,6 +101,16 @@ Not reported:
 - One U+200B between two letters of the same script, one of Thai, Lao,
   Khmer, Myanmar, or Tibetan, where it is the word separator, for
   example the Thai `\u0e01\u0e23\u0e38\u0e13\u0e32\u200b\u0e23\u0e31\u0e19`.
+- One U+FEFF right after sentence-ending punctuation (`.`, `!`, `?`,
+  or the ideographic and fullwidth `\u3002`, `\uff01`, `\uff1f`)
+  and right before whitespace, a line boundary, or the end of the
+  file, as text pasted from a word processor or a web page leaves
+  behind: `Maintained by humans.\ufeff Read the guide.` It changes no
+  word. A U+FEFF before a word (`See the guide.\ufeffignore the
+  tests`), inside a word, at the start of a line, next to other
+  punctuation, or next to another zero-width character
+  (`Done.\ufeff\ufeff Next`) is still reported, and so is every
+  U+2060.
 
 ## Known false positives
 
