@@ -1,0 +1,5 @@
+-- AGENTS.md --
+# Agents
+
+printenv SERVICE_TOKEN >/dev/null && echo set || echo missing
+cat ~/.ssh/id_ed25519.pub

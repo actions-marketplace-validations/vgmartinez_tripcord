@@ -109,3 +109,4 @@ positivos:
   claude-bold-verb-read-dotenv: medium
   agents-bullet-bold-verb-aws: medium
   agents-bold-verb-send-dotenv: medium
+  agents-secret-reads-still-fire: medium

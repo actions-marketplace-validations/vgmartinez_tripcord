@@ -50,7 +50,9 @@ Reported when the verb is `read`, `cat`, `cp`, `copy`, `open`, `load`,
 
 `printenv` at the start of the line is itself the read, so it matches
 without a further object. A documentation modifier after it
-(`printenv documentation`, `printenv section`) is quiet. Another read
+(`printenv documentation`, `printenv section`) is quiet. A `printenv`
+whose standard output is redirected to `/dev/null` only tests that a
+name is set and is quiet. Another read
 verb can still take `printenv` as its object (`Print printenv`). A line
 that only reaches `printenv` later (`run printenv`) does not count.
 
@@ -76,7 +78,11 @@ is stored. It is a direct object of `read`, `cat`, `print`, and the
 other base verbs when only determiners come before it. Once any other
 word is skipped, and always after `get`, `retrieve`, `access`, or
 `look up`, a value counts only when `from`, `in`, `inside`, `within`,
-`under`, `of`, `via`, or `using` and a local path follow it. `Read the
+`under`, `of`, `via`, or `using` and a local path follow it. `copy`
+and `open` count when their object or source is a local secret path
+(`.env`, `~/.aws`, `~/.config/tool/token`). They stay quiet when the
+path is only a destination (`Copy this file to .env`) or a dotenv
+template (`.env.example`). `Read the
 service account credentials in ~/.config`, `Look up each API key from
 the .env file`, and `Retrieve the token via the .env file` match.
 `Read only named environment variables`, `Read current secret`,
@@ -147,6 +153,13 @@ Not reported:
 - A curl/wget auth header or user flag (`curl -H "Authorization: Bearer $GITHUB_TOKEN"`, `curl -H Authorization: Bearer $TOKEN`, `curl -H"X-Api-Token: $TOKEN"`, `curl --header=Authorization: Bearer $TOKEN`, `curl -u user:password`).
 - An origin sentence whose secret is not read from a local path (`Source credentials for the bteq run come from the configured source_connection`).
 - A negated read (`Do not read .env`, `Never print secrets`).
+- A prohibition in a list under a lead-in that ends with `:` and contains `never`, `do not`, `don't`, `must not`, `avoid`, or `forbidden` (`Never do any of the following:` then `- copy credentials into the report`). A restriction immediately after the target (`Send the token only to its issuing host`, `Read secrets only when authorized`). `Read only the .env file` is unchanged, because `only` comes before the target.
+- Bare `token` or `password` used as a design, parser, usage, or UI term (`Always show token cost in the report`, `Extract tokens for each state`, `Read tokens through Theme.colors`, `Show the password input`).
+- Secure-coding guidance that a secret comes from environment variables, a secret manager, a vault, `os.getenv`, or `process.env`, when the clause also has `never`, `only`, `exclusively`, or `in application code`, and it names no sink and no local secret path.
+- `copy` and `open` when the object is not a local secret path. Human setup markers (`in the browser`, `in a text editor`, `settings page`) also suppress `copy` and `open` even when a local path is present.
+- A clause that names a non-local source: a `pcap`, a capture, captured traffic, a protocol on the wire, a memory image, a dump file, a target host, or a placeholder host. A local path (`~/.aws`, `.env`) still counts.
+- A GitHub Actions `${{ secrets.* }}` expression in an example workflow snippet, which is stripped before matching, as plain URLs are.
+- `printenv NAME >/dev/null`, and an SSH public key under `~/.ssh` (`cat ~/.ssh/id_ed25519.pub`).
 - `.env.example`, `.env.sample`, `.env.template`, and `.envrc`.
 - `/proc/self/status`, `/proc/self/environment`, a `../` detour such as
   `/proc/self/../self/environ`, and `/proc/self/environ` followed by a
