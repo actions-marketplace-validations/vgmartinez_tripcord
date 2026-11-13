@@ -69,7 +69,7 @@ func TestLoadCore(t *testing.T) {
 	if len(pack.Rules) != len(activeEntries(pack.Registry)) {
 		t.Fatalf("%d rules, %d active registry entries", len(pack.Rules), len(activeEntries(pack.Registry)))
 	}
-	if pack.AdvisoryCount() != 24 || pack.LatestAdvisoryReview() != "2026-11-11" {
+	if pack.AdvisoryCount() != 26 || pack.LatestAdvisoryReview() != "2026-11-12" {
 		t.Fatalf("advisories %d reviewed %s", pack.AdvisoryCount(), pack.LatestAdvisoryReview())
 	}
 }

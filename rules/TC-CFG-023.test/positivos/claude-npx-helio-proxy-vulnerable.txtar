@@ -1,0 +1,9 @@
+-- .mcp.json --
+{
+  "mcpServers": {
+    "helio": {
+      "command": "npx",
+      "args": ["-y", "@gethelio/proxy@0.7.0"]
+    }
+  }
+}
