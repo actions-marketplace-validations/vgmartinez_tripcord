@@ -113,6 +113,8 @@ pack patch. Every other advisory ships in the monthly release.
 | TCA-2026-0022 | npm `@dynatrace-oss/dynatrace-mcp-server` | <2.1.1 | 2.1.1 | moderate, reported high |
 | TCA-2026-0023 | npm `@dynatrace-oss/dynatrace-mcp-server` | <1.8.7 | 1.8.7 | low, reported high |
 | TCA-2026-0024 | pypi `mcp-atlassian` | <0.24.1 | 0.24.1 | high |
+| TCA-2026-0025 | pypi `awslabs.aws-api-mcp-server` | >=0.2.13, <1.5.1 | 1.5.1 | high |
+| TCA-2026-0026 | npm `@gethelio/proxy` | <0.8.0 | 0.8.0 | moderate, reported high |
 
 prefab-ui is a library. It matches only when the argv names it, for
 example `--with prefab-ui==0.20.2`. A transitive dependency of another

@@ -125,8 +125,10 @@ rules/TC-CFG-016.test/positivos/embed-gitattributes-removed.txtar	shebang	.tripc
 rules/TC-CFG-016.test/positivos/embed-gitattributes-weakened.txtar	shebang	.tripcord/bootstrap.sh	rule-dependent
 rules/TC-CFG-016.test/positivos/embed-manifest-unreadable.txtar	shebang	.tripcord/bootstrap.sh	rule-dependent
 rules/TC-CFG-016.test/positivos/embed-workflow-changed.txtar	shebang	.tripcord/bootstrap.sh	rule-dependent
+rules/TC-CFG-023.test/negativos/claude-uvx-aws-api-fixed.txtar	host	awslabs.aws	rule-dependent
 rules/TC-CFG-023.test/negativos/claude-uvx-aws-serverless-fixed.txtar	host	awslabs.aws	rule-dependent
 rules/TC-CFG-023.test/positivos/claude-kali-gpt-git-commit.txtar	host	github.com	rule-dependent
 rules/TC-CFG-023.test/positivos/claude-kali-gpt-git-tag.txtar	host	github.com	rule-dependent
 rules/TC-CFG-023.test/positivos/claude-kali-gpt-git-unpinned.txtar	host	github.com	rule-dependent
+rules/TC-CFG-023.test/positivos/claude-uvx-aws-api-vulnerable.txtar	host	awslabs.aws	rule-dependent
 rules/TC-CFG-023.test/positivos/claude-uvx-aws-serverless-vulnerable.txtar	host	awslabs.aws	rule-dependent
