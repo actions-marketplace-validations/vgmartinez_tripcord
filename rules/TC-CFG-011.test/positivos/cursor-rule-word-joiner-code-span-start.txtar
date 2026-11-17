@@ -1,0 +1,8 @@
+-- .cursor/rules/tasks.mdc --
+---
+description: Task conventions
+---
+# Tasks
+
+Define each job with `⁠jobs.define()` and export it.
+Call `⁠jobs.run()` from a handler, never from module scope.

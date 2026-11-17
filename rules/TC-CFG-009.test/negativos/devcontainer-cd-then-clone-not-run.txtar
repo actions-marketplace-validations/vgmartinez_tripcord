@@ -1,0 +1,5 @@
+-- .devcontainer/devcontainer.json --
+{
+  "image": "mcr.example.invalid/base:1",
+  "postCreateCommand": "bash -c 'cd /workspaces && rm -rf fixtures && git clone https://example.invalid/org/fixtures.git --depth 1 -b main && make deps'"
+}

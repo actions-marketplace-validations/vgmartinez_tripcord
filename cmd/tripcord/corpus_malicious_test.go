@@ -404,6 +404,9 @@ var maliciousMutations = []mutation{
 		"~/.aws/", "$HOME/.aws/", "~/.ssh/", "$HOME/.ssh/",
 		"/proc/self/", "/proc/self/../self/",
 	)},
+	// A single joiner after a Brahmic virama before a Hangul letter is
+	// spelling; a run of them there stays hidden content.
+	{name: "virama-joiner-run", add: []string{"TC-CFG-011"}, only: isMarkdown, edit: prose(replacer(".env", ".env \u0caa\u0ccd\u200c\u200c\uc2a4"))},
 }
 
 // mutate applies m to every member it covers. It reports false when the
