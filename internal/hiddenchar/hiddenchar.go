@@ -118,8 +118,9 @@ func Scan(b []byte) (model.HiddenChars, bool) {
 // scriptJoiner and scriptWordBreak): a U+200C or U+200D between two
 // letters of the same joining script, or after a virama that ends a
 // word, and a U+200B between two letters of the same script written
-// without spaces. A character next to a letter of another script, at a
-// word edge in a script with no virama, or in any run stays counted.
+// without spaces. A character next to a letter of another script
+// (apart from the virama shapes scriptJoiner describes), at a word edge
+// in a script with no virama, or in any run stays counted.
 func countedAt(b []byte, i int) bool {
 	r, size := utf8.DecodeRune(b[i:])
 	if Class(r) == "" {
@@ -216,6 +217,17 @@ var viramas = map[rune]bool{
 // or the code point before it is a virama of a joining script on a
 // letter of that script and the code point after it ends the word
 // (whitespace, punctuation, or the end of the file).
+//
+// After a virama two more shapes are spelling. A letter of the
+// virama's own script after the joiner is spelling when the virama sits
+// on a letter of any joining script, as when text mixes two sibling
+// Brahmic scripts in one word. And a letter of a script outside the
+// joining scripts, with no Latin look-alikes (see viramaBeforeOtherScript),
+// is spelling after a Brahmic or Sinhala virama on a letter of a
+// linguistic joining script. A letter of another joining script, a
+// Latin, Greek, Cyrillic, Armenian, or Cherokee letter, a digit, or a
+// symbol after the joiner stays counted. Callers only get here for an
+// isolated joiner: a run stays counted (see zeroWidthRun).
 func scriptJoiner(b []byte, i, size int) bool {
 	if sameScriptLetters(b, i, size, joiningScripts, true) {
 		return true
@@ -226,14 +238,63 @@ func scriptJoiner(b []byte, i, size int) bool {
 	}
 	script := scriptOf(v, joiningScripts)
 	base, ok := lastLetter(b[:i-vsize])
-	if script == nil || !ok || !unicode.Is(script, base) {
+	if script == nil || !ok {
 		return false
 	}
 	next, nsize := utf8.DecodeRune(b[i+size:])
-	if nsize == 0 {
+	if next == utf8.RuneError && nsize == 1 {
+		return false
+	}
+	if unicode.Is(script, base) {
+		if nsize == 0 || unicode.IsSpace(next) || unicode.IsPunct(next) {
+			return true
+		}
+	}
+	if nsize == 0 || !unicode.IsLetter(next) {
+		return false
+	}
+	if unicode.Is(script, next) && scriptOf(base, joiningScripts) != nil {
 		return true
 	}
-	return unicode.IsSpace(next) || unicode.IsPunct(next)
+	return viramaBeforeOtherScript(v, base, next)
+}
+
+// linguisticViramas are the viramas of the Brahmic scripts of India
+// and of Sinhala, where a joiner after the virama selects the form of a
+// conjunct.
+var linguisticViramas = map[rune]bool{
+	0x094D: true, 0x09CD: true, 0x0A4D: true, 0x0ACD: true, 0x0B4D: true,
+	0x0BCD: true, 0x0C4D: true, 0x0CCD: true, 0x0D4D: true, 0x0DCA: true,
+}
+
+// linguisticJoiningScripts write U+200C and U+200D as ordinary
+// spelling: the Brahmic scripts of India, Arabic (including Persian),
+// Syriac, Mongolian, and Sinhala.
+var linguisticJoiningScripts = []*unicode.RangeTable{
+	unicode.Devanagari, unicode.Bengali, unicode.Gurmukhi, unicode.Gujarati,
+	unicode.Oriya, unicode.Tamil, unicode.Telugu, unicode.Kannada,
+	unicode.Malayalam, unicode.Arabic, unicode.Syriac, unicode.Mongolian,
+	unicode.Sinhala,
+}
+
+// lookAlikeScripts have letters that pass for ASCII on screen, so a
+// joiner before one of them can split a word a reviewer reads as
+// ASCII.
+var lookAlikeScripts = []*unicode.RangeTable{
+	unicode.Latin, unicode.Greek, unicode.Cyrillic, unicode.Armenian,
+	unicode.Cherokee, unicode.Common, unicode.Inherited,
+}
+
+// viramaBeforeOtherScript reports a joiner between a Brahmic or Sinhala
+// virama v on a letter base of a linguistic joining script and a letter
+// next of a script that is neither a joining script nor one with Latin
+// look-alikes, such as Hangul or Han in a machine translation. It joins
+// nothing that can hide or split ASCII text.
+func viramaBeforeOtherScript(v, base, next rune) bool {
+	if !linguisticViramas[v] || scriptOf(base, linguisticJoiningScripts) == nil {
+		return false
+	}
+	return scriptOf(next, joiningScripts) == nil && scriptOf(next, lookAlikeScripts) == nil
 }
 
 // scriptWordBreak reports a U+200B at i between two letters of the same
