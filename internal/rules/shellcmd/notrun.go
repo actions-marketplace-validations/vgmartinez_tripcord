@@ -39,7 +39,10 @@ import (
 //     counts), and no downloader, remote runner, or git clone in any
 //     word (sudo git clone, git -C dir clone). cd, pushd, popd,
 //     source, ., eval, exec, trap, alias, xargs, find, and shell
-//     keywords give no credit.
+//     keywords give no credit, except that a cd with one literal
+//     directory operand of plain segments, none of them a code
+//     directory (see plainDir), may come before the first fetch,
+//     clone, or extraction.
 //
 // A fetched name is any fetched file, clone, or extraction directory,
 // as written and as its last path segment, compared case-insensitively
@@ -163,12 +166,19 @@ func notRunCommands(cmds []nrCommand, others []string) bool {
 	fetched := map[string]bool{}
 	var extracts []nrExtract
 	var rest []nrCommand
+	fetchSeen := false
 	for _, c := range cmds {
 		if len(c.words) == 0 {
 			return false
 		}
 		name := c.words[0]
 		switch {
+		case name == "cd" && !fetchSeen && leadingCd(c):
+			// A cd before any fetch only moves the whole script: every
+			// later name still resolves against one directory, so the
+			// name matching below is unchanged. A cd after a fetch can
+			// enter what was fetched and gives no credit.
+			continue
 		case name == "curl" || name == "wget":
 			file, ok := notRunFetch(name, c.words[1:], c.redirects)
 			if !ok || slices.ContainsFunc(c.others, func(o string) bool { return o != "/dev/null" }) {
@@ -177,18 +187,21 @@ func notRunCommands(cmds []nrCommand, others []string) bool {
 			if file != "" {
 				fetched[file] = true
 			}
+			fetchSeen = true
 		case name == "git" && len(c.words) > 1 && c.words[1] == "clone":
 			dir, ok := notRunClone(c.words[2:])
 			if !ok || len(c.redirects)+len(c.others) > 0 {
 				return false
 			}
 			fetched[dir] = true
+			fetchSeen = true
 		case name == "tar" || name == "unzip":
 			e, ok := notRunExtract(name, c.words[1:])
 			if !ok || len(c.redirects)+len(c.others) > 0 {
 				return false
 			}
 			extracts = append(extracts, e)
+			fetchSeen = true
 		case notRunDenied[name]:
 			return false
 		case notRunReaders[name] && len(c.redirects)+len(c.others) == 0:
@@ -487,6 +500,16 @@ func notRunExtract(name string, args []string) (nrExtract, bool) {
 		}
 	}
 	return e, !wantFile && e.archive != "" && plainDir(e.dir)
+}
+
+// leadingCd is cd with one literal directory operand, absolute or
+// relative, of plain segments that are not code directories (see
+// plainDir), and no redirection.
+func leadingCd(c nrCommand) bool {
+	if len(c.words) != 2 || len(c.redirects)+len(c.others) > 0 {
+		return false
+	}
+	return plainDir(strings.TrimPrefix(c.words[1], "/"))
 }
 
 // plainDir is a relative path of plain segments (see plainFilename)

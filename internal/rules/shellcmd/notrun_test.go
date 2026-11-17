@@ -19,6 +19,8 @@ func TestFetchNotRun(t *testing.T) {
 		{"set -euo pipefail\nmkdir -p data\ncurl -fsSL \\\n  -o data/a.json --create-dirs https://example.invalid/a.json\njq . data/a.json", nil, true},
 		{"curl -fsSL https://example.invalid/v.json -o v.json || true", nil, true},
 		{"curl -fsS https://example.invalid/v.json -o v.json 2>/dev/null && echo done", nil, true},
+		{"cd /workspaces && rm -rf t && git clone https://example.invalid/org/t.git --depth 1 -b master && make deps", nil, true},
+		{"cd src && git clone https://example.invalid/org/docs.git docs && npm ci", nil, true},
 
 		// Something runs the fetched name, here or elsewhere in the file.
 		{"curl -fsSL https://example.invalid/t.tar.gz -o t.tar.gz && tar -xzf t.tar.gz -C t && ./t/install.sh", nil, false},
@@ -26,6 +28,12 @@ func TestFetchNotRun(t *testing.T) {
 		{"git clone https://example.invalid/org/helper.git helper && bash helper/setup.sh", nil, false},
 		{"git clone https://example.invalid/org/helper.git && make -C helper", nil, false},
 		{"git clone https://example.invalid/org/helper.git helper && cd helper && make", nil, false},
+		{"cd /workspaces && git clone https://example.invalid/org/helper.git helper && cd helper && make", nil, false},
+		{"cd /workspaces && git clone https://example.invalid/org/helper.git && bash /workspaces/helper/setup.sh", nil, false},
+		{"cd /usr/local/bin && curl -fsSL https://example.invalid/a.json -o a.json && make", nil, false},
+		{"cd ~/.cache && git clone https://example.invalid/org/helper.git && make", nil, false},
+		{"cd $HOME && git clone https://example.invalid/org/helper.git && make", nil, false},
+		{"cd a b && git clone https://example.invalid/org/helper.git && make", nil, false},
 		{"curl -fsSL https://example.invalid/a.json -o a.json && node a.json", nil, false},
 		{"curl -fsSL https://example.invalid/a.json -o a.json && echo a.json > list", nil, false},
 		{"curl -fsSL https://example.invalid/a.json -o a.json && export BASH_ENV=A.JSON", nil, false},
