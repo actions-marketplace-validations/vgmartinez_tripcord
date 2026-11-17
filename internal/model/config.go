@@ -126,12 +126,15 @@ type ConfigItem struct {
 
 // HiddenChars is what internal/hiddenchar found in one file. Runs holds
 // the first runs, at most hiddenchar.MaxRuns; RunCount counts every run
-// and Total every hidden code point in the file.
+// and Total every hidden code point in the file. CodeSpanJoiners counts
+// the lines whose only hidden code point is a single U+2060 that opens
+// an inline code span (see hiddenchar.Scan); each is also in Total.
 type HiddenChars struct {
-	Runs     []HiddenRun
-	Sequence []rune
-	RunCount int
-	Total    int
+	Runs            []HiddenRun
+	Sequence        []rune
+	RunCount        int
+	Total           int
+	CodeSpanJoiners int
 }
 
 // String counts the hidden code points, so a formatted ConfigItem stays

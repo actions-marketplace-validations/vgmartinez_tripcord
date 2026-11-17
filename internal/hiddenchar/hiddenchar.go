@@ -58,24 +58,42 @@ var bom = []byte{0xEF, 0xBB, 0xBF}
 // Consecutive hidden code points of any class are one run. An invalid
 // byte ends a run and is otherwise skipped, so the rest of the file is
 // still read.
+//
+// CodeSpanJoiners counts the lines whose only hidden code point, counted
+// or not, is a U+2060 that opens an inline code span (see
+// codeSpanJoiner). That U+2060 is still counted in Total.
 func Scan(b []byte) (model.HiddenChars, bool) {
 	var out model.HiddenChars
 	valid := true
 	b, _ = bytes.CutPrefix(b, bom)
 	line, col := 1, 1
 	inRun, stored := false, false
+	lineHidden, lineSpan := 0, false
+	endLine := func() {
+		if lineHidden == 1 && lineSpan {
+			out.CodeSpanJoiners++
+		}
+		lineHidden, lineSpan = 0, false
+	}
 	for i := 0; i < len(b); {
 		r, size := utf8.DecodeRune(b[i:])
+		if Class(r) != "" {
+			lineHidden++
+		}
 		switch {
 		case r == utf8.RuneError && size == 1:
 			valid = false
 			inRun = false
 		case r == '\n':
+			endLine()
 			line, col = line+1, 1
 			inRun = false
 			i += size
 			continue
 		case countedAt(b, i):
+			if codeSpanJoiner(b, i, size) {
+				lineSpan = true
+			}
 			out.Total++
 			out.Sequence = append(out.Sequence, r)
 			switch {
@@ -95,7 +113,42 @@ func Scan(b []byte) (model.HiddenChars, bool) {
 		col++
 		i += size
 	}
+	endLine()
 	return out, valid
+}
+
+// codeSpanJoiner reports a U+2060 at i right after a single backtick
+// that opens an inline code span, right before an ASCII letter or digit,
+// with a closing backtick later on the same line, as some editors put
+// one there to stop Markdown or MDX from autolinking the code. It is
+// still counted; Scan reports it in CodeSpanJoiners so a rule can lower
+// its severity. A U+2060 after a double backtick, inside or at the end
+// of a span, before a space, a non-ASCII letter, or another hidden code
+// point, or in prose is not this shape.
+func codeSpanJoiner(b []byte, i, size int) bool {
+	r, _ := utf8.DecodeRune(b[i:])
+	if r != 0x2060 {
+		return false
+	}
+	prev, psize := utf8.DecodeLastRune(b[:i])
+	if psize == 0 || prev != '`' {
+		return false
+	}
+	if pp, _ := utf8.DecodeLastRune(b[:i-psize]); pp == '`' {
+		return false
+	}
+	rest := b[i+size:]
+	if len(rest) == 0 || rest[0] >= 0x80 || !isASCIIAlnum(rest[0]) {
+		return false
+	}
+	if nl := bytes.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[:nl]
+	}
+	return bytes.IndexByte(rest, '`') > 0
+}
+
+func isASCIIAlnum(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 // countedAt reports a hidden code point. U+200D is not counted inside an
@@ -118,8 +171,9 @@ func Scan(b []byte) (model.HiddenChars, bool) {
 // scriptJoiner and scriptWordBreak): a U+200C or U+200D between two
 // letters of the same joining script, or after a virama that ends a
 // word, and a U+200B between two letters of the same script written
-// without spaces. A character next to a letter of another script, at a
-// word edge in a script with no virama, or in any run stays counted.
+// without spaces. A character next to a letter of another script
+// (apart from the virama shapes scriptJoiner describes), at a word edge
+// in a script with no virama, or in any run stays counted.
 func countedAt(b []byte, i int) bool {
 	r, size := utf8.DecodeRune(b[i:])
 	if Class(r) == "" {
@@ -216,6 +270,17 @@ var viramas = map[rune]bool{
 // or the code point before it is a virama of a joining script on a
 // letter of that script and the code point after it ends the word
 // (whitespace, punctuation, or the end of the file).
+//
+// After a virama two more shapes are spelling. A letter of the
+// virama's own script after the joiner is spelling when the virama sits
+// on a letter of any joining script, as when text mixes two sibling
+// Brahmic scripts in one word. And a letter of a script outside the
+// joining scripts, with no Latin look-alikes (see viramaBeforeOtherScript),
+// is spelling after a Brahmic or Sinhala virama on a letter of a
+// linguistic joining script. A letter of another joining script, a
+// Latin, Greek, Cyrillic, Armenian, or Cherokee letter, a digit, or a
+// symbol after the joiner stays counted. Callers only get here for an
+// isolated joiner: a run stays counted (see zeroWidthRun).
 func scriptJoiner(b []byte, i, size int) bool {
 	if sameScriptLetters(b, i, size, joiningScripts, true) {
 		return true
@@ -226,14 +291,63 @@ func scriptJoiner(b []byte, i, size int) bool {
 	}
 	script := scriptOf(v, joiningScripts)
 	base, ok := lastLetter(b[:i-vsize])
-	if script == nil || !ok || !unicode.Is(script, base) {
+	if script == nil || !ok {
 		return false
 	}
 	next, nsize := utf8.DecodeRune(b[i+size:])
-	if nsize == 0 {
+	if next == utf8.RuneError && nsize == 1 {
+		return false
+	}
+	if unicode.Is(script, base) {
+		if nsize == 0 || unicode.IsSpace(next) || unicode.IsPunct(next) {
+			return true
+		}
+	}
+	if nsize == 0 || !unicode.IsLetter(next) {
+		return false
+	}
+	if unicode.Is(script, next) && scriptOf(base, joiningScripts) != nil {
 		return true
 	}
-	return unicode.IsSpace(next) || unicode.IsPunct(next)
+	return viramaBeforeOtherScript(v, base, next)
+}
+
+// linguisticViramas are the viramas of the Brahmic scripts of India
+// and of Sinhala, where a joiner after the virama selects the form of a
+// conjunct.
+var linguisticViramas = map[rune]bool{
+	0x094D: true, 0x09CD: true, 0x0A4D: true, 0x0ACD: true, 0x0B4D: true,
+	0x0BCD: true, 0x0C4D: true, 0x0CCD: true, 0x0D4D: true, 0x0DCA: true,
+}
+
+// linguisticJoiningScripts write U+200C and U+200D as ordinary
+// spelling: the Brahmic scripts of India, Arabic (including Persian),
+// Syriac, Mongolian, and Sinhala.
+var linguisticJoiningScripts = []*unicode.RangeTable{
+	unicode.Devanagari, unicode.Bengali, unicode.Gurmukhi, unicode.Gujarati,
+	unicode.Oriya, unicode.Tamil, unicode.Telugu, unicode.Kannada,
+	unicode.Malayalam, unicode.Arabic, unicode.Syriac, unicode.Mongolian,
+	unicode.Sinhala,
+}
+
+// lookAlikeScripts have letters that pass for ASCII on screen, so a
+// joiner before one of them can split a word a reviewer reads as
+// ASCII.
+var lookAlikeScripts = []*unicode.RangeTable{
+	unicode.Latin, unicode.Greek, unicode.Cyrillic, unicode.Armenian,
+	unicode.Cherokee, unicode.Common, unicode.Inherited,
+}
+
+// viramaBeforeOtherScript reports a joiner between a Brahmic or Sinhala
+// virama v on a letter base of a linguistic joining script and a letter
+// next of a script that is neither a joining script nor one with Latin
+// look-alikes, such as Hangul or Han in a machine translation. It joins
+// nothing that can hide or split ASCII text.
+func viramaBeforeOtherScript(v, base, next rune) bool {
+	if !linguisticViramas[v] || scriptOf(base, linguisticJoiningScripts) == nil {
+		return false
+	}
+	return scriptOf(next, joiningScripts) == nil && scriptOf(next, lookAlikeScripts) == nil
 }
 
 // scriptWordBreak reports a U+200B at i between two letters of the same

@@ -192,7 +192,13 @@ and anything it cannot follow keeps the finding.
   `||`, or `&`. A `$`, backquote, glob, subshell, function, pipe, `<`,
   here-document, or shell keyword (`if`, `for`, `case`, ...) anywhere
   gives no credit, as do `cd`, `pushd`, `popd`, `source`, `.`, `eval`,
-  `exec`, `trap`, `alias`, `xargs`, and `find`.
+  `exec`, `trap`, `alias`, `xargs`, and `find`. The one exception is a
+  `cd` before the first fetch, clone, or extraction, with one literal
+  directory operand (absolute or relative) of plain segments, none of
+  them `bin`, `sbin`, `libexec`, `node_modules`, `vendor`,
+  `site-packages`, or `hooks`. It moves the whole script, so the name
+  matching below is unchanged. A `cd` after a fetch still keeps the
+  finding.
 - Each fetch is a `curl` or `wget` of one `http(s)` URL that writes to
   standard output or to one literal file (`-o`, `-O`, `> file`,
   `>> file`, or wget's default name). The file is a relative path of
@@ -235,9 +241,14 @@ Not reported:
 {"postCreateCommand": "/bin/bash -c 'python -m pip install uv && python -m uv sync & git clone https://example.invalid/org/examples; wait'"}
 ```
 
+```json
+{"postCreateCommand": "bash -c 'cd /workspaces && git clone --depth 1 https://example.invalid/org/fixtures.git && make deps'"}
+```
+
 Still reported: `tar -xzf tool.tar.gz && ./tool/install.sh`,
 `git clone <url> /tmp/helper` then `bash /tmp/helper/setup.sh`,
 `git clone <url> helper && cd helper && make`,
+`cd /workspaces && git clone <url> helper && cd helper && make`,
 `curl -o tool <url> && chmod +x tool`, a later step that runs
 `./tool/install.sh` after an earlier one extracted into `tool`, and
 `curl -o package.json <url> && npm install`.
