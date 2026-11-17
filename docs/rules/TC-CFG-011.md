@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | high |
+| Severity | high; low when the only hidden code points are word joiners that open inline code spans (see "Severity") |
 | Harnesses | generic (`AGENTS.md`), Claude Code, Gemini CLI, Windsurf, GitHub Copilot, Cursor, Devin |
 | Files | `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md` (any depth), nested `.claude/rules/**/*.md`, `.cursor/rules/**/*.md(c)`, and `.windsurfrules`, plus root `.cursorrules`, `.github/copilot-instructions.md`, `.github/instructions/**/*.md`, `.github/agents/**/*.agent.md`, the maintenance commands and knowledge entries of `.devin/blueprint.yaml`, and repository skills at `.claude/skills/<name>/SKILL.md`, `.agents/skills/<name>/SKILL.md`, and `.github/skills/<name>/SKILL.md` (repository scope) |
 | Rule | [`rules/TC-CFG-011.yaml`](../../rules/TC-CFG-011.yaml) |
@@ -127,6 +127,24 @@ Not reported:
   punctuation, or next to another zero-width character
   (`Done.\ufeff\ufeff Next`) is still reported, and so is every
   U+2060.
+
+## Severity
+
+A finding is high, except in one case. Some editors put a single U+2060
+(word joiner) right after the backtick that opens an inline code span,
+to stop Markdown or MDX from turning the code into a link:
+`` `\u2060jobs.define()` ``. When every hidden code point in the file is
+of that shape (one U+2060 right after a single opening backtick, right
+before an ASCII letter or digit, with a closing backtick later on the
+same line and no other hidden code point on that line), the finding is
+low. It is still reported: the character hides no text, but it is
+still invisible.
+
+Any other hidden code point anywhere in the file keeps the finding
+high, and so do a U+2060 run (`` `\u2060\u2060x` ``), a U+2060
+inside a span (`` `jobs.\u2060define()` ``) or closing it, one after a
+double backtick, one before a space or a non-ASCII letter, and one in
+prose (`small\u2060 commits`).
 
 ## Known false positives
 
