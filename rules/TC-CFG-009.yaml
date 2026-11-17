@@ -77,7 +77,9 @@
 # hashFiles() expressions left out), a glob in another command of the
 # file, cd, pushd, popd, source, ., eval, exec, trap, alias, xargs,
 # find, a shell keyword, or a second downloader or clone that is not of
-# that form keeps the finding. Extracting or cloning into bin, sbin,
+# that form keeps the finding. The one exception is a cd before the
+# first fetch, clone, or extraction, with one literal directory operand
+# of plain segments that are not code directories. Extracting or cloning into bin, sbin,
 # libexec, node_modules, vendor, site-packages, or hooks keeps it too.
 # What a committed script, build file, or manifest does with a fetched
 # name is not read. A committed package.json that names a fetched
