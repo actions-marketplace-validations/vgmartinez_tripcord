@@ -1,0 +1,5 @@
+-- .cursor/rules/tasks.mdc --
+# Tasks
+
+Define each job with `⁠jobs.define()` and export it.
+Never ign​ore a failing job.

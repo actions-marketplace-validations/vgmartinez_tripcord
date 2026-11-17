@@ -351,3 +351,36 @@ func FuzzScan(f *testing.F) {
 		}
 	})
 }
+
+func TestCodeSpanJoiners(t *testing.T) {
+	cases := []struct {
+		name          string
+		in            string
+		counted, span int
+	}{
+		{"opening a code span", "Define `\u2060jobs.define()` first.", 1, 1},
+		{"opening a code span before a digit", "Use `\u20602026` as the year.", 1, 1},
+		{"one per line on two lines", "`\u2060a()`\n`\u2060b()`\n", 2, 2},
+		{"after a double backtick", "``\u2060x``", 1, 0},
+		{"before a space", "`\u2060 x`", 1, 0},
+		{"before a non-ASCII letter", "`\u2060\u0430pi`", 1, 0},
+		{"no closing backtick", "`\u2060jobs.define()", 1, 0},
+		{"closing backtick on the next line", "`\u2060jobs\n`", 1, 0},
+		{"run after a backtick", "`\u2060\u2060x`", 2, 0},
+		{"with a ZWSP after it", "`\u2060\u200Bx`", 2, 0},
+		{"inside a span", "`jobs.\u2060define()`", 1, 0},
+		{"closing a span", "`x\u2060`", 1, 0},
+		{"in prose", "small\u2060 commits", 1, 0},
+		{"another hidden code point on the line", "`\u2060x` and ign\u200Bore", 2, 0},
+		{"an uncounted emoji joiner on the line", "`\u2060x` \U0001F469\u200D\U0001F4BB", 1, 0},
+		{"another hidden code point on another line", "`\u2060x`\nign\u200Bore", 2, 1},
+		{"ZWSP opening a code span", "`\u200Bx`", 1, 0},
+		{"BOM opening a code span", "`\uFEFFx`", 1, 0},
+	}
+	for _, tc := range cases {
+		got, _ := Scan([]byte(tc.in))
+		if got.Total != tc.counted || got.CodeSpanJoiners != tc.span {
+			t.Errorf("%s: Scan(%+q) = Total %d, CodeSpanJoiners %d, want %d, %d", tc.name, tc.in, got.Total, got.CodeSpanJoiners, tc.counted, tc.span)
+		}
+	}
+}

@@ -58,24 +58,42 @@ var bom = []byte{0xEF, 0xBB, 0xBF}
 // Consecutive hidden code points of any class are one run. An invalid
 // byte ends a run and is otherwise skipped, so the rest of the file is
 // still read.
+//
+// CodeSpanJoiners counts the lines whose only hidden code point, counted
+// or not, is a U+2060 that opens an inline code span (see
+// codeSpanJoiner). That U+2060 is still counted in Total.
 func Scan(b []byte) (model.HiddenChars, bool) {
 	var out model.HiddenChars
 	valid := true
 	b, _ = bytes.CutPrefix(b, bom)
 	line, col := 1, 1
 	inRun, stored := false, false
+	lineHidden, lineSpan := 0, false
+	endLine := func() {
+		if lineHidden == 1 && lineSpan {
+			out.CodeSpanJoiners++
+		}
+		lineHidden, lineSpan = 0, false
+	}
 	for i := 0; i < len(b); {
 		r, size := utf8.DecodeRune(b[i:])
+		if Class(r) != "" {
+			lineHidden++
+		}
 		switch {
 		case r == utf8.RuneError && size == 1:
 			valid = false
 			inRun = false
 		case r == '\n':
+			endLine()
 			line, col = line+1, 1
 			inRun = false
 			i += size
 			continue
 		case countedAt(b, i):
+			if codeSpanJoiner(b, i, size) {
+				lineSpan = true
+			}
 			out.Total++
 			out.Sequence = append(out.Sequence, r)
 			switch {
@@ -95,7 +113,42 @@ func Scan(b []byte) (model.HiddenChars, bool) {
 		col++
 		i += size
 	}
+	endLine()
 	return out, valid
+}
+
+// codeSpanJoiner reports a U+2060 at i right after a single backtick
+// that opens an inline code span, right before an ASCII letter or digit,
+// with a closing backtick later on the same line, as some editors put
+// one there to stop Markdown or MDX from autolinking the code. It is
+// still counted; Scan reports it in CodeSpanJoiners so a rule can lower
+// its severity. A U+2060 after a double backtick, inside or at the end
+// of a span, before a space, a non-ASCII letter, or another hidden code
+// point, or in prose is not this shape.
+func codeSpanJoiner(b []byte, i, size int) bool {
+	r, _ := utf8.DecodeRune(b[i:])
+	if r != 0x2060 {
+		return false
+	}
+	prev, psize := utf8.DecodeLastRune(b[:i])
+	if psize == 0 || prev != '`' {
+		return false
+	}
+	if pp, _ := utf8.DecodeLastRune(b[:i-psize]); pp == '`' {
+		return false
+	}
+	rest := b[i+size:]
+	if len(rest) == 0 || rest[0] >= 0x80 || !isASCIIAlnum(rest[0]) {
+		return false
+	}
+	if nl := bytes.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[:nl]
+	}
+	return bytes.IndexByte(rest, '`') > 0
+}
+
+func isASCIIAlnum(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 // countedAt reports a hidden code point. U+200D is not counted inside an
