@@ -9,7 +9,7 @@ import (
 func TestSeedList(t *testing.T) {
 	t.Parallel()
 	db := loadSeed(t)
-	if db.Count() != 24 || db.LatestReview() != "2026-11-11" {
+	if db.Count() != 26 || db.LatestReview() != "2026-11-12" {
 		t.Fatalf("count %d reviewed %s", db.Count(), db.LatestReview())
 	}
 	hits, err := db.Match([]PackageRef{{
@@ -390,6 +390,66 @@ func TestMCPAtlassianBounds(t *testing.T) {
 	}
 	hits, err := db.Match([]PackageRef{{
 		Ecosystem: EcoPyPI, Name: "mcp-atlassian", Kind: KindUnpinned,
+	}})
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("unpinned hits = %+v %v", hits, err)
+	}
+}
+
+func TestAWSAPIMCPServerBounds(t *testing.T) {
+	t.Parallel()
+	db := loadSeed(t)
+	// 0.2.13 is the first affected release in the vendor GHSA. 1.5.0 is
+	// the last affected release and 1.5.1 is the fix. Severity is high
+	// on both the vendor GHSA (CVSS 4.0 8.5) and NVD (CVSS 3.1 7.8 and
+	// CVSS 4.0 8.5).
+	for _, version := range []string{"0.2.13", "1.0.0", "1.5.0"} {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoPyPI, Name: "awslabs-aws-api-mcp-server", Kind: KindExact, Version: version,
+		}})
+		if err != nil || len(hits) != 1 || hits[0].ID != "TCA-2026-0025" || hits[0].Severity != "high" {
+			t.Fatalf("%s hits = %+v %v", version, hits, err)
+		}
+	}
+	for _, version := range []string{"0.2.12", "1.5.1", "1.6.0"} {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoPyPI, Name: "awslabs-aws-api-mcp-server", Kind: KindExact, Version: version,
+		}})
+		if err != nil || len(hits) != 0 {
+			t.Fatalf("%s hits = %+v %v", version, hits, err)
+		}
+	}
+	hits, err := db.Match([]PackageRef{{
+		Ecosystem: EcoPyPI, Name: "awslabs-aws-api-mcp-server", Kind: KindUnpinned,
+	}})
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("unpinned hits = %+v %v", hits, err)
+	}
+}
+
+func TestHelioProxyBounds(t *testing.T) {
+	t.Parallel()
+	db := loadSeed(t)
+	// 0.7.0 is the last affected release and 0.8.0 is the fix. Severity
+	// follows the vendor GHSA and NVD (CVSS 4.0 6.9, moderate).
+	for _, version := range []string{"0.1.0", "0.7.0"} {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoNPM, Name: "@gethelio/proxy", Kind: KindExact, Version: version,
+		}})
+		if err != nil || len(hits) != 1 || hits[0].ID != "TCA-2026-0026" || hits[0].Severity != "moderate" {
+			t.Fatalf("%s hits = %+v %v", version, hits, err)
+		}
+	}
+	for _, version := range []string{"0.8.0", "0.16.0"} {
+		hits, err := db.Match([]PackageRef{{
+			Ecosystem: EcoNPM, Name: "@gethelio/proxy", Kind: KindExact, Version: version,
+		}})
+		if err != nil || len(hits) != 0 {
+			t.Fatalf("%s hits = %+v %v", version, hits, err)
+		}
+	}
+	hits, err := db.Match([]PackageRef{{
+		Ecosystem: EcoNPM, Name: "@gethelio/proxy", Kind: KindUnpinned,
 	}})
 	if err != nil || len(hits) != 0 {
 		t.Fatalf("unpinned hits = %+v %v", hits, err)

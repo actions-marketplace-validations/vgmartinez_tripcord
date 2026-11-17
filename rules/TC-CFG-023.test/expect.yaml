@@ -53,6 +53,8 @@ positivos:
   claude-npx-dynatrace-2.0.0: high
   claude-npx-dynatrace-2.1.0: high
   claude-uvx-mcp-atlassian-vulnerable: high
+  claude-uvx-aws-api-vulnerable: high
+  claude-npx-helio-proxy-vulnerable: high
   claude-cmd-c-mcp-remote: critical
   claude-cmd-exe-k-mcp-remote: critical
   claude-sh-c-mcp-remote: critical

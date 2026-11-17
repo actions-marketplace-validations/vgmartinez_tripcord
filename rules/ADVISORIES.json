@@ -502,6 +502,47 @@
       ],
       "added": "tripcord/core@2026.11",
       "reviewed": "2026-11-11"
+    },
+    {
+      "id": "TCA-2026-0025",
+      "aliases": ["CVE-2026-125271", "GHSA-4wq9-grf3-qg2p"],
+      "summary": "awslabs.aws-api-mcp-server from 0.2.13 before 1.5.1 does not enforce denyList and elicitList for AWS API operation names that contain consecutive capital letters",
+      "severity": "high",
+      "affected": [
+        {
+          "ecosystem": "pypi",
+          "name": "awslabs.aws-api-mcp-server",
+          "ranges": [{"introduced": "0.2.13", "fixed": "1.5.1"}]
+        }
+      ],
+      "refs": [
+        "https://github.com/awslabs/mcp/security/advisories/GHSA-4wq9-grf3-qg2p",
+        "https://aws.amazon.com/security/security-bulletins/2026-176-aws/",
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-125271",
+        "https://pypi.org/project/awslabs.aws-api-mcp-server/1.5.1/"
+      ],
+      "added": "tripcord/core@2026.11",
+      "reviewed": "2026-11-12"
+    },
+    {
+      "id": "TCA-2026-0026",
+      "aliases": ["CVE-2026-65957", "GHSA-2c3r-q7gv-hp2m"],
+      "summary": "@gethelio/proxy before 0.8.0 matches dashboard CORS origins by a hostname prefix, so a public DNS name such as 192.168.attacker.com is allowed",
+      "severity": "moderate",
+      "affected": [
+        {
+          "ecosystem": "npm",
+          "name": "@gethelio/proxy",
+          "ranges": [{"fixed": "0.8.0"}]
+        }
+      ],
+      "refs": [
+        "https://osv.dev/vulnerability/CVE-2026-65957",
+        "https://nvd.nist.gov/vuln/detail/CVE-2026-65957",
+        "https://github.com/gethelio/helio/security/advisories/GHSA-2c3r-q7gv-hp2m"
+      ],
+      "added": "tripcord/core@2026.11",
+      "reviewed": "2026-11-12"
     }
   ]
 }

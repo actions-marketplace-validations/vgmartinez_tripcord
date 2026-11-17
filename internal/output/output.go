@@ -89,6 +89,10 @@ type Options struct {
 	// JSON, JSONL, and SARIF always include it; Markdown and GitHub
 	// Actions output do not.
 	ShowAutorun bool
+	// Hyperlinks, when true, wraps catalog rule ids in OSC 8 terminal
+	// hyperlinks in compact text. False leaves the bare id. Other
+	// formats ignore it.
+	Hyperlinks bool
 }
 
 // RuleText is catalog metadata for one rule. Empty fields fall back to

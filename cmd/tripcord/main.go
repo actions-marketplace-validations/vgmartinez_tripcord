@@ -719,6 +719,7 @@ func scanTree(ctx context.Context, t scanTarget, opts scanOptions, stdout, stder
 		Verbose:     opts.verbose,
 		TextExit:    &textExit,
 		ShowAutorun: t.showAutorun,
+		Hyperlinks:  textHyperlinks(opts.output, stdout),
 	})
 	if err != nil {
 		var pathErr *output.PathError
