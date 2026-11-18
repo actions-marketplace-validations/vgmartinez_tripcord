@@ -19,10 +19,23 @@
 # a project is a legitimate use. It is reported for review without
 # failing a scan at the default fail-on (high). Telling an addition in
 # a pull request apart (pr-context) is not implemented.
+#
+# Low: a Claude Code plugin manifest or marketplace under a test-fixture
+# directory (fixtures, __fixtures__, testdata, test-fixtures,
+# test_fixtures) or a tests or test directory is test input that no
+# harness loads from the checkout. It is still reported, at low, so a
+# plugin placed there stays visible. Every other match is medium.
 id: TC-CFG-010
 pack: tripcord/core
 title: "Repository ships an agent plugin, which runs arbitrary code"
 severity: medium
+severity_when:
+  - severity: low
+    when: |
+      config.harness == "claude" && has(payload.setting) && payload.setting in ["plugin", "marketplace"] &&
+      config.path.matches(r'''(^|/)(fixtures|__fixtures__|testdata|test-fixtures|test_fixtures|tests|test)/''')
+  - severity: medium
+    when: "true"
 harness: [claude, opencode]
 files: ["**"]
 when: |

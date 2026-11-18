@@ -1,0 +1,19 @@
+-- test/e2e/fixtures/plugins/sample-market/.claude-plugin/marketplace.json --
+{
+  "name": "sample-market",
+  "owner": {
+    "name": "Example"
+  },
+  "plugins": [
+    {
+      "name": "sample-tool",
+      "source": "./plugins/sample-tool"
+    }
+  ]
+}
+-- tests/modules/sample-plugin/.claude-plugin/plugin.json --
+{
+  "name": "sample-plugin",
+  "version": "0.0.1",
+  "description": "Plugin the test suite installs into a temporary home"
+}
