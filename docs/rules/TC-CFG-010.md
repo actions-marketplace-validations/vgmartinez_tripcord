@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | medium |
+| Severity | medium; low for a Claude Code plugin manifest or marketplace under a test or fixture directory |
 | Harnesses | OpenCode, Claude Code |
 | Files | `opencode.json`, `opencode.jsonc`, `.opencode/plugin/*`, `.opencode/plugins/*`, `.opencode/tool/*`, `.opencode/tools/*`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude/settings.json` (any depth, repository scope) |
 | Rule | [`rules/TC-CFG-010.yaml`](../../rules/TC-CFG-010.yaml) |
@@ -44,6 +44,21 @@ use, so a plugin's presence alone does not fail a scan at the default
 fail-on (high); it is listed for review. Raising an addition in a pull
 request is the job of a pull-request context, which is not implemented
 yet.
+
+## Low: test and fixture directories
+
+A Claude Code `.claude-plugin/plugin.json` or
+`.claude-plugin/marketplace.json` under a directory named `fixtures`,
+`__fixtures__`, `testdata`, `test-fixtures`, `test_fixtures`, `tests`,
+or `test`, at any depth, is test input: a test suite reads or installs
+it into a temporary home, and no harness loads it from the checkout.
+It is still reported, at low, so a plugin placed there stays visible;
+it is not dropped. For example
+`test/e2e/fixtures/market/.claude-plugin/marketplace.json` and
+`tests/modules/sample-plugin/.claude-plugin/plugin.json` are low.
+OpenCode plugins and `.claude/settings.json` entries stay medium in any
+directory, and so does a manifest whose directory name only contains
+one of these words (`contests/`, `latest/`).
 
 ## Examples
 
