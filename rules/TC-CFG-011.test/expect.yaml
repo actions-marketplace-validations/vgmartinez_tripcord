@@ -46,3 +46,10 @@ positivos:
   cursor-rule-word-joiner-code-span-run: high
   cursor-rule-word-joiner-mid-code-span: high
   cursor-rule-word-joiner-code-span-and-hidden: high
+  agents-list-item-word-joiner: low
+  agents-latin-word-persian-suffix: low
+  agents-latin-word-kannada-suffix: low
+  skill-code-span-invisible-sample: low
+  agents-list-item-word-joiner-and-hidden: high
+  agents-latin-word-suffix-joiner-run: high
+  skill-code-span-sample-repeat: high

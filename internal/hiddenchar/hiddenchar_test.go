@@ -404,3 +404,58 @@ func TestCodeSpanJoiners(t *testing.T) {
 		}
 	}
 }
+
+func TestLowShapes(t *testing.T) {
+	cases := []struct {
+		name         string
+		in           string
+		counted, low int
+	}{
+		{"code span joiner", "Define `\u2060jobs.define()` first.", 1, 1},
+		{"after a dash list marker", "- \u2060Keep commits small.", 1, 1},
+		{"after an indented star marker", "  * \u2060Keep commits small.", 1, 1},
+		{"after a plus marker and a tab", "+\t\u2060Keep commits small.", 1, 1},
+		{"after a numbered marker", "12. \u2060Keep commits small.", 1, 1},
+		{"after a paren numbered marker", "3) \u20602026 plan", 1, 1},
+		{"list joiner on one of two lines", "- \u2060Keep\n- small\u2060 commits", 2, 1},
+		{"list marker without a space", "-\u2060Keep", 1, 0},
+		{"list marker then text", "- Keep\u2060 commits", 1, 0},
+		{"list joiner before a space", "- \u2060 Keep", 1, 0},
+		{"list joiner before a non-ASCII letter", "- \u2060\u0430pi", 1, 0},
+		{"list joiner run", "- \u2060\u2060Keep", 2, 0},
+		{"list joiner with another hidden code point", "- \u2060Keep ign\u200Bore", 2, 0},
+		{"list joiner with an uncounted joiner on the line", "- \u2060Keep \U0001F469\u200D\U0001F4BB", 1, 0},
+		{"ZWSP after a list marker", "- \u200BKeep", 1, 0},
+		{"heading not a list", "# \u2060Keep", 1, 0},
+		{"too many digits", "1234567890. \u2060Keep", 1, 0},
+		{"Latin word and Persian suffix", "Server\u200c\u0647\u0627 \u0631\u0627", 1, 1},
+		{"Latin word and Kannada suffix", "API\u200c\u0c97\u0cb3\u0cca\u0c82\u0ca6\u0cbf\u0c97\u0cc6", 1, 1},
+		{"Latin word and Devanagari suffix with a mark", "API\u200d\u0915\u0947", 1, 1},
+		{"one-letter Latin word", "Read a\u200c\u0628\u0627 first.", 1, 0},
+		{"one-letter suffix", "Read API\u200c\u0628 first.", 1, 0},
+		{"joiner inside a Latin word", "ign\u200core", 1, 0},
+		{"Latin word and Cyrillic suffix", "API\u200c\u0430\u0431", 1, 0},
+		{"Latin word and Hangul suffix", "API\u200c\uc2a4\uc2a4", 1, 0},
+		{"joiner run before a suffix", "API\u200c\u200c\u0647\u0627", 2, 0},
+		{"ZWSP before a suffix", "API\u200b\u0647\u0627", 1, 0},
+		{"script joiner then Latin", "\u0c95\u0ccd\u200cenv", 1, 0},
+		{"sample in a code span", "The marker is (`\u2062\u2060`).", 1, 1},
+		{"two counted in a sample", "Strip `\u2060\uFEFF\u2063` first.", 2, 2},
+		{"sample after a closed span", "`a` and `\u2063\u2060` here", 1, 1},
+		{"between two spans", "`a`\u2063\u2060`b`", 1, 0},
+		{"sample with a repeat", "`\u2063\u2060\u2060`", 2, 0},
+		{"sample with a tag", "`\u2063\u2060\U000E0041`", 2, 0},
+		{"sample with a bidi control", "`\u2060\u202E`", 2, 0},
+		{"sample too long", "`\u2061\u2062\u2063\u2064\u200B\u2060\uFEFF\u200C\u200D`", 5, 0},
+		{"double-backtick sample", "``\u2063\u2060``", 1, 0},
+		{"span with visible text", "`jobs.\u2060define()`", 1, 0},
+		{"span joiner run", "`\u2060\u2060x`", 2, 0},
+		{"sample not closed", "`\u2063\u2060 x", 1, 0},
+	}
+	for _, tc := range cases {
+		got, _ := Scan([]byte(tc.in))
+		if got.Total != tc.counted || got.LowShapes != tc.low {
+			t.Errorf("%s: Scan(%+q) = Total %d, LowShapes %d, want %d, %d", tc.name, tc.in, got.Total, got.LowShapes, tc.counted, tc.low)
+		}
+	}
+}

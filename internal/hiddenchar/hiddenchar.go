@@ -62,18 +62,28 @@ var bom = []byte{0xEF, 0xBB, 0xBF}
 // CodeSpanJoiners counts the lines whose only hidden code point, counted
 // or not, is a U+2060 that opens an inline code span (see
 // codeSpanJoiner). That U+2060 is still counted in Total.
+//
+// LowShapes counts the counted code points that are one of these
+// artifacts, each still in Total: a CodeSpanJoiners U+2060; a U+2060 that
+// is the only hidden code point on its line, right after a list marker
+// (see listJoiner); a joiner between a Latin word and a joining-script
+// suffix (see latinSuffixJoiner); and a code point of an inline code
+// span that holds only invisible characters (see codeSpanSample).
 func Scan(b []byte) (model.HiddenChars, bool) {
 	var out model.HiddenChars
 	valid := true
 	b, _ = bytes.CutPrefix(b, bom)
 	line, col := 1, 1
 	inRun, stored := false, false
-	lineHidden, lineSpan := 0, false
+	lineHidden, lineSpan, lineList := 0, false, false
 	endLine := func() {
 		if lineHidden == 1 && lineSpan {
 			out.CodeSpanJoiners++
+			out.LowShapes++
+		} else if lineHidden == 1 && lineList {
+			out.LowShapes++
 		}
-		lineHidden, lineSpan = 0, false
+		lineHidden, lineSpan, lineList = 0, false, false
 	}
 	for i := 0; i < len(b); {
 		r, size := utf8.DecodeRune(b[i:])
@@ -91,8 +101,13 @@ func Scan(b []byte) (model.HiddenChars, bool) {
 			i += size
 			continue
 		case countedAt(b, i):
-			if codeSpanJoiner(b, i, size) {
+			switch {
+			case codeSpanJoiner(b, i, size):
 				lineSpan = true
+			case listJoiner(b, i, size):
+				lineList = true
+			case latinSuffixJoiner(b, i, size), codeSpanSample(b, i):
+				out.LowShapes++
 			}
 			out.Total++
 			out.Sequence = append(out.Sequence, r)
@@ -145,6 +160,140 @@ func codeSpanJoiner(b []byte, i, size int) bool {
 		rest = rest[:nl]
 	}
 	return bytes.IndexByte(rest, '`') > 0
+}
+
+// listJoiner reports a U+2060 at i right after a list marker at the
+// start of its line (optional indentation, then -, *, +, or one to nine
+// digits and . or ), then spaces or tabs) and right before an ASCII
+// letter or digit: the same editor artifact as codeSpanJoiner, written
+// where a list item's text starts. Scan counts it as a low shape only
+// when it is the only hidden code point on its line. A U+2060 inside
+// the item's text, before a space or another hidden code point, or
+// after anything else is not this shape.
+func listJoiner(b []byte, i, size int) bool {
+	r, _ := utf8.DecodeRune(b[i:])
+	if r != 0x2060 {
+		return false
+	}
+	rest := b[i+size:]
+	if len(rest) == 0 || !isASCIIAlnum(rest[0]) {
+		return false
+	}
+	p := b[bytes.LastIndexByte(b[:i], '\n')+1 : i]
+	p = bytes.TrimLeft(p, " \t")
+	n := 0
+	for n < len(p) && p[n] >= '0' && p[n] <= '9' {
+		n++
+	}
+	switch {
+	case n == 0 && len(p) > 0 && (p[0] == '-' || p[0] == '*' || p[0] == '+'):
+		p = p[1:]
+	case n > 0 && n <= 9 && n < len(p) && (p[n] == '.' || p[n] == ')'):
+		p = p[n+1:]
+	default:
+		return false
+	}
+	return len(p) > 0 && len(bytes.TrimLeft(p, " \t")) == 0
+}
+
+// latinSuffixJoiner reports an isolated U+200C or U+200D at i between
+// the end of a Latin word of at least two letters and a suffix of at
+// least two letters or marks of a linguistic joining script, as
+// localised text writes a native suffix on an English term (an
+// Arabic-script plural or a Kannada case ending on "URL"). It splits no
+// ASCII word. A one-letter Latin word, a one-letter suffix, a joiner
+// inside a Latin word, a suffix of another script, and a run stay out of
+// this shape.
+func latinSuffixJoiner(b []byte, i, size int) bool {
+	r, _ := utf8.DecodeRune(b[i:])
+	if (r != 0x200C && r != 0x200D) || zeroWidthRun(b, i, size) {
+		return false
+	}
+	latin := 0
+	for j := i; j > 0 && latin < 2; {
+		prev, psize := utf8.DecodeLastRune(b[:j])
+		if !unicode.IsLetter(prev) || !unicode.Is(unicode.Latin, prev) {
+			break
+		}
+		latin++
+		j -= psize
+	}
+	if latin < 2 {
+		return false
+	}
+	next, nsize := utf8.DecodeRune(b[i+size:])
+	if nsize == 0 || !unicode.IsLetter(next) {
+		return false
+	}
+	script := scriptOf(next, linguisticJoiningScripts)
+	if script == nil {
+		return false
+	}
+	after, asize := utf8.DecodeRune(b[i+size+nsize:])
+	if asize == 0 || !unicode.Is(script, after) {
+		return false
+	}
+	return unicode.IsLetter(after) || unicode.In(after, unicode.Mn, unicode.Mc)
+}
+
+// invisibleSample is a code point an inline code span may quote as a
+// literal sample of invisible text: a zero-width code point or one of
+// the invisible operators U+2061-U+2064. Bidi controls and tag
+// characters are not.
+func invisibleSample(r rune) bool {
+	return Class(r) == ZeroWidth || r >= 0x2061 && r <= 0x2064
+}
+
+// codeSpanSample reports a hidden code point at i inside an inline code
+// span that holds nothing but invisibleSample code points, at most 8 of
+// them with none repeated, as documentation quotes the characters it is
+// describing. The span opens with a single backtick that is an odd
+// backtick on its line and closes with a single backtick. A span that
+// also holds visible text, a longer or repeated span, a bidi control or
+// tag character, and a double-backtick span are not this shape.
+func codeSpanSample(b []byte, i int) bool {
+	r, _ := utf8.DecodeRune(b[i:])
+	if Class(r) != ZeroWidth {
+		return false
+	}
+	start := i
+	for start > 0 {
+		prev, psize := utf8.DecodeLastRune(b[:start])
+		if !invisibleSample(prev) {
+			break
+		}
+		start -= psize
+	}
+	end := i
+	for end < len(b) {
+		next, nsize := utf8.DecodeRune(b[end:])
+		if nsize == 0 || !invisibleSample(next) {
+			break
+		}
+		end += nsize
+	}
+	if start == 0 || end >= len(b) || b[start-1] != '`' || b[end] != '`' {
+		return false
+	}
+	if start >= 2 && b[start-2] == '`' || end+1 < len(b) && b[end+1] == '`' {
+		return false
+	}
+	lineStart := bytes.LastIndexByte(b[:start], '\n') + 1
+	if bytes.Count(b[lineStart:start], []byte{'`'})%2 != 1 {
+		return false
+	}
+	var seen []rune
+	for j := start; j < end; {
+		c, csize := utf8.DecodeRune(b[j:])
+		for _, s := range seen {
+			if s == c {
+				return false
+			}
+		}
+		seen = append(seen, c)
+		j += csize
+	}
+	return len(seen) <= 8
 }
 
 func isASCIIAlnum(c byte) bool {
