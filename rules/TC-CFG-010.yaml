@@ -20,11 +20,14 @@
 # failing a scan at the default fail-on (high). Telling an addition in
 # a pull request apart (pr-context) is not implemented.
 #
-# Low: a Claude Code plugin manifest or marketplace under a test-fixture
-# directory (fixtures, __fixtures__, testdata, test-fixtures,
-# test_fixtures) or a tests or test directory is test input that no
-# harness loads from the checkout. It is still reported, at low, so a
-# plugin placed there stays visible. Every other match is medium.
+# Low: any match, for every harness, under a test-fixture directory
+# (fixtures, __fixtures__, testdata, test-fixtures, test_fixtures) or a
+# tests or test directory: a Claude Code plugin manifest, marketplace,
+# or settings entry, and an OpenCode opencode.json(c) plugin entry or
+# plugin or tool module. That is test input that no harness loads from
+# the checkout. It is still reported, at low, so a plugin placed there
+# stays visible. Every other match is medium, including one whose
+# directory name only contains one of these words (contests/, latest/).
 id: TC-CFG-010
 pack: tripcord/core
 title: "Repository ships an agent plugin, which runs arbitrary code"
@@ -32,7 +35,6 @@ severity: medium
 severity_when:
   - severity: low
     when: |
-      config.harness == "claude" && has(payload.setting) && payload.setting in ["plugin", "marketplace"] &&
       config.path.matches(r'''(^|/)(fixtures|__fixtures__|testdata|test-fixtures|test_fixtures|tests|test)/''')
   - severity: medium
     when: "true"

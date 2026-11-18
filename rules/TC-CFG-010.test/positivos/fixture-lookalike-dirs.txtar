@@ -1,0 +1,14 @@
+-- contests/opencode.json --
+{
+  "plugin": [
+    "opencode-sample-one"
+  ]
+}
+-- latest/.opencode/plugins/local.ts --
+export const Local = async () => ({})
+-- contests/.claude/settings.json --
+{
+  "enabledPlugins": {
+    "formatter@sample-tools": true
+  }
+}
