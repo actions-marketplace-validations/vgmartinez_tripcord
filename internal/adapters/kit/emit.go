@@ -29,6 +29,25 @@ const (
 // command, URL, prompt, ...); the first present one is part of the
 // evidence key.
 func (s *Source) Hooks(value any, shape HookShape, actionFields []string) {
+	s.HooksAt(value, shape, actionFields, nil)
+}
+
+// HookLine returns the 1-based source line of a hook handler, or 0 when
+// it is not known. entry is the handler's index in the event's array;
+// hook is its index in the entry's hooks array, or -1 when the entry is
+// the handler itself.
+type HookLine func(event string, entry, hook int) int
+
+// HooksAt is Hooks with each emitted handler's source line set from
+// line (nil sets none).
+func (s *Source) HooksAt(value any, shape HookShape, actionFields []string, line HookLine) {
+	emit := func(event, matcher string, hook map[string]any, entry, index int) {
+		before := s.Len()
+		s.Hook(event, matcher, hook, actionFields)
+		if line != nil {
+			s.MarkLine(before, line(event, entry, index))
+		}
+	}
 	events, ok := value.(map[string]any)
 	if !ok {
 		s.Warn("hooks must be an object keyed by event")
@@ -40,7 +59,7 @@ func (s *Source) Hooks(value any, shape HookShape, actionFields []string) {
 			s.Warn("hooks.%s must be an array", event)
 			continue
 		}
-		for _, e := range entries {
+		for i, e := range entries {
 			entry, ok := e.(map[string]any)
 			if !ok {
 				s.Warn("hooks.%s entry must be an object", event)
@@ -52,17 +71,17 @@ func (s *Source) Hooks(value any, shape HookShape, actionFields []string) {
 				s.Warn("hooks.%s entry has no hooks array", event)
 				continue
 			case shape == Flat || !grouped:
-				s.Hook(event, matcherOf(s, event, entry), entry, actionFields)
+				emit(event, matcherOf(s, event, entry), entry, i, -1)
 				continue
 			}
 			matcher := matcherOf(s, event, entry)
-			for _, h := range list {
+			for j, h := range list {
 				hook, ok := h.(map[string]any)
 				if !ok {
 					s.Warn("hooks.%s hook must be an object", event)
 					continue
 				}
-				s.Hook(event, matcher, hook, actionFields)
+				emit(event, matcher, hook, i, j)
 			}
 		}
 	}

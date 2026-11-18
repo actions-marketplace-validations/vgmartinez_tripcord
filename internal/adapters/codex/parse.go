@@ -1,6 +1,8 @@
 package codex
 
 import (
+	"strconv"
+
 	"github.com/vgmartinez/tripcord/internal/adapters/kit"
 	"github.com/vgmartinez/tripcord/internal/model"
 )
@@ -97,7 +99,7 @@ func (f *file) config(raw []byte) map[string]any {
 		return nil
 	}
 	if hooks, ok := obj["hooks"]; ok {
-		f.hooks(hooks)
+		f.hooks(hooks, nil)
 	}
 	if servers, ok := obj["mcp_servers"]; ok {
 		f.MCPServers(servers, "mcp_servers")
@@ -144,7 +146,7 @@ func (f *file) profiles(value any) {
 // hooks normalizes the hooks table. Arrays are event matcher groups;
 // any other member (managed_dir, windows_managed_dir, ...) is emitted as
 // a setting so nothing under hooks is dropped silently.
-func (f *file) hooks(value any) {
+func (f *file) hooks(value any, line kit.HookLine) {
 	table, ok := value.(map[string]any)
 	if !ok {
 		f.Warn("hooks must be a table keyed by event")
@@ -158,7 +160,7 @@ func (f *file) hooks(value any) {
 		}
 		f.setting(model.ConfigKindPermissions, "hooks."+name, table[name])
 	}
-	f.Hooks(events, kit.Grouped, hookActions)
+	f.HooksAt(events, kit.Grouped, hookActions, line)
 }
 
 // hooksFile normalizes hooks.json: {"description": "...", "hooks": {...}}.
@@ -189,5 +191,21 @@ func (f *file) hooksFile(raw []byte) {
 		f.Warn("hooks.json hooks member is not an object")
 		return
 	}
-	f.hooks(hooks)
+	f.hooks(hooks, hooksJSONLine(raw))
+}
+
+// hooksJSONLine locates each handler of a hooks.json document: the line
+// of its first action field (hookActions order), else of the handler
+// object, so two handlers in one file report their own lines.
+func hooksJSONLine(raw []byte) kit.HookLine {
+	lines := kit.JSONLines(raw)
+	return func(event string, entry, hook int) int {
+		base := kit.JSONPointer("hooks", event, strconv.Itoa(entry), "hooks", strconv.Itoa(hook))
+		for _, field := range hookActions {
+			if l := lines[base+kit.JSONPointer(field)]; l > 0 {
+				return l
+			}
+		}
+		return lines[base]
+	}
 }
