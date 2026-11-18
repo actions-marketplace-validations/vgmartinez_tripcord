@@ -36,7 +36,19 @@
 # letters of the same joining script (Arabic-script and Brahmic,
 # including Myanmar, Khmer, and Tibetan), or after a virama that ends a
 # word, and an isolated U+200B between letters of the same script
-# written without spaces (Thai, Lao, Khmer, Myanmar, Tibetan).
+# written without spaces (Thai, Lao, Khmer, Myanmar, Tibetan). After a
+# virama, an isolated joiner before a letter of the virama's script is
+# spelling when the virama sits on a letter of any joining script, and
+# one after an Indic or Sinhala virama is spelling before a letter of a
+# script that is neither joining nor Latin-looking (Hangul, Han, ...).
+#
+# Severity is low when every counted code point in the file is a
+# single U+2060 right after a single backtick that opens an inline code
+# span, before an ASCII letter or digit, on a line with no other hidden
+# code point (config.hidden_chars_code_span, see hiddenchar.Scan), as
+# some editors write it to stop autolinking. It hides no text, but it
+# is still reported. Any other hidden code point in the file, a U+2060
+# run, or a U+2060 inside or at the end of a span keeps it high.
 #
 # The excerpt names each run's code point, line, and column (code
 # points from 1), never the text the run hides or spells: a tag run is
@@ -45,6 +57,11 @@ id: TC-CFG-011
 pack: tripcord/core
 title: "Hidden Unicode in an agent instructions file"
 severity: high
+severity_when:
+  - severity: low
+    when: config.hidden_chars_code_span == config.hidden_chars
+  - severity: high
+    when: config.hidden_chars_code_span < config.hidden_chars
 evidence: hidden_chars
 harness: [claude, copilot, cursor, gemini, windsurf, generic, devin]
 files: ["**"]

@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | high |
+| Severity | high; low when the only hidden code points are word joiners that open inline code spans (see "Severity") |
 | Harnesses | generic (`AGENTS.md`), Claude Code, Gemini CLI, Windsurf, GitHub Copilot, Cursor, Devin |
 | Files | `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md` (any depth), nested `.claude/rules/**/*.md`, `.cursor/rules/**/*.md(c)`, and `.windsurfrules`, plus root `.cursorrules`, `.github/copilot-instructions.md`, `.github/instructions/**/*.md`, `.github/agents/**/*.agent.md`, the maintenance commands and knowledge entries of `.devin/blueprint.yaml`, and repository skills at `.claude/skills/<name>/SKILL.md`, `.agents/skills/<name>/SKILL.md`, and `.github/skills/<name>/SKILL.md` (repository scope) |
 | Rule | [`rules/TC-CFG-011.yaml`](../../rules/TC-CFG-011.yaml) |
@@ -66,8 +66,9 @@ literal (apart from the stray U+FEFF below). In every script, that
 includes a run (two U+200C in a row between Persian letters is a
 run), U+200B outside the five scripts written without spaces, a U+200B
 next to whitespace or punctuation, a character between letters of two
-different scripts or next to a Latin letter or a digit, and a joiner at the edge of a word unless it ends
-the word right after a virama. Persian has no virama, so a joiner at
+different scripts or next to a Latin letter or a digit (apart from the
+two virama shapes below), and a joiner at the edge of a word unless it
+ends the word right after a virama. Persian has no virama, so a joiner at
 the end of a Persian word is reported.
 
 Not reported:
@@ -98,6 +99,21 @@ Not reported:
   or the end of the file follows it. This is how older Malayalam text
   writes a chillu (`\u0d28\u0d4d\u200d `). Persian has no virama, so
   a Persian word that ends in a joiner is still reported.
+- One U+200C or U+200D right after a virama of one of those scripts,
+  on a letter of any of them, before a letter of the virama's own
+  script. Machine-translated text sometimes puts a virama of one
+  Brahmic script on a letter of a sibling script, as in the Kannada
+  virama on a Gujarati letter `\u0a9c\u0ccd\u200c\u0cb2`.
+- One U+200C or U+200D right after the virama of a Brahmic script of
+  India (Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu,
+  Kannada, Malayalam) or of Sinhala, on a letter of one of those scripts
+  or of Arabic, Syriac, or Mongolian, before a letter of a script that
+  is neither a joining script nor one whose letters pass for ASCII
+  (Latin, Greek, Cyrillic, Armenian, Cherokee), such as Hangul or Han:
+  `\u0caa\u0ccd\u200c\uc2a4`. A joiner there before a Latin,
+  Greek, or Cyrillic letter, a digit, or a symbol, two joiners in a row
+  (`\u0caa\u0ccd\u200c\u200c\uc2a4`), and a U+200B, U+2060, or
+  tag character in the same place are still reported.
 - One U+200B between two letters of the same script, one of Thai, Lao,
   Khmer, Myanmar, or Tibetan, where it is the word separator, for
   example the Thai `\u0e01\u0e23\u0e38\u0e13\u0e32\u200b\u0e23\u0e31\u0e19`.
@@ -111,6 +127,24 @@ Not reported:
   punctuation, or next to another zero-width character
   (`Done.\ufeff\ufeff Next`) is still reported, and so is every
   U+2060.
+
+## Severity
+
+A finding is high, except in one case. Some editors put a single U+2060
+(word joiner) right after the backtick that opens an inline code span,
+to stop Markdown or MDX from turning the code into a link:
+`` `\u2060jobs.define()` ``. When every hidden code point in the file is
+of that shape (one U+2060 right after a single opening backtick, right
+before an ASCII letter or digit, with a closing backtick later on the
+same line and no other hidden code point on that line), the finding is
+low. It is still reported: the character hides no text, but it is
+still invisible.
+
+Any other hidden code point anywhere in the file keeps the finding
+high, and so do a U+2060 run (`` `\u2060\u2060x` ``), a U+2060
+inside a span (`` `jobs.\u2060define()` ``) or closing it, one after a
+double backtick, one before a space or a non-ASCII letter, and one in
+prose (`small\u2060 commits`).
 
 ## Known false positives
 
@@ -133,6 +167,12 @@ column, so it is quick to review and fix.
   joiner next to a Latin letter is how a word split hides an
   instruction (`ign\u200core`), so the rule reports it in any script.
   Fix: replace the joiner with a space, or remove it.
+- **A doubled zero-width space next to text.** An editor can leave
+  two U+200B in a row between punctuation and a word, for example after
+  a footnote marker (`[^1]: \u200b\u200bSee the guide`). That is byte
+  for byte the shape of the hidden run this rule targets
+  (`note\u200b\u200b before`), so it is reported even in benign
+  documentation. Fix: remove both characters.
 - **A zero-width space inside a placeholder or path.** A U+200B placed
   inside a template placeholder or path to stop auto-linking
   (`<project\u200b-name>/src`) is a zero-width character inside a

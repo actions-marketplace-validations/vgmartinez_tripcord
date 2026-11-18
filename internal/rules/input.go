@@ -138,6 +138,7 @@ func emptyConfig() map[string]any {
 	m["fetch_not_run"] = false
 	m["repo_script"] = false
 	m["hidden_chars"] = 0
+	m["hidden_chars_code_span"] = 0
 	return m
 }
 
@@ -166,19 +167,20 @@ func configVars(id string, item model.ConfigItem) map[string]any {
 		symlinks = []string{}
 	}
 	return map[string]any{
-		"id":                id,
-		"harness":           item.Harness.String(),
-		"scope":             item.Scope.String(),
-		"path":              item.Path,
-		"sha256":            item.SHA256,
-		"kind":              item.Kind.String(),
-		"missing_scripts":   int(item.MissingScripts),
-		"script_locations":  locations,
-		"checksum_files":    sums,
-		"checksum_symlinks": symlinks,
-		"fetch_not_run":     item.FetchNotRun,
-		"repo_script":       item.RepoScript,
-		"hidden_chars":      item.Hidden.Total,
+		"id":                     id,
+		"harness":                item.Harness.String(),
+		"scope":                  item.Scope.String(),
+		"path":                   item.Path,
+		"sha256":                 item.SHA256,
+		"kind":                   item.Kind.String(),
+		"missing_scripts":        int(item.MissingScripts),
+		"script_locations":       locations,
+		"checksum_files":         sums,
+		"checksum_symlinks":      symlinks,
+		"fetch_not_run":          item.FetchNotRun,
+		"repo_script":            item.RepoScript,
+		"hidden_chars":           item.Hidden.Total,
+		"hidden_chars_code_span": item.Hidden.CodeSpanJoiners,
 	}
 }
 
