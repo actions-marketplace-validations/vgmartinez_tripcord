@@ -11,3 +11,6 @@ positivos:
   opencode-plugins-dir-file: medium
   opencode-tool-file: medium
   claude-test-fixture-plugins: low
+  opencode-test-fixture-plugins: low
+  fixture-lookalike-dirs: medium
+  opencode-tests-env-config: medium

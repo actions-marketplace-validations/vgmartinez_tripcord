@@ -129,12 +129,16 @@ type ConfigItem struct {
 // and Total every hidden code point in the file. CodeSpanJoiners counts
 // the lines whose only hidden code point is a single U+2060 that opens
 // an inline code span (see hiddenchar.Scan); each is also in Total.
+// LowShapes counts the code points in Total that hiddenchar.Scan reads
+// as an editor or localisation artifact (CodeSpanJoiners among them); a
+// rule may lower its severity when every counted code point is one.
 type HiddenChars struct {
 	Runs            []HiddenRun
 	Sequence        []rune
 	RunCount        int
 	Total           int
 	CodeSpanJoiners int
+	LowShapes       int
 }
 
 // String counts the hidden code points, so a formatted ConfigItem stays

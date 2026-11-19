@@ -45,3 +45,5 @@ positivos:
   missing-claude-hooks-dir-script: medium
   missing-node-modules-lookalike: medium
   claude-parent-node-modules: medium
+  missing-test-fixture-settings: low
+  fixture-lookalike-dirs: [high, medium]

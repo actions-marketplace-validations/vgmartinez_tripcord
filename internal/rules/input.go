@@ -139,6 +139,7 @@ func emptyConfig() map[string]any {
 	m["repo_script"] = false
 	m["hidden_chars"] = 0
 	m["hidden_chars_code_span"] = 0
+	m["hidden_chars_low"] = 0
 	return m
 }
 
@@ -181,6 +182,7 @@ func configVars(id string, item model.ConfigItem) map[string]any {
 		"repo_script":            item.RepoScript,
 		"hidden_chars":           item.Hidden.Total,
 		"hidden_chars_code_span": item.Hidden.CodeSpanJoiners,
+		"hidden_chars_low":       item.Hidden.LowShapes,
 	}
 }
 

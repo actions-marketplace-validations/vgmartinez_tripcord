@@ -1,0 +1,24 @@
+-- .claude/settings.json --
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/sample-session.ts\""}]}
+    ]
+  }
+}
+-- contests/.claude/settings.json --
+{
+  "hooks": {
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "~/.claude/hooks/sample-stop.sh"}]}
+    ]
+  }
+}
+-- latest/.claude/settings.json --
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Edit", "hooks": [{"type": "command", "command": "bash .claude/hooks/sample-format.sh"}]}
+    ]
+  }
+}

@@ -1,0 +1,42 @@
+-- tests/fixtures/old-release/.claude/settings.json --
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/sample-session.ts\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/sample-format.ts\""
+          }
+        ]
+      }
+    ]
+  }
+}
+-- test/fixtures/home-hook/.claude/settings.json --
+{
+  "hooks": {
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "~/.claude/hooks/sample-stop.sh"}]}
+    ]
+  }
+}
+-- testdata/codex/.codex/hooks.json --
+{
+  "hooks": {
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "/opt/sample/hooks/stop.sh"}]}
+    ]
+  }
+}
