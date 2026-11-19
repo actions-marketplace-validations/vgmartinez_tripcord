@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | medium; low under a test or fixture directory |
+| Severity | medium; low under a fixture directory, and for a Claude Code plugin manifest or marketplace also under a test directory |
 | Harnesses | OpenCode, Claude Code |
 | Files | `opencode.json`, `opencode.jsonc`, `.opencode/plugin/*`, `.opencode/plugins/*`, `.opencode/tool/*`, `.opencode/tools/*`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.claude/settings.json` (any depth, repository scope) |
 | Rule | [`rules/TC-CFG-010.yaml`](../../rules/TC-CFG-010.yaml) |
@@ -47,22 +47,32 @@ yet.
 
 ## Low: test and fixture directories
 
-Any match under a directory named `fixtures`, `__fixtures__`,
-`testdata`, `test-fixtures`, `test_fixtures`, `tests`, or `test`, at any
-depth, is test input: a test suite reads it or installs it into a
-temporary home, and no harness loads it from the checkout. This holds
-for every harness the rule reads: a Claude Code
-`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, or
-`.claude/settings.json` entry, and an OpenCode `opencode.json(c)`
-plugin entry or a module under `.opencode/plugin(s)/` or
-`.opencode/tool(s)/`. It is still reported, at low, so a plugin placed
-there stays visible; it is not dropped. For example
-`test/e2e/fixtures/market/.claude-plugin/marketplace.json`,
-`tests/modules/sample-plugin/.claude-plugin/plugin.json`, and
-`tests/fixtures/plugin-case/opencode.json` with its
-`.opencode/plugins/local.ts` are low. A directory whose name only
-contains one of these words (`contests/`, `latest/`) stays medium, and
-so does the repository-root config.
+Two cases are test input that no harness loads from the checkout. They
+are still reported, at low, so a plugin placed there stays visible; they
+are not dropped.
+
+- A Claude Code `.claude-plugin/plugin.json` or
+  `.claude-plugin/marketplace.json` under a directory named `fixtures`,
+  `__fixtures__`, `testdata`, `test-fixtures`, `test_fixtures`, `tests`,
+  or `test`, at any depth. A test suite reads it or installs it into a
+  temporary home. For example
+  `test/e2e/fixtures/market/.claude-plugin/marketplace.json` and
+  `tests/modules/sample-plugin/.claude-plugin/plugin.json` are low.
+- Any other match, for every harness the rule reads, under a
+  fixture-type directory only: `fixtures`, `testdata`, or
+  `__fixtures__`, at any depth (`tests/fixtures/` is covered through
+  `fixtures/`). That covers an OpenCode `opencode.json(c)` plugin entry,
+  a module under `.opencode/plugin(s)/` or `.opencode/tool(s)/`, and a
+  Claude Code `.claude/settings.json` entry. For example
+  `tests/fixtures/plugin-case/opencode.json` and its
+  `.opencode/plugins/local.ts` are low.
+
+A config under plain `tests/` or `test/` that is not a Claude Code
+plugin manifest or marketplace stays medium: it can be one the agent
+really loads when started in that directory, such as a test
+environment's `tests/dev-env/opencode.json`. A directory whose name only
+contains one of these words (`contests/`, `latest/`) stays medium, and so
+does the repository-root config.
 
 ## Examples
 

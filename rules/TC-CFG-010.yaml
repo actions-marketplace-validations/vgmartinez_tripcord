@@ -20,14 +20,21 @@
 # failing a scan at the default fail-on (high). Telling an addition in
 # a pull request apart (pr-context) is not implemented.
 #
-# Low: any match, for every harness, under a test-fixture directory
-# (fixtures, __fixtures__, testdata, test-fixtures, test_fixtures) or a
-# tests or test directory: a Claude Code plugin manifest, marketplace,
-# or settings entry, and an OpenCode opencode.json(c) plugin entry or
-# plugin or tool module. That is test input that no harness loads from
-# the checkout. It is still reported, at low, so a plugin placed there
-# stays visible. Every other match is medium, including one whose
-# directory name only contains one of these words (contests/, latest/).
+# Low, two clauses:
+#   - A Claude Code plugin manifest or marketplace under a test-fixture
+#     directory (fixtures, __fixtures__, testdata, test-fixtures,
+#     test_fixtures) or a tests or test directory.
+#   - Any other match, for every harness (an OpenCode opencode.json(c)
+#     plugin entry or plugin or tool module, a Claude Code settings
+#     entry), under a fixture-type directory only: fixtures, testdata,
+#     or __fixtures__ (tests/fixtures/ is covered through fixtures/). A
+#     config under plain tests/ or test/ can be one the agent really
+#     loads when started there, such as a test environment, so it keeps
+#     its severity.
+# Both are test input that no harness loads from the checkout. They are
+# still reported, at low, so a plugin placed there stays visible. Every
+# other match is medium, including one whose directory name only
+# contains one of these words (contests/, latest/).
 id: TC-CFG-010
 pack: tripcord/core
 title: "Repository ships an agent plugin, which runs arbitrary code"
@@ -35,7 +42,11 @@ severity: medium
 severity_when:
   - severity: low
     when: |
+      config.harness == "claude" && has(payload.setting) && payload.setting in ["plugin", "marketplace"] &&
       config.path.matches(r'''(^|/)(fixtures|__fixtures__|testdata|test-fixtures|test_fixtures|tests|test)/''')
+  - severity: low
+    when: |
+      config.path.matches(r'''(^|/)(fixtures|testdata|__fixtures__)/''')
   - severity: medium
     when: "true"
 harness: [claude, opencode]
