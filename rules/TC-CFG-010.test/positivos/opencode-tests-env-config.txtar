@@ -1,0 +1,20 @@
+-- tests/dev-env/opencode.json --
+{
+  "plugin": [
+    "@sample-scope/opencode-plugin@beta"
+  ]
+}
+-- test/local-env/opencode.json --
+{
+  "plugin": [
+    "opencode-sample-one"
+  ]
+}
+-- tests/local-env/.opencode/plugins/local.ts --
+export const Local = async () => ({})
+-- tests/dev-env/.claude/settings.json --
+{
+  "enabledPlugins": {
+    "formatter@sample-tools": true
+  }
+}

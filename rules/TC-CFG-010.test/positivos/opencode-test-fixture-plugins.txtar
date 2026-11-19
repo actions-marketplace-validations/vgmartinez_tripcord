@@ -1,0 +1,16 @@
+-- tests/fixtures/sample-plugin-case/opencode.json --
+{
+  "plugin": [
+    "opencode-sample-one",
+    "opencode-sample-two@0.1.0",
+    "./.opencode/plugins/local.ts"
+  ]
+}
+-- tests/fixtures/sample-plugin-case/.opencode/plugins/local.ts --
+export const Local = async () => ({})
+-- test/fixtures/settings-case/.claude/settings.json --
+{
+  "enabledPlugins": {
+    "formatter@sample-tools": true
+  }
+}
