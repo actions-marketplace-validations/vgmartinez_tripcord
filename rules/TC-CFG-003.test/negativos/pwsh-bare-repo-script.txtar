@@ -1,0 +1,22 @@
+-- .mcp.json --
+{
+  "mcpServers": {
+    "sdk-tools": {
+      "command": "pwsh",
+      "args": ["./tools/mcp/sdk-tools-mcp.ps1", "-Run"]
+    }
+  }
+}
+-- .vscode/mcp.json --
+{
+  "servers": {
+    "sdk-tools": {
+      "type": "stdio",
+      "command": "pwsh",
+      "args": ["./tools/mcp/sdk-tools-mcp.ps1", "-Run"]
+    }
+  }
+}
+-- tools/mcp/sdk-tools-mcp.ps1 --
+param([switch]$Run)
+Write-Output repo-script
