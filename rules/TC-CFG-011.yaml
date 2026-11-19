@@ -51,7 +51,10 @@
 #   write it to stop autolinking;
 # - a single U+2060 right after a list marker (-, *, +, 1., 1)) at the
 #   start of a line, before an ASCII letter or digit, on a line with no
-#   other hidden code point;
+#   other hidden code point apart from a line-start U+2060;
+# - a single U+2060 that is the first code point of a line, before a
+#   list marker or text, not next to another hidden or invisible code
+#   point;
 # - an isolated U+200C or U+200D between a Latin word of at least two
 #   letters and a suffix of at least two letters or marks of an Indic,
 #   Arabic, Syriac, Mongolian, or Sinhala script (localised text writing
@@ -59,7 +62,9 @@
 # - a code point of an inline code span that holds only zero-width code
 #   points and U+2061-U+2064, at most 8 with none repeated, as a page
 #   quotes the characters it describes.
-# Any other hidden code point in the file, a U+2060 run, a U+2060 inside
+# Any other hidden code point in the file, a U+2060 run (also at the
+# start of a line), a tag character or bidi control at the start of a
+# line, a U+2060 inside
 # or at the end of a span with visible text, a joiner after a one-letter
 # Latin word or before a one-letter suffix, and a bidi control or tag
 # character keep it high.

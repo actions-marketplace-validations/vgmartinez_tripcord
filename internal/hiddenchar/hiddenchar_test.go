@@ -459,3 +459,33 @@ func TestLowShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestLineStartJoiner(t *testing.T) {
+	cases := []struct {
+		name         string
+		in           string
+		counted, low int
+	}{
+		{"before plain text", "\u2060When access is denied, stop.", 1, 1},
+		{"before a list marker", "\u2060- Keep commits small.", 1, 1},
+		{"on a later line", "# Agents\n\u2060Keep commits small.", 1, 1},
+		{"alone on its line", "a\n\u2060\nb", 1, 1},
+		{"before a list marker with a list joiner", "\u2060- \u2060Keep commits small.", 2, 2},
+		{"with a list joiner and another hidden code point", "\u2060- \u2060Keep ign\u200Bore", 3, 1},
+		{"with hidden text later on the line", "\u2060Keep ign\u200Bore", 2, 1},
+		{"run at line start", "\u2060\u2060Keep commits small.", 2, 0},
+		{"next to a ZWSP", "\u2060\u200BKeep", 2, 0},
+		{"next to an invisible operator", "\u2060\u2063Keep", 1, 0},
+		{"after indentation", "  \u2060Keep", 1, 0},
+		{"tag at line start", "\U000E0041Keep", 1, 0},
+		{"bidi control at line start", "\u202EKeep", 1, 0},
+		{"BOM at line start", "a\n\uFEFFKeep", 1, 0},
+		{"ZWSP at line start", "a\n\u200BKeep", 1, 0},
+	}
+	for _, tc := range cases {
+		got, _ := Scan([]byte(tc.in))
+		if got.Total != tc.counted || got.LowShapes != tc.low {
+			t.Errorf("%s: Scan(%+q) = Total %d, LowShapes %d, want %d, %d", tc.name, tc.in, got.Total, got.LowShapes, tc.counted, tc.low)
+		}
+	}
+}

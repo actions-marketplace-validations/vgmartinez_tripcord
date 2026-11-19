@@ -145,7 +145,14 @@ reported: these characters hide no text, but they are still invisible.
   after a list marker: `- \u2060Keep commits small`. The shape is one
   U+2060 right after `-`, `*`, `+`, `1.`, or `1)` and the spaces after
   it at the start of a line, right before an ASCII letter or digit,
-  with no other hidden code point on that line.
+  with no other hidden code point on that line apart from a word joiner
+  that starts the line.
+- **A word joiner starting a line.** Editors also leave a single
+  U+2060 as the first character of a line, before a list marker or
+  before text: `\u2060- Keep commits small`,
+  `\u2060When a check fails, stop`. The shape is one U+2060 that is the
+  first code point of its line and is not next to another hidden or
+  invisible code point.
 - **A joiner before a native suffix on a Latin word.** Localised text
   writes a Persian, Arabic, or Indic suffix on an English term with a
   joiner between them: `Server\u200c\u0647\u0627`,
@@ -164,7 +171,9 @@ high, and so do a U+2060 run (`` `\u2060\u2060x` ``), a U+2060
 inside a span with visible text (`` `jobs.\u2060define()` ``) or
 closing it, one after a double backtick, one before a space or a
 non-ASCII letter, one in prose (`small\u2060 commits`), one inside a
-list item's text, a joiner after a one-letter Latin word
+list item's text, a run at the start of a line
+(`\u2060\u2060When`), a tag character or bidi control at the start of
+a line, a joiner after a one-letter Latin word
 (`a\u200c\u0628`) or inside a Latin word, a code span that repeats a
 code point or holds a bidi control or a tag character, and a tag or
 bidi run anywhere.

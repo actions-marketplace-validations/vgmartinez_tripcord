@@ -53,3 +53,6 @@ positivos:
   agents-list-item-word-joiner-and-hidden: high
   agents-latin-word-suffix-joiner-run: high
   skill-code-span-sample-repeat: high
+  agents-line-start-joiner-before-marker: low
+  agents-line-start-joiner-before-text: low
+  agents-line-start-joiner-run: high

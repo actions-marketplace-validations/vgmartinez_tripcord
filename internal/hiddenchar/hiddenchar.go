@@ -66,7 +66,8 @@ var bom = []byte{0xEF, 0xBB, 0xBF}
 // LowShapes counts the counted code points that are one of these
 // artifacts, each still in Total: a CodeSpanJoiners U+2060; a U+2060 that
 // is the only hidden code point on its line, right after a list marker
-// (see listJoiner); a joiner between a Latin word and a joining-script
+// (see listJoiner), not counting a line-start U+2060; a single U+2060 at
+// the start of a line (see lineStartJoiner); a joiner between a Latin word and a joining-script
 // suffix (see latinSuffixJoiner); and a code point of an inline code
 // span that holds only invisible characters (see codeSpanSample).
 func Scan(b []byte) (model.HiddenChars, bool) {
@@ -75,15 +76,15 @@ func Scan(b []byte) (model.HiddenChars, bool) {
 	b, _ = bytes.CutPrefix(b, bom)
 	line, col := 1, 1
 	inRun, stored := false, false
-	lineHidden, lineSpan, lineList := 0, false, false
+	lineHidden, lineSpan, lineList, lineStarts := 0, false, false, 0
 	endLine := func() {
 		if lineHidden == 1 && lineSpan {
 			out.CodeSpanJoiners++
 			out.LowShapes++
-		} else if lineHidden == 1 && lineList {
+		} else if lineHidden-lineStarts == 1 && lineList {
 			out.LowShapes++
 		}
-		lineHidden, lineSpan, lineList = 0, false, false
+		lineHidden, lineSpan, lineList, lineStarts = 0, false, false, 0
 	}
 	for i := 0; i < len(b); {
 		r, size := utf8.DecodeRune(b[i:])
@@ -104,6 +105,9 @@ func Scan(b []byte) (model.HiddenChars, bool) {
 			switch {
 			case codeSpanJoiner(b, i, size):
 				lineSpan = true
+			case lineStartJoiner(b, i, size):
+				lineStarts++
+				out.LowShapes++
 			case listJoiner(b, i, size):
 				lineList = true
 			case latinSuffixJoiner(b, i, size), codeSpanSample(b, i):
@@ -166,8 +170,9 @@ func codeSpanJoiner(b []byte, i, size int) bool {
 // start of its line (optional indentation, then -, *, +, or one to nine
 // digits and . or ), then spaces or tabs) and right before an ASCII
 // letter or digit: the same editor artifact as codeSpanJoiner, written
-// where a list item's text starts. Scan counts it as a low shape only
-// when it is the only hidden code point on its line. A U+2060 inside
+// where a list item's text starts. A line-start U+2060 before the marker
+// is allowed. Scan counts it as a low shape only when it is the only
+// hidden code point on its line apart from that line-start U+2060. A U+2060 inside
 // the item's text, before a space or another hidden code point, or
 // after anything else is not this shape.
 func listJoiner(b []byte, i, size int) bool {
@@ -180,6 +185,7 @@ func listJoiner(b []byte, i, size int) bool {
 		return false
 	}
 	p := b[bytes.LastIndexByte(b[:i], '\n')+1 : i]
+	p, _ = bytes.CutPrefix(p, []byte("\u2060"))
 	p = bytes.TrimLeft(p, " \t")
 	n := 0
 	for n < len(p) && p[n] >= '0' && p[n] <= '9' {
@@ -194,6 +200,21 @@ func listJoiner(b []byte, i, size int) bool {
 		return false
 	}
 	return len(p) > 0 && len(bytes.TrimLeft(p, " \t")) == 0
+}
+
+// lineStartJoiner reports a U+2060 at i that is the first code point of
+// its line and is not next to another hidden or invisible code point
+// (see invisibleSample), as editors leave one at the start of a pasted
+// paragraph or before a list marker. A run at the start of a line, and a
+// tag character or bidi control there, are not this shape. A list item
+// that starts with one may still have its list joiner (see listJoiner).
+func lineStartJoiner(b []byte, i, size int) bool {
+	r, _ := utf8.DecodeRune(b[i:])
+	if r != 0x2060 || (i > 0 && b[i-1] != '\n') {
+		return false
+	}
+	next, nsize := utf8.DecodeRune(b[i+size:])
+	return nsize == 0 || Class(next) == "" && !invisibleSample(next)
 }
 
 // latinSuffixJoiner reports an isolated U+200C or U+200D at i between
