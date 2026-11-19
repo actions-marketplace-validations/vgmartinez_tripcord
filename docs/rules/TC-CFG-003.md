@@ -51,7 +51,9 @@ Not reported:
   that resolves inside the scanned tree (`config.repo_script`):
   `bash scripts/run.sh`, `bash ${CLAUDE_PLUGIN_ROOT}/scripts/launch`,
   `bash -c 'exec "$(git rev-parse --show-toplevel)/scripts/x.sh"'`,
-  `powershell -File ./scripts/start.ps1`, or a short loader whose last
+  `powershell -File ./scripts/start.ps1`, the same script given as the
+  first positional argument (`pwsh ./scripts/start.ps1 -Run`, which
+  pwsh reads as `-File`), or a short loader whose last
   command is one known launcher (`set -a && source .env && npx -y pkg`).
   The signal checks the script's location. A script inside the tree is
   not inspected for content. The one `cd` that is followed is a
@@ -145,7 +147,12 @@ Not reported:
   symlink that resolves outside it. The same is true of a fetched
   script and of `powershell -Command` or `-EncodedCommand`.
   `powershell -File` of a script that resolves inside the tree does
-  not match.
+  not match, and neither does `pwsh ./script.ps1` or
+  `powershell ./script.ps1` with only plain words after the script.
+  For `powershell`, which reads a positional argument as `-Command`,
+  the script has to start with `./`. A positional argument that is not
+  a plain relative `.ps1` path, such as an inline command, stays
+  matched.
 - A sourced `.env`, `.env.local`, or `.env.claude` that is present
   stays matched when a line is not blank, a comment, or a strict
   `KEY=VALUE`, when the value contains `$`, a backtick, `;`, `&`,

@@ -1,0 +1,12 @@
+-- .mcp.json --
+{
+  "mcpServers": {
+    "sdk-tools": {
+      "command": "pwsh",
+      "args": ["-NoProfile", "-Command", "./tools/mcp/sdk-tools-mcp.ps1", "-Run"]
+    }
+  }
+}
+-- tools/mcp/sdk-tools-mcp.ps1 --
+param([switch]$Run)
+Write-Output repo-script

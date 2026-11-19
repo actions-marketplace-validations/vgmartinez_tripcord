@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | high (home, temp, remote URL); medium (other absolute path, `..`, referenced script missing from repo) |
+| Severity | high (home, temp, remote URL); medium (other absolute path, `..`, referenced script missing from repo); low for any of these in a config under a test or fixture directory |
 | Harnesses | Claude Code, Codex, Copilot, Cursor, Gemini CLI, Windsurf, shared skills (`generic`) |
 | Files | every hook any adapter normalizes, repository scope, except `settings.local.json` |
 | Rule | [`rules/TC-CFG-006.yaml`](../../rules/TC-CFG-006.yaml) |
@@ -34,6 +34,21 @@ is given: `bash x.sh`, `python x.py`, `node x.js`, `deno run x.ts`,
 
 When several apply, the first row in this order decides the severity and
 title.
+
+### Low: test and fixture directories
+
+A hook in a config under a directory named `fixtures`, `__fixtures__`,
+`testdata`, `test-fixtures`, `test_fixtures`, `tests`, or `test`, at any
+depth, is reported at low with the title the table above gives it. Such
+a config is test input, for example an older settings file kept to test
+a migration: a harness loads its config from the project root, not from
+a nested copy, and the scripts the copy names are often left out on
+purpose. It is still reported so a hook placed there stays visible.
+`tests/fixtures/old-release/.claude/settings.json` running
+`"$CLAUDE_PROJECT_DIR"/.claude/hooks/format.ts`, which the fixture does
+not include, is low. A directory whose name only contains one of these
+words (`contests/`, `latest/`) is not demoted, and neither is the
+repository-root config.
 
 ## Heuristics
 

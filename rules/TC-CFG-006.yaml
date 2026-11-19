@@ -39,6 +39,16 @@
 #   directory or extension (node server), and $CLAUDE_PLUGIN_ROOT paths
 #   are not checked.
 #
+# Low: a hook in a config under a test-fixture directory (fixtures,
+#   __fixtures__, testdata, test-fixtures, test_fixtures) or a tests or
+#   test directory, at any of the severities above. A harness loads its
+#   config from the project root, not from a nested copy kept as test
+#   input, and the scripts such a copy names are often left out on
+#   purpose. It is still reported, at low, with the title the row above
+#   would give, so a hook placed there stays visible. A directory name
+#   that only contains one of these words (contests/, latest/) is not
+#   demoted. TC-CFG-004 and TC-CFG-010 demote the same kind of path.
+#
 # Not read: whether a script that exists is committed (the scan does
 # not run git, so an untracked script counts as present), $VAR paths
 # other than the ones above, and what the script itself does.
@@ -47,6 +57,18 @@ pack: tripcord/core
 title: "Hook runs a script outside the repository or at a remote URL"
 severity: high
 severity_when:
+  - severity: low
+    when: |
+      config.path.matches(r'''(^|/)(fixtures|__fixtures__|testdata|test-fixtures|test_fixtures|tests|test)/''') && (
+        (has(payload.url) && type(payload.url) == string && "network" in shell.locations(payload.url)) ||
+        hook.commands(payload).exists(c, shell.locations(c).size() > 0) ||
+        shell.locations(hook.argv(payload)).size() > 0 ||
+        config.script_locations.size() > 0)
+  - severity: low
+    title: "Referenced script missing from repo"
+    when: |
+      config.path.matches(r'''(^|/)(fixtures|__fixtures__|testdata|test-fixtures|test_fixtures|tests|test)/''') &&
+        config.missing_scripts > 0
   - severity: high
     when: |
       (has(payload.url) && type(payload.url) == string && "network" in shell.locations(payload.url)) ||

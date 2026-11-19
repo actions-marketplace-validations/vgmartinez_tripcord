@@ -47,7 +47,10 @@
 # command is a shell wrapper around files that resolve inside the
 # scanned tree: bash script.sh, bash -c 'exec "$(git rev-parse
 # --show-toplevel)/scripts/x.sh"', the same git toplevel assigned to
-# repo and then bun run, powershell -File ./script.ps1, and a short
+# repo and then bun run, powershell -File ./script.ps1, the same
+# script as the first positional argument (pwsh ./script.ps1 -Run,
+# where pwsh reads it as -File; powershell ./script.ps1 needs the ./
+# and only plain words after it), and a short
 # loader (set -a, set +a, source or . of one relative path, chmod +x
 # of one relative path, xattr -d of one relative path) whose last
 # command is one known launcher or a relative file. The signal checks
