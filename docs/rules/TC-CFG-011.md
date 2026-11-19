@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | high; low when the only hidden code points are word joiners that open inline code spans (see "Severity") |
+| Severity | high; low when every hidden code point is an editor or localisation artifact, such as a word joiner opening an inline code span (see "Severity") |
 | Harnesses | generic (`AGENTS.md`), Claude Code, Gemini CLI, Windsurf, GitHub Copilot, Cursor, Devin |
 | Files | `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md` (any depth), nested `.claude/rules/**/*.md`, `.cursor/rules/**/*.md(c)`, and `.windsurfrules`, plus root `.cursorrules`, `.github/copilot-instructions.md`, `.github/instructions/**/*.md`, `.github/agents/**/*.agent.md`, the maintenance commands and knowledge entries of `.devin/blueprint.yaml`, and repository skills at `.claude/skills/<name>/SKILL.md`, `.agents/skills/<name>/SKILL.md`, and `.github/skills/<name>/SKILL.md` (repository scope) |
 | Rule | [`rules/TC-CFG-011.yaml`](../../rules/TC-CFG-011.yaml) |
@@ -130,21 +130,53 @@ Not reported:
 
 ## Severity
 
-A finding is high, except in one case. Some editors put a single U+2060
-(word joiner) right after the backtick that opens an inline code span,
-to stop Markdown or MDX from turning the code into a link:
-`` `\u2060jobs.define()` ``. When every hidden code point in the file is
-of that shape (one U+2060 right after a single opening backtick, right
-before an ASCII letter or digit, with a closing backtick later on the
-same line and no other hidden code point on that line), the finding is
-low. It is still reported: the character hides no text, but it is
-still invisible.
+A finding is high, except when every hidden code point in the file is
+one of the shapes below. Then the finding is low. It is still
+reported: these characters hide no text, but they are still invisible.
+
+- **A word joiner opening a code span.** Some editors put a single
+  U+2060 (word joiner) right after the backtick that opens an inline
+  code span, to stop Markdown or MDX from turning the code into a link:
+  `` `\u2060jobs.define()` ``. The shape is one U+2060 right after a
+  single opening backtick, right before an ASCII letter or digit, with
+  a closing backtick later on the same line and no other hidden code
+  point on that line.
+- **A word joiner starting a list item.** The same editor artifact
+  after a list marker: `- \u2060Keep commits small`. The shape is one
+  U+2060 right after `-`, `*`, `+`, `1.`, or `1)` and the spaces after
+  it at the start of a line, right before an ASCII letter or digit,
+  with no other hidden code point on that line apart from a word joiner
+  that starts the line.
+- **A word joiner starting a line.** Editors also leave a single
+  U+2060 as the first character of a line, before a list marker or
+  before text: `\u2060- Keep commits small`,
+  `\u2060When a check fails, stop`. The shape is one U+2060 that is the
+  first code point of its line and is not next to another hidden or
+  invisible code point.
+- **A joiner before a native suffix on a Latin word.** Localised text
+  writes a Persian, Arabic, or Indic suffix on an English term with a
+  joiner between them: `Server\u200c\u0647\u0627`,
+  `API\u200c\u0c97\u0cb3`. The shape is one isolated U+200C or U+200D
+  between a Latin word of at least two letters and at least two letters
+  or marks of an Indic, Arabic, Syriac, Mongolian, or Sinhala script. It
+  splits no ASCII word.
+- **Invisible characters quoted in a code span.** A page that
+  describes invisible characters may quote them in a code span that
+  holds nothing else: `` `\u2062\u200b` ``. The shape is an inline code
+  span of a single backtick on each side that holds only zero-width
+  code points and U+2061-U+2064, at most 8, with none repeated.
 
 Any other hidden code point anywhere in the file keeps the finding
 high, and so do a U+2060 run (`` `\u2060\u2060x` ``), a U+2060
-inside a span (`` `jobs.\u2060define()` ``) or closing it, one after a
-double backtick, one before a space or a non-ASCII letter, and one in
-prose (`small\u2060 commits`).
+inside a span with visible text (`` `jobs.\u2060define()` ``) or
+closing it, one after a double backtick, one before a space or a
+non-ASCII letter, one in prose (`small\u2060 commits`), one inside a
+list item's text, a run at the start of a line
+(`\u2060\u2060When`), a tag character or bidi control at the start of
+a line, a joiner after a one-letter Latin word
+(`a\u200c\u0628`) or inside a Latin word, a code span that repeats a
+code point or holds a bidi control or a tag character, and a tag or
+bidi run anywhere.
 
 ## Known false positives
 
