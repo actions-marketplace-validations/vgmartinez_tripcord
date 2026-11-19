@@ -61,7 +61,17 @@
 #   a native suffix on an English term);
 # - a code point of an inline code span that holds only zero-width code
 #   points and U+2061-U+2064, at most 8 with none repeated, as a page
-#   quotes the characters it describes.
+#   quotes the characters it describes;
+# - an isolated U+200B right after a "/" that follows an ASCII letter
+#   and right before an ASCII letter, inside an inline code span, as a
+#   page writes a line-break opportunity into a long code token;
+# - a U+FEFF that is the whole of its line, as concatenating files that
+#   each start with a byte order mark leaves behind;
+# - an isolated U+200B, U+200C, or U+200D between a letter of a Brahmic
+#   or Southeast Asian script (Devanagari, Bengali, Gurmukhi, Gujarati,
+#   Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Myanmar, Khmer,
+#   Tibetan, Thai, Lao) and a letter or mark of one of them, as machine
+#   translation leaves inside a word or between two of these scripts.
 # Any other hidden code point in the file, a U+2060 run (also at the
 # start of a line), a tag character or bidi control at the start of a
 # line, a U+2060 inside

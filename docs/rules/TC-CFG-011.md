@@ -165,6 +165,23 @@ reported: these characters hide no text, but they are still invisible.
   holds nothing else: `` `\u2062\u200b` ``. The shape is an inline code
   span of a single backtick on each side that holds only zero-width
   code points and U+2061-U+2064, at most 8, with none repeated.
+- **A line break after a slash in a code token.** A page can write a
+  U+200B after each `/` of a long code token so that it wraps in a
+  table: `` `d.setDate/\u200bsetMonth` ``. The shape is one isolated
+  U+200B right after a `/` that follows an ASCII letter and right before
+  an ASCII letter, inside an inline code span on that line.
+- **A byte order mark on its own line.** Concatenating files that each
+  start with a byte order mark leaves a U+FEFF alone on a line between
+  paragraphs. The shape is a U+FEFF that is the whole of its line.
+- **A zero-width character in machine-translated Brahmic or Southeast
+  Asian text.** Translation tools leave an isolated U+200B, U+200C, or
+  U+200D inside a word (`\u0d09\u0d2a\u0d2f\u0d4b\u200b\u0d17\u0d4d`)
+  or between two of these scripts (a Thai fragment then Khmer,
+  `\u0e32\u200b\u1787`). The shape is one isolated character whose
+  nearest letter before it is Devanagari, Bengali, Gurmukhi, Gujarati,
+  Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Myanmar, Khmer,
+  Tibetan, Thai, or Lao, and whose next code point is a letter or mark
+  of one of those scripts.
 
 Any other hidden code point anywhere in the file keeps the finding
 high, and so do a U+2060 run (`` `\u2060\u2060x` ``), a U+2060
@@ -176,7 +193,10 @@ list item's text, a run at the start of a line
 a line, a joiner after a one-letter Latin word
 (`a\u200c\u0628`) or inside a Latin word, a code span that repeats a
 code point or holds a bidi control or a tag character, and a tag or
-bidi run anywhere.
+bidi run anywhere. A U+200B after a slash in prose or before a digit,
+two U+FEFF on a line or one beside text, and a Brahmic or Southeast
+Asian zero-width character next to a Latin letter, whitespace, or
+punctuation, or in a run, also stay high.
 
 ## Known false positives
 
