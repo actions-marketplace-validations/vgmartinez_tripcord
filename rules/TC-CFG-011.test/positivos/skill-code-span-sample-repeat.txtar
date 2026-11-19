@@ -1,0 +1,8 @@
+-- .agents/skills/trace-markers/SKILL.md --
+---
+name: trace-markers
+description: Explain the trace marker.
+---
+# Trace markers
+
+Each reply ends with an invisible marker (`⁢​‌​`). Strip it before you compare replies.

@@ -49,7 +49,7 @@ func RepoWrapper(argv []string) ([]RepoFile, bool) {
 	}
 	name, args := progName(w[0]), w[1:]
 	if name == "powershell" || name == "pwsh" {
-		return psScript(args)
+		return psScript(name, args)
 	}
 	if !posixShells[name] {
 		return nil, false
@@ -837,10 +837,14 @@ func httpURL(s string) bool {
 	return strings.Contains(l, "http://") || strings.Contains(l, "https://") || strings.Contains(l, "ftp://")
 }
 
-// psScript is powershell -File or pwsh -File of one relative path.
+// psScript is powershell -File or pwsh -File of one relative path, or
+// the same script given as the first positional argument (psBareScript).
 // -Command and -EncodedCommand stay findings.
-func psScript(args []string) ([]RepoFile, bool) {
+func psScript(name string, args []string) ([]RepoFile, bool) {
 	file, ok := psFileArg(args)
+	if !ok {
+		file, ok = psBareScript(name, args)
+	}
 	if !ok || badArgs(args) {
 		return nil, false
 	}
@@ -849,6 +853,72 @@ func psScript(args []string) ([]RepoFile, bool) {
 		return nil, false
 	}
 	return []RepoFile{{Path: rel}}, true
+}
+
+// psBareScript is pwsh ./script.ps1 or powershell ./script.ps1: the
+// first argument that is not a parameter names a .ps1 file. pwsh reads
+// that argument as -File. Windows PowerShell reads it as -Command, which
+// runs the same script when the command is only the script and plain
+// words, so every word after it has to be plain, and for powershell the
+// script has to start with ./ (a bare name there is looked up on PATH).
+// The script word itself is a plain relative path. An inline command,
+// -Command, -EncodedCommand, and a positional argument that is not a
+// .ps1 path return false.
+func psBareScript(name string, args []string) (string, bool) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if len(a) < 2 || a[0] != '-' {
+			if !psPlainScript(a) || (name == "powershell" && !strings.HasPrefix(a, "./")) {
+				return "", false
+			}
+			for _, rest := range args[i+1:] {
+				if !psPlainWord(rest) {
+					return "", false
+				}
+			}
+			return a, true
+		}
+		pname, _, inline := strings.Cut(strings.TrimLeft(a, "-"), ":")
+		switch psParam(strings.ToLower(pname)) {
+		case psFile, psCommand, psEncoded:
+			return "", false
+		case psValue:
+			if !inline {
+				i++
+			}
+		}
+	}
+	return "", false
+}
+
+// psPlainScript is a relative .ps1 path of letters, digits, '.', '_',
+// '-', and '/'.
+func psPlainScript(w string) bool {
+	if !strings.HasSuffix(strings.ToLower(w), ".ps1") || strings.HasPrefix(w, "-") {
+		return false
+	}
+	for i := 0; i < len(w); i++ {
+		c := w[i]
+		if !identCont(c) && !strings.ContainsRune(".-/", rune(c)) {
+			return false
+		}
+	}
+	return true
+}
+
+// psPlainWord is an argument PowerShell passes through as one literal
+// word: letters, digits, '.', '_', '-', '/', ':', '=', and '+'.
+func psPlainWord(w string) bool {
+	if w == "" {
+		return false
+	}
+	for i := 0; i < len(w); i++ {
+		c := w[i]
+		if !identCont(c) && !strings.ContainsRune(".-/:=+", rune(c)) {
+			return false
+		}
+	}
+	return true
 }
 
 func badArgs(args []string) bool {

@@ -21,3 +21,6 @@ positivos:
   git-prefix-background: high
   git-prefix-redirect: high
   git-prefix-subshell: high
+  pwsh-command-repo-script: high
+  pwsh-bare-inline: high
+  pwsh-bare-script-missing: high
