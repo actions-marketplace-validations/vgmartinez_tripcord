@@ -56,7 +56,8 @@ var configDirs = []string{".claude", ".cursor", ".github", ".windsurf", ".devin"
 // class, not by its path. root is resolved first so a repository whose own
 // path contains a symlink is not reported as outside itself. It also sets
 // ChecksumFiles on every repository env-setup entry (see
-// annotateChecksums).
+// annotateChecksums), and HomeMirror on every repository item (see
+// HomeMirror).
 func Annotate(root string, items []model.ConfigItem) error {
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -87,6 +88,7 @@ func Annotate(root string, items []model.ConfigItem) error {
 		}
 	}
 	annotateFetchNotRun(items)
+	annotateHomeMirror(resolvedRoot, items)
 	return annotateChecksums(resolvedRoot, items)
 }
 

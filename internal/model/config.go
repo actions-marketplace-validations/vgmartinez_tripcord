@@ -101,6 +101,14 @@ type ConfigItem struct {
 	// unless the file is a regular file of at most 64 KiB inside the tree
 	// whose every line is blank, a comment, or a strict KEY=VALUE.
 	RepoScript bool `json:"-"`
+	// HomeMirror is true when a repository item sits in a harness config
+	// directory under a top-level home/ whose direct children are all
+	// dot-entries, the layout a dotfiles repository keeps for files that
+	// are installed into the owner's home directory (see
+	// scriptcheck.HomeMirror). It is set after discovery. Every match on
+	// such an item is reported at low; its key and fingerprint do not
+	// change.
+	HomeMirror bool `json:"-"`
 	// Hidden is the invisible and direction-changing code points of an
 	// instruction or skill file (see internal/hiddenchar): where each run
 	// of them starts and its first code point, never the text around
