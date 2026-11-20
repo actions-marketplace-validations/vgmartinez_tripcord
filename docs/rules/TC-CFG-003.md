@@ -37,6 +37,15 @@ the test above, so a wrapper around `npx`, `uvx`, `node server.js`, or
 `python server.py` does not match, and `bash -c 'node -e ...'` still
 does.
 
+A leading `cd ${workspaceFolder} &&` is read as a `cd` to the repository
+root. VS Code and Cursor substitute `${workspaceFolder}`,
+`${workspaceRoot}`, and `${workspaceFolderBasename}` before the shell
+starts, so `bash -c "cd ${workspaceFolder} && cargo run -- mcp"` is the
+same simple command as `cd sdk && cargo run -- mcp`. The operand may be
+quoted and may add literal path segments. Any other variable
+(`${HOME}`, `$FOO`, `${env:X}`) stays wrapped, and so does a workspace
+variable anywhere after the `cd`.
+
 Not reported:
 
 - Servers with a `type` other than stdio or local (`http`, `sse`).
