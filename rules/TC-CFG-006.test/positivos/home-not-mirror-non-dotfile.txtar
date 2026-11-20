@@ -1,0 +1,12 @@
+-- home/.claude/settings.json --
+{
+  "hooks": {
+    "Stop": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "/Users/dev/.local/share/notify/venv/bin/python /Users/dev/.local/share/notify/hook.py --event stop"}]}
+    ]
+  }
+}
+-- home/.zshenv --
+export EDITOR=vim
+-- home/index.ts --
+export const page = "home";
