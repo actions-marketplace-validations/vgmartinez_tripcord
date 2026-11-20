@@ -489,3 +489,44 @@ func TestLineStartJoiner(t *testing.T) {
 		}
 	}
 }
+
+func TestNarrowLowShapes(t *testing.T) {
+	cases := []struct {
+		name         string
+		in           string
+		counted, low int
+	}{
+		{"ZWSP after a slash in a code span", "Use `d.setDate/\u200bsetMonth` here.", 1, 1},
+		{"two slash breaks in a table cell", "| `a/\u200bb/\u200bc()` | x |", 2, 2},
+		{"slash break in prose", "Use setDate/\u200bsetMonth here.", 1, 0},
+		{"slash break before a digit", "Use `a/\u200b1` here.", 1, 0},
+		{"ZWSP before a slash", "Use `a\u200b/b` here.", 1, 0},
+		{"slash break run", "Use `a/\u200b\u200bb` here.", 2, 0},
+		{"slash break without a closing backtick", "Use `a/\u200bb here.", 1, 0},
+		{"slash word joiner", "Use `a/\u2060b` here.", 1, 0},
+		{"BOM-only line", "a\n\uFEFF\nb", 1, 1},
+		{"BOM-only line with CRLF", "a\r\n\uFEFF\r\nb", 1, 1},
+		{"BOM-only last line", "a\n\uFEFF", 1, 1},
+		{"BOM pair on a line", "a\n\uFEFF\uFEFF\nb", 2, 0},
+		{"BOM before text", "a\n\uFEFFb", 1, 0},
+		{"BOM after text", "a\nb\uFEFF\nc", 1, 0},
+		{"BOM then a space", "a\n\uFEFF \nb", 1, 0},
+		{"ZWSP inside a Malayalam word", "\u0d09\u0d2a\u0d2f\u0d4b\u200b\u0d17\u0d4d", 1, 1},
+		{"ZWSP between Thai and Khmer", "\u0e27\u0e48\u0e32\u200b\u1787\u17b6", 1, 1},
+		{"ZWJ between Devanagari and Bengali", "\u0915\u200d\u0995", 1, 1},
+		{"ZWSP before a Malayalam vowel sign", "\u0d2a\u200b\u0d4b", 1, 1},
+		{"Malayalam then Latin", "\u0d2f\u0d4b\u200benv", 1, 0},
+		{"Latin then Malayalam", "env\u200b\u0d2f", 1, 0},
+		{"Malayalam word edge", "\u0d2f\u0d4b\u200b \u0d2f", 1, 0},
+		{"Malayalam before punctuation", "\u0d2f\u0d4b\u200b.", 1, 0},
+		{"Brahmic run", "\u0d2f\u200b\u200b\u0d2f", 2, 0},
+		{"Persian ZWSP", "\u0645\u200b\u0646", 1, 0},
+		{"Brahmic word joiner U+2060", "\u0d2f\u2060\u0d2f", 1, 0},
+	}
+	for _, tc := range cases {
+		got, _ := Scan([]byte(tc.in))
+		if got.Total != tc.counted || got.LowShapes != tc.low {
+			t.Errorf("%s: Scan(%+q) = Total %d, LowShapes %d, want %d, %d", tc.name, tc.in, got.Total, got.LowShapes, tc.counted, tc.low)
+		}
+	}
+}

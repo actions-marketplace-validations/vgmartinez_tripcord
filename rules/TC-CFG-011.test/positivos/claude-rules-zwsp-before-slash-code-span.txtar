@@ -1,0 +1,4 @@
+-- .claude/rules/dates.md --
+# Dates
+
+Avoid `t.setHours​/setMinutes(...)` in tests.

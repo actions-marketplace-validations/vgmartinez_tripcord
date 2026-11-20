@@ -1,0 +1,10 @@
+-- .vscode/mcp.json --
+{
+  "servers": {
+    "helper": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["-c", "cd ${HOME} && cargo run -- mcp"]
+    }
+  }
+}

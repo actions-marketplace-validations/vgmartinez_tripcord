@@ -1,0 +1,18 @@
+-- .claude/settings.json --
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "~/.claude/hooks/guard.sh"}]}
+    ]
+  }
+}
+-- home/.claude/settings.json --
+{
+  "hooks": {
+    "Stop": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "/Users/dev/.local/share/notify/venv/bin/python /Users/dev/.local/share/notify/hook.py --event stop"}]}
+    ]
+  }
+}
+-- home/.zshenv --
+export EDITOR=vim
