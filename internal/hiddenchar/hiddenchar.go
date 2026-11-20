@@ -69,7 +69,11 @@ var bom = []byte{0xEF, 0xBB, 0xBF}
 // (see listJoiner), not counting a line-start U+2060; a single U+2060 at
 // the start of a line (see lineStartJoiner); a joiner between a Latin word and a joining-script
 // suffix (see latinSuffixJoiner); and a code point of an inline code
-// span that holds only invisible characters (see codeSpanSample).
+// span that holds only invisible characters (see codeSpanSample); a
+// U+200B that breaks a code token after a slash (see slashBreak); a
+// U+FEFF that is a whole line (see bomOnlyLine); and an isolated
+// zero-width space or joiner between letters of Brahmic or Southeast
+// Asian scripts (see brahmicWordJoiner).
 func Scan(b []byte) (model.HiddenChars, bool) {
 	var out model.HiddenChars
 	valid := true
@@ -110,7 +114,8 @@ func Scan(b []byte) (model.HiddenChars, bool) {
 				out.LowShapes++
 			case listJoiner(b, i, size):
 				lineList = true
-			case latinSuffixJoiner(b, i, size), codeSpanSample(b, i):
+			case latinSuffixJoiner(b, i, size), codeSpanSample(b, i),
+				slashBreak(b, i, size), bomOnlyLine(b, i, size), brahmicWordJoiner(b, i, size):
 				out.LowShapes++
 			}
 			out.Total++
@@ -255,6 +260,89 @@ func latinSuffixJoiner(b []byte, i, size int) bool {
 		return false
 	}
 	return unicode.IsLetter(after) || unicode.In(after, unicode.Mn, unicode.Mc)
+}
+
+// slashBreak reports an isolated U+200B at i right after a "/" that
+// follows an ASCII letter and right before an ASCII letter, inside an
+// inline code span (an odd number of backticks before it on its line
+// and a backtick after it on the same line), as a page writes a
+// line-break opportunity into a long token such as
+// `d.setDate/\u200bsetMonth`. A run, a U+200B before the slash, outside
+// a code span, or next to anything other than an ASCII letter is not
+// this shape.
+func slashBreak(b []byte, i, size int) bool {
+	r, _ := utf8.DecodeRune(b[i:])
+	if r != 0x200B || zeroWidthRun(b, i, size) {
+		return false
+	}
+	if i < 2 || b[i-1] != '/' || !isASCIILetter(b[i-2]) {
+		return false
+	}
+	rest := b[i+size:]
+	if len(rest) == 0 || !isASCIILetter(rest[0]) {
+		return false
+	}
+	lineStart := bytes.LastIndexByte(b[:i], '\n') + 1
+	if bytes.Count(b[lineStart:i], []byte{'`'})%2 != 1 {
+		return false
+	}
+	if nl := bytes.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[:nl]
+	}
+	return bytes.IndexByte(rest, '`') >= 0
+}
+
+func isASCIILetter(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// bomOnlyLine reports a U+FEFF at i that is the whole of its line: a
+// line boundary or the start of the file before it, and a line end
+// (\n or \r\n) or the end of the file after it, as concatenating files
+// that each start with a byte order mark leaves behind. A U+FEFF with
+// any other code point on its line, including another U+FEFF, is not
+// this shape.
+func bomOnlyLine(b []byte, i, size int) bool {
+	r, _ := utf8.DecodeRune(b[i:])
+	if r != 0xFEFF || (i > 0 && b[i-1] != '\n') {
+		return false
+	}
+	rest := b[i+size:]
+	return len(rest) == 0 || rest[0] == '\n' || len(rest) > 1 && rest[0] == '\r' && rest[1] == '\n'
+}
+
+// brahmicScripts are the Brahmic scripts of South and Southeast Asia.
+// Machine translation into them leaves isolated zero-width spaces and
+// joiners inside words and between two of these scripts.
+var brahmicScripts = []*unicode.RangeTable{
+	unicode.Devanagari, unicode.Bengali, unicode.Gurmukhi, unicode.Gujarati,
+	unicode.Oriya, unicode.Tamil, unicode.Telugu, unicode.Kannada,
+	unicode.Malayalam, unicode.Sinhala, unicode.Myanmar, unicode.Khmer,
+	unicode.Tibetan, unicode.Thai, unicode.Lao,
+}
+
+// brahmicWordJoiner reports an isolated U+200B, U+200C, or U+200D at i
+// whose nearest letter before it (skipping combining marks) is a letter
+// of one of brahmicScripts and whose next code point is a letter or
+// combining mark of one of them, the same script or another: a
+// zero-width space inside a Malayalam word, or one between a Thai
+// fragment and Khmer text. Neither side can be read as ASCII. A run, a
+// character next to whitespace, punctuation, a digit, or a letter of
+// any other script is not this shape.
+func brahmicWordJoiner(b []byte, i, size int) bool {
+	r, _ := utf8.DecodeRune(b[i:])
+	if (r != 0x200B && r != 0x200C && r != 0x200D) || zeroWidthRun(b, i, size) {
+		return false
+	}
+	before, ok := lastLetter(b[:i])
+	if !ok || scriptOf(before, brahmicScripts) == nil {
+		return false
+	}
+	next, nsize := utf8.DecodeRune(b[i+size:])
+	if nsize == 0 || next == utf8.RuneError && nsize == 1 || scriptOf(next, brahmicScripts) == nil {
+		return false
+	}
+	return unicode.IsLetter(next) || unicode.In(next, unicode.Mn, unicode.Mc)
 }
 
 // invisibleSample is a code point an inline code span may quote as a
