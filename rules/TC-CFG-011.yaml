@@ -65,6 +65,13 @@
 # - an isolated U+200B right after a "/" that follows an ASCII letter
 #   and right before an ASCII letter, inside an inline code span, as a
 #   page writes a line-break opportunity into a long code token;
+# - an isolated U+200B right after a list marker at the start of a line
+#   and right before CJK text (a Han, Hiragana, Katakana, or Hangul
+#   letter, or one opening bracket and then such a letter), as editors
+#   leave when a Chinese, Japanese, or Korean list is pasted;
+# - an isolated U+200B between an ASCII lowercase letter or digit and an
+#   ASCII uppercase letter inside an inline code span, a line-break
+#   opportunity in a long camelCase identifier;
 # - a U+FEFF that is the whole of its line, as concatenating files that
 #   each start with a byte order mark leaves behind;
 # - an isolated U+200B, U+200C, or U+200D between a letter of a Brahmic

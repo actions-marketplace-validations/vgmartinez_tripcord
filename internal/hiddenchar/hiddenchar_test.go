@@ -490,6 +490,41 @@ func TestLineStartJoiner(t *testing.T) {
 	}
 }
 
+func TestCJKListSpaceAndCamelCaseBreak(t *testing.T) {
+	cases := []struct {
+		name         string
+		in           string
+		counted, low int
+	}{
+		{"ZWSP after a bullet before Han", "- \u200b核心思维", 1, 1},
+		{"ZWSP after an indented bullet before a bracket and Han", "    - \u200b[直接执行]", 1, 1},
+		{"ZWSP after a numbered item before Hiragana", "1. \u200bこれは", 1, 1},
+		{"ZWSP after a bullet before Hangul", "* \u200b핵심", 1, 1},
+		{"ZWSP after a bullet before a fullwidth bracket", "+ \u200b【注意】", 1, 1},
+		{"ZWSP pair after a bullet", "- \u200b\u200b核心", 2, 0},
+		{"ZWSP after a bullet before Latin", "- \u200bcore", 1, 0},
+		{"ZWSP after a bullet before a bracket and Latin", "- \u200b[core]", 1, 0},
+		{"ZWSP mid-line before Han", "文本 \u200b核心", 1, 0},
+		{"ZWSP after a bullet without a space", "-\u200b核心", 1, 0},
+		{"ZWSP bullet and a bidi control", "- \u200b核心\n\u202Etxt", 2, 1},
+		{"ZWSP at a camelCase hump in a code span", "`Unauthenticated\u200bSensitiveApis`", 1, 1},
+		{"ZWSP after a digit before uppercase in a code span", "`v2\u200bClient`", 1, 1},
+		{"ZWSP pair at a hump in a code span", "`Unauthenticated\u200b\u200bSensitive`", 2, 0},
+		{"ZWSP at a hump in prose", "Use Unauthenticated\u200bSensitive here.", 1, 0},
+		{"ZWSP between lowercase letters in a code span", "`ign\u200bore`", 1, 0},
+		{"ZWSP between uppercase and lowercase in a code span", "`URL\u200bParser`", 1, 0},
+		{"ZWSP at a hump without a closing backtick", "`Unauthenticated\u200bSensitive", 1, 0},
+		{"ZWSP between Latin words in prose", "Keep the core\u200bidea.", 1, 0},
+		{"ZWSP hump and a tag character", "`aB` `a\u200bB`\U000E0041", 2, 1},
+	}
+	for _, tc := range cases {
+		got, _ := Scan([]byte(tc.in))
+		if got.Total != tc.counted || got.LowShapes != tc.low {
+			t.Errorf("%s: Scan(%+q) = Total %d, LowShapes %d, want %d, %d", tc.name, tc.in, got.Total, got.LowShapes, tc.counted, tc.low)
+		}
+	}
+}
+
 func TestNarrowLowShapes(t *testing.T) {
 	cases := []struct {
 		name         string

@@ -56,6 +56,16 @@ positivos:
   agents-line-start-joiner-before-marker: low
   agents-line-start-joiner-before-text: low
   agents-line-start-joiner-run: high
+  claude-cjk-list-zwsp: low
+  claude-camelcase-zwsp-code-span: low
+  claude-cjk-list-zwsp-run: high
+  claude-cjk-list-zwsp-latin-text: high
+  claude-cjk-list-zwsp-and-bidi: high
+  claude-camelcase-zwsp-run: high
+  claude-camelcase-zwsp-prose: high
+  claude-zwsp-prose-latin-words: high
+  claude-camelcase-zwsp-lowercase-code-span: high
+  claude-camelcase-zwsp-and-tag: high
   claude-rules-zwsp-after-slash: low
   cursor-rule-bom-only-line: low
   agents-mt-thai-khmer-zwsp: low
