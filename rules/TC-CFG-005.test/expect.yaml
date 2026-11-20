@@ -9,6 +9,10 @@ positivos:
   claude-root-settings-beside-fixtures: [high, low]
   claude-settings-under-test-fixtures: low
   claude-skip-prompt-only: medium
+  claude-tests-dir-bypass-low: low
+  codex-test-dir-approval-never-low: low
+  claude-testing-guide-bypass-not-fixture: high
+  claude-root-bypass-runs-fixture-script: [high, low]
   codex-approval-never: high
   codex-config-fixture-word-in-name: high
   codex-config-in-fixtures-wrong-case: high

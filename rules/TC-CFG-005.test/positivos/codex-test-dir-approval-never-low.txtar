@@ -1,0 +1,2 @@
+-- test/agent/.codex/config.toml --
+approval_policy = "never"
