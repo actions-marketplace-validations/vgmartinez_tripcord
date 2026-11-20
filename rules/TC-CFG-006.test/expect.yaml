@@ -47,3 +47,7 @@ positivos:
   claude-parent-node-modules: medium
   missing-test-fixture-settings: low
   fixture-lookalike-dirs: [high, medium]
+  home-mirror-dotfiles-low: low
+  home-not-mirror-non-dotfile: high
+  home-mirror-not-top-level: high
+  home-mirror-root-settings-stays-high: [high, low]

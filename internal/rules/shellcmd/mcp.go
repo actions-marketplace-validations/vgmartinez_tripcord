@@ -58,6 +58,9 @@ func mcpReduce(argv []string, depth int) string {
 	// are dropped, so `env bash -c "curl | sh"` still starts with bash.
 	// A program that is not a shell was returned above, unchanged, so
 	// `sudo node -e` is still `sudo node -e`.
+	if ok {
+		payload = literalWorkspaceCD(payload)
+	}
 	if !ok || !unwrapPayload(payload, name == "cmd") {
 		return strings.Join(w, " ")
 	}
@@ -66,6 +69,68 @@ func mcpReduce(argv []string, depth int) string {
 		return strings.Join(w, " ")
 	}
 	return mcpReduce(inner, depth+1)
+}
+
+// literalWorkspaceCD rewrites a leading `cd ${workspaceFolder} &&` into
+// `cd ws &&`. VS Code and Cursor substitute ${workspaceFolder} and
+// ${workspaceRoot} (the repository root) and ${workspaceFolderBasename}
+// (its name) in the config before the shell starts, so the shell only ever
+// sees a literal directory. The operand may be quoted and may continue with
+// literal path segments (${workspaceFolder}/sdk) or the basename variable.
+// It has to name one of the first two variables, or the basename variable
+// as a path segment, and nothing else: ${HOME}, $FOO, ${env:X}, and any
+// other expansion leave the payload unchanged, so the `$` check still
+// keeps it wrapped. Only the first command is rewritten; a variable
+// anywhere else in the payload still blocks the unwrap.
+func literalWorkspaceCD(payload string) string {
+	rest := strings.TrimLeft(payload, " \t")
+	if !strings.HasPrefix(rest, "cd") || len(rest) < 3 || (rest[2] != ' ' && rest[2] != '\t') {
+		return payload
+	}
+	rest = strings.TrimLeft(rest[2:], " \t")
+	quote := ""
+	if rest != "" && (rest[0] == '"' || rest[0] == '\'') {
+		quote, rest = rest[:1], rest[1:]
+	}
+	i := 0
+	vars := 0
+	for i < len(rest) {
+		switch {
+		case strings.HasPrefix(rest[i:], "${workspaceFolderBasename}"):
+			i += len("${workspaceFolderBasename}")
+			vars++
+		case strings.HasPrefix(rest[i:], "${workspaceFolder}"):
+			i += len("${workspaceFolder}")
+			vars++
+		case strings.HasPrefix(rest[i:], "${workspaceRoot}"):
+			i += len("${workspaceRoot}")
+			vars++
+		case isWorkspaceCDLiteral(rest[i]):
+			i++
+		default:
+			goto operandEnd
+		}
+	}
+operandEnd:
+	if vars == 0 || i == 0 {
+		return payload
+	}
+	tail := rest[i:]
+	if quote != "" {
+		if !strings.HasPrefix(tail, quote) {
+			return payload
+		}
+		tail = tail[1:]
+	}
+	trimmed := strings.TrimLeft(tail, " \t")
+	if len(trimmed) == len(tail) || !strings.HasPrefix(trimmed, "&&") {
+		return payload
+	}
+	return "cd ws " + trimmed
+}
+
+func isWorkspaceCDLiteral(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-' || c == '/'
 }
 
 // MCPWork is the byte charge for judging argv. The line may be read once
