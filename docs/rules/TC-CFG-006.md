@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | high (home, temp, remote URL); medium (other absolute path, `..`, referenced script missing from repo); low for any of these in a config under a test or fixture directory |
+| Severity | high (home, temp, remote URL); medium (other absolute path, `..`, referenced script missing from repo); low for any of these in a config under a test or fixture directory, or in a dotfiles `home/` mirror |
 | Harnesses | Claude Code, Codex, Copilot, Cursor, Gemini CLI, Windsurf, shared skills (`generic`) |
 | Files | every hook any adapter normalizes, repository scope, except `settings.local.json` |
 | Rule | [`rules/TC-CFG-006.yaml`](../../rules/TC-CFG-006.yaml) |
@@ -49,6 +49,40 @@ purpose. It is still reported so a hook placed there stays visible.
 not include, is low. A directory whose name only contains one of these
 words (`contests/`, `latest/`) is not demoted, and neither is the
 repository-root config.
+
+### Low: a dotfiles `home/` mirror
+
+A dotfiles repository often keeps the files it installs into its owner's
+home directory under a top-level `home/`, which GNU Stow, rcm, or a
+setup script links into `~`: `home/.zshenv` becomes `~/.zshenv` and
+`home/.claude/settings.json` becomes `~/.claude/settings.json`. That
+settings file is the owner's user-level config. Nobody gets it by
+opening the repository, and its hooks naturally point into the owner's
+home directory (`/Users/<name>/.local/...`).
+
+An item is in such a mirror when all of these hold:
+
+- its path starts with `home/<dir>/`, where `home` is at the repository
+  root and `<dir>` is a harness config directory (`.claude`, `.cursor`,
+  `.github`, `.windsurf`, `.devin`, `.codex`, `.gemini`, `.agents`);
+- `home/` is a real directory, not a symlink;
+- every direct child of `home/` is a dot-entry (`.claude`, `.zshenv`,
+  `.config`). A single other entry, such as `home/index.ts` or
+  `home/components/`, means `home/` is part of the project and nothing
+  under it is demoted.
+
+Every finding on such an item is reported at low, whatever the rule
+(TC-CFG-004, TC-CFG-005, TC-CFG-010, and the others as well as this
+one), with the title and fingerprint it would have otherwise. The
+severity rows above do not change: a root `.claude/settings.json` in the
+same repository that runs `~/.claude/hooks/guard.sh` is still high, and so
+is a `home/` deeper in the tree (`src/home/.claude/settings.json`).
+
+The shape is cheap to fake: anyone can commit `home/.claude/` next to a
+`home/.zshenv`. That is why the mirror lowers the severity instead of
+dropping the finding, so a hook placed there stays visible at low. A
+harness would load such a config as project config only if a session
+were started inside `home/`.
 
 ## Heuristics
 

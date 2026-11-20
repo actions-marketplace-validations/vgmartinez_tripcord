@@ -266,6 +266,12 @@ func (e *Engine) ScanConfig(ctx context.Context, items []model.ConfigItem) Resul
 				continue
 			}
 			match := Match{Rule: r, Item: item, Severity: clause.Severity, Title: clause.Title, Fix: clause.Fix}
+			if item.HomeMirror {
+				// A dotfiles home/ mirror is the owner's own user config,
+				// not config anyone gets by opening the repository (see
+				// model.ConfigItem.HomeMirror). It stays reported, at low.
+				match.Severity = model.SeverityLow
+			}
 			if r.Evidence == EvidenceAdvisory {
 				hits, err := advisoryHits(in, e.env.Advisories())
 				if stopForEval(&res, r.ID, item, err) {

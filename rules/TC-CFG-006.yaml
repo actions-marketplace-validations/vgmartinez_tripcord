@@ -49,6 +49,12 @@
 #   that only contains one of these words (contests/, latest/) is not
 #   demoted. TC-CFG-004 and TC-CFG-010 demote the same kind of path.
 #
+# Low, for every rule (set by the engine, not by a clause here): an item
+#   in a dotfiles home/ mirror, a harness config directory under a
+#   top-level home/ whose direct children are all dot-entries
+#   (model.ConfigItem.HomeMirror). That is the owner's own user config,
+#   such as home/.claude/settings.json stowed into ~. It is still reported.
+#
 # Not read: whether a script that exists is committed (the scan does
 # not run git, so an untracked script counts as present), $VAR paths
 # other than the ones above, and what the script itself does.
