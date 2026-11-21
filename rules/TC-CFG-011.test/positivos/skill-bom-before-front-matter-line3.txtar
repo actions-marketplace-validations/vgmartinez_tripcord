@@ -1,0 +1,10 @@
+-- .github/skills/code-review/SKILL.md --
+
+
+﻿---
+name: code-review
+description: Repository guidance for reviewing pull requests.
+---
+# Role: Pull Request Assistant
+
+Review each pull request against the coding standards.

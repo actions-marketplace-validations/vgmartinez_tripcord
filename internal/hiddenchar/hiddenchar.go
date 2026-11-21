@@ -76,9 +76,12 @@ var bom = []byte{0xEF, 0xBB, 0xBF}
 // suffix (see latinSuffixJoiner); and a code point of an inline code
 // span that holds only invisible characters (see codeSpanSample); a
 // U+200B that breaks a code token after a slash (see slashBreak); a
-// U+FEFF that is a whole line (see bomOnlyLine); and an isolated
+// U+FEFF that is a whole line (see bomOnlyLine); an isolated
 // zero-width space or joiner between letters of Brahmic or Southeast
-// Asian scripts (see brahmicWordJoiner).
+// Asian scripts (see brahmicWordJoiner); a U+FEFF that opens front
+// matter on line 2 after an empty line 1 (see frontMatterBOM); and a
+// pair of zero-width spaces inside text of one Brahmic or Southeast Asian
+// script (see brahmicSpacePair).
 func Scan(b []byte) (model.HiddenChars, bool) {
 	var out model.HiddenChars
 	valid := true
@@ -122,7 +125,8 @@ func Scan(b []byte) (model.HiddenChars, bool) {
 			case cjkListSpace(b, i, size), camelCaseBreak(b, i, size):
 				out.LowShapes++
 			case latinSuffixJoiner(b, i, size), codeSpanSample(b, i),
-				slashBreak(b, i, size), bomOnlyLine(b, i, size), brahmicWordJoiner(b, i, size):
+				slashBreak(b, i, size), bomOnlyLine(b, i, size), brahmicWordJoiner(b, i, size),
+				frontMatterBOM(b, i, size), brahmicSpacePair(b, i, size):
 				out.LowShapes++
 			}
 			out.Total++
@@ -425,6 +429,77 @@ func brahmicWordJoiner(b []byte, i, size int) bool {
 	}
 	next, nsize := utf8.DecodeRune(b[i+size:])
 	if nsize == 0 || next == utf8.RuneError && nsize == 1 || scriptOf(next, brahmicScripts) == nil {
+		return false
+	}
+	return unicode.IsLetter(next) || unicode.In(next, unicode.Mn, unicode.Mc)
+}
+
+// frontMatterBOM reports a U+FEFF at i that starts line 2 of a file
+// whose line 1 is empty and that is followed by exactly "---" and a line
+// end, with a closing "---" line later: a byte order mark left in front
+// of the front matter when a blank line was added above it. A U+FEFF on
+// any other line, after anything other than an empty line 1, before
+// anything other than the "---" fence, beside another U+FEFF, or with no
+// closing fence is not this shape. A leading byte order mark of the
+// file is not counted and does not change the line.
+func frontMatterBOM(b []byte, i, size int) bool {
+	r, _ := utf8.DecodeRune(b[i:])
+	if r != 0xFEFF {
+		return false
+	}
+	if before := string(b[:i]); before != "\n" && before != "\r\n" {
+		return false
+	}
+	rest := b[i+size:]
+	switch {
+	case bytes.HasPrefix(rest, []byte("---\n")):
+		rest = rest[len("---\n"):]
+	case bytes.HasPrefix(rest, []byte("---\r\n")):
+		rest = rest[len("---\r\n"):]
+	default:
+		return false
+	}
+	for len(rest) > 0 {
+		line := rest
+		if nl := bytes.IndexByte(rest, '\n'); nl >= 0 {
+			line, rest = rest[:nl], rest[nl+1:]
+		} else {
+			rest = nil
+		}
+		if string(bytes.TrimSuffix(line, []byte("\r"))) == "---" {
+			return true
+		}
+	}
+	return false
+}
+
+// brahmicSpacePair reports a U+200B at i in a run of exactly two U+200B
+// whose nearest letter before the run (skipping combining marks) and
+// whose code point right after the run, a letter or combining mark, are
+// of the same one of brahmicScripts: a doubled zero-width space inside
+// Khmer or Malayalam text, as machine translation leaves it. A longer
+// run, a run with any other hidden code point, a pair between two
+// different scripts (Thai and Khmer), and a pair next to a Latin letter,
+// whitespace, punctuation, or a digit are not this shape.
+func brahmicSpacePair(b []byte, i, size int) bool {
+	r, _ := utf8.DecodeRune(b[i:])
+	if r != 0x200B {
+		return false
+	}
+	start, end := zwSpan(b, i)
+	if string(b[start:end]) != "\u200b\u200b" {
+		return false
+	}
+	before, ok := lastLetter(b[:start])
+	if !ok {
+		return false
+	}
+	script := scriptOf(before, brahmicScripts)
+	if script == nil {
+		return false
+	}
+	next, nsize := utf8.DecodeRune(b[end:])
+	if nsize == 0 || next == utf8.RuneError && nsize == 1 || !unicode.Is(script, next) {
 		return false
 	}
 	return unicode.IsLetter(next) || unicode.In(next, unicode.Mn, unicode.Mc)

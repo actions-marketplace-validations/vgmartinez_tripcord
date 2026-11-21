@@ -77,3 +77,12 @@ positivos:
   agents-malayalam-zwsp-latin: high
   agents-malayalam-zwsp-word-edge: high
   agents-thai-khmer-zwsp-run: high
+  skill-bom-before-front-matter-line2: low
+  agents-mt-khmer-zwsp-pair: low
+  skill-bom-mid-file-after-front-matter: high
+  skill-bom-before-front-matter-line3: high
+  skill-bom-before-front-matter-no-close: high
+  agents-khmer-zwsp-pair-latin: high
+  agents-khmer-zwsp-triple: high
+  agents-khmer-zwsp-zwj-mixed: high
+  agents-mt-malayalam-zwj-runs-with-pair: high
