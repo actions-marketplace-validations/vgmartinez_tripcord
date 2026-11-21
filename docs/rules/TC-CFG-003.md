@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | high |
+| Severity | high; low for a repository server in a config under a test-fixture or test directory |
 | Harnesses | Claude Code, Codex, Copilot, Cursor, Gemini CLI, OpenCode, Windsurf, VS Code |
 | Files | every MCP server any adapter normalizes, any scope |
 | Rule | [`rules/TC-CFG-003.yaml`](../../rules/TC-CFG-003.yaml) |
@@ -97,6 +97,20 @@ Not reported:
   trailing backslash. Any other sourced path has to be in the tree.
   A plain `$NAME` or `${NAME}` in a launcher argument is still that
   wrapper.
+
+### Low: a config under a test-fixture or test directory
+
+A repository MCP server in a config whose path has a whole directory segment
+`fixtures`, `__fixtures__`, `testdata`, `test-fixtures`, `test_fixtures`,
+`tests`, or `test` is reported at low, with the same title
+(`config.fixture_path`). A harness loads its config from the project
+root, not from a copy kept as test input, and security tools ship
+deliberately malicious samples there for their own tests. The match is
+case-sensitive and on whole segments only: `testing-guide/`, `latest/`,
+and `contests/` stay high. A root config that runs a script kept in such
+a directory is still high. The finding is lowered, not dropped, so a
+config placed there stays visible. TC-CFG-004, TC-CFG-005, TC-CFG-006,
+and TC-CFG-010 demote the same kind of path.
 
 ## Limits
 

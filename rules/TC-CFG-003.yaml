@@ -92,6 +92,20 @@ id: TC-CFG-003
 pack: tripcord/core
 title: "MCP server launched through a shell, a pipe to sh, or an inline interpreter"
 severity: high
+# Low: a repository MCP server in a config under a test-fixture or test
+#   directory (config.fixture_path: a directory component named
+#   fixtures, __fixtures__, testdata, test-fixtures, test_fixtures,
+#   tests, or test). A harness loads its config from the project root,
+#   not from a copy kept as test input, and security tools keep
+#   deliberately malicious samples there. It is still reported, at low,
+#   with the same title. A name that only contains one of these words
+#   (testing-guide/, latest/) is not demoted, and neither is a root
+#   config whose server runs a script kept in such a directory.
+severity_when:
+  - severity: low
+    when: config.scope == "repo" && config.fixture_path == true
+  - severity: high
+    when: "true"
 harness: [claude, codex, copilot, cursor, gemini, opencode, windsurf, vscode]
 files: ["**"]
 when: |

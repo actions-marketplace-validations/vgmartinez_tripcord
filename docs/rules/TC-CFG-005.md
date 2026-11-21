@@ -25,9 +25,10 @@ contributor's agent loads.
 | Any of the above under a test-fixture directory (see below) | low |
 
 A matching file whose path has a whole segment `fixtures`,
-`__fixtures__`, `testdata`, `test-fixtures`, or `test_fixtures` above
-the config directory is reported at low. The match is case-sensitive
-and does not apply to a substring (`myfixtures/`, `fixtures-api/`). A
+`__fixtures__`, `testdata`, `test-fixtures`, `test_fixtures`, `tests`,
+or `test` above the config directory (`config.fixture_path`) is
+reported at low. The match is case-sensitive and does not apply to a
+substring (`myfixtures/`, `fixtures-api/`, `testing-guide/`). A
 repository-root `.claude/settings.json`, `.codex/config.toml`, or
 `.gemini/settings.json` is never demoted, even when a `fixtures/`
 directory exists elsewhere in the tree.
