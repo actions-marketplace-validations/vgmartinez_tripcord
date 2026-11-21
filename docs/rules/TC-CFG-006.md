@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | high (home, temp, remote URL); medium (other absolute path, `..`, referenced script missing from repo); low for any of these in a config under a test or fixture directory, or in a dotfiles `home/` mirror |
+| Severity | high (home, temp, remote URL); medium (other absolute path, `..`, referenced script missing from repo); low for any of these in a config under a test or fixture directory, or in a `home/` mirror (a dotfiles `home/`, or a container image's `home/` beside its Dockerfile) |
 | Harnesses | Claude Code, Codex, Copilot, Cursor, Gemini CLI, Windsurf, shared skills (`generic`) |
 | Files | every hook any adapter normalizes, repository scope, except `settings.local.json` |
 | Rule | [`rules/TC-CFG-006.yaml`](../../rules/TC-CFG-006.yaml) |
@@ -76,13 +76,47 @@ Every finding on such an item is reported at low, whatever the rule
 one), with the title and fingerprint it would have otherwise. The
 severity rows above do not change: a root `.claude/settings.json` in the
 same repository that runs `~/.claude/hooks/guard.sh` is still high, and so
-is a `home/` deeper in the tree (`src/home/.claude/settings.json`).
+is a `home/` deeper in the tree (`src/home/.claude/settings.json`) unless
+it is a container image's home directory, below.
 
-The shape is cheap to fake: anyone can commit `home/.claude/` next to a
-`home/.zshenv`. That is why the mirror lowers the severity instead of
-dropping the finding, so a hook placed there stays visible at low. A
-harness would load such a config as project config only if a session
-were started inside `home/`.
+### Low: a container image's `home/`
+
+A repository that builds container images for coding agents often keeps
+each image user's home directory next to the image's Dockerfile, which
+copies it into the image: `images/agent/home/.codex/config.toml` becomes
+`/home/agent/.codex/config.toml` inside the container. That file is the
+image user's config, its hooks point into that user's home directory
+(`sh /home/agent/.codex/notify.sh`), and nobody gets it by opening the
+repository.
+
+A `home/` below the repository root is such a mirror when all of these
+hold, and then every finding on an item in it is reported at low, the
+same way as above:
+
+- the item's path is `<dir>/home/<config dir>/...`, with `<config dir>`
+  one of the harness config directories listed above;
+- `<dir>`, the directory that holds `home/`, has a regular file named
+  `Dockerfile` or `Containerfile` (exactly; `Dockerfile.dev`, a
+  `dockerfile`, a directory, a symlink, or a build file higher up does
+  not count);
+- neither `home/` nor any directory on the way to it is a symlink;
+- every direct child of `home/` is a dot-entry (`.bashrc`, `.codex`). A
+  single other entry, such as `home/setup.sh`, means nothing under it
+  is demoted.
+
+A nested `home/` without an image build file beside it keeps its
+severity. A root config that runs a script from the image's home
+(`.claude/settings.json` running `sh /home/agent/.codex/notify.sh`) is
+still high: it is the repository's own config, and the script it names
+is outside the repository.
+
+### Both mirrors are cheap to fake
+
+Anyone can commit `home/.claude/` next to a `home/.zshenv`, or a
+one-line `Dockerfile` next to a `home/` anywhere in the tree. That is why
+a mirror lowers the severity instead of dropping the finding, so a hook
+placed there stays visible at low. A harness would load such a config as
+project config only if a session were started inside that `home/`.
 
 ## Heuristics
 
