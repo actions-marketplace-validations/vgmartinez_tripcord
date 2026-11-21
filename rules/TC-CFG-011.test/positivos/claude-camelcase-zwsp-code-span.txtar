@@ -1,0 +1,6 @@
+-- src/service/ask/CLAUDE.md --
+# Providers
+
+| Path | Purpose |
+| --- | --- |
+| `service/insights/providers/{Unauthenticated​SensitiveApisProvider}.java` | Lists sensitive APIs without auth. |
