@@ -182,6 +182,17 @@ reported: these characters hide no text, but they are still invisible.
   Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Myanmar, Khmer,
   Tibetan, Thai, or Lao, and whose next code point is a letter or mark
   of one of those scripts.
+- **A doubled zero-width space in machine-translated Brahmic or
+  Southeast Asian text.** The same tools sometimes write two U+200B in a
+  row inside a Khmer or Malayalam sentence
+  (`\u179f\u17b6\u179a\u200b\u200b\u1785`). The shape is a run of
+  exactly two U+200B whose nearest letter before it and whose next code
+  point, a letter or mark, are of the same one of the scripts above.
+- **A byte order mark in front of front matter on line 2.** When a blank
+  line is added above a file that started with a byte order mark, the
+  U+FEFF ends up in front of the front-matter fence on line 2. The shape
+  is an empty line 1, then a line that is exactly U+FEFF and `---`, with
+  a closing `---` line later in the file.
 
 Any other hidden code point anywhere in the file keeps the finding
 high, and so do a U+2060 run (`` `\u2060\u2060x` ``), a U+2060
@@ -196,7 +207,14 @@ code point or holds a bidi control or a tag character, and a tag or
 bidi run anywhere. A U+200B after a slash in prose or before a digit,
 two U+FEFF on a line or one beside text, and a Brahmic or Southeast
 Asian zero-width character next to a Latin letter, whitespace, or
-punctuation, or in a run, also stay high.
+punctuation, or in a run, also stay high, except the doubled U+200B
+above. A run of three or more, a pair of U+200B between two different
+scripts (Thai then Khmer) or next to a Latin letter, a run that mixes
+U+200B with another zero-width character, a U+FEFF before front matter
+on any line but 2 or after a non-empty line 1, one with no closing
+fence, and a U+FEFF anywhere else in the file stay high. A file that
+holds one of these low shapes and anything else that is high, such as
+the long U+200D runs some translated files carry, is high.
 
 ## Known false positives
 

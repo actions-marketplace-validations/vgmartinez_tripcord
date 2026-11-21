@@ -519,9 +519,48 @@ func TestNarrowLowShapes(t *testing.T) {
 		{"Latin then Malayalam", "env\u200b\u0d2f", 1, 0},
 		{"Malayalam word edge", "\u0d2f\u0d4b\u200b \u0d2f", 1, 0},
 		{"Malayalam before punctuation", "\u0d2f\u0d4b\u200b.", 1, 0},
-		{"Brahmic run", "\u0d2f\u200b\u200b\u0d2f", 2, 0},
+		{"Brahmic run", "\u0d2f\u200b\u200b\u200b\u0d2f", 3, 0},
+		{"Brahmic same-script ZWSP pair", "\u0d2f\u200b\u200b\u0d2f", 2, 2},
 		{"Persian ZWSP", "\u0645\u200b\u0646", 1, 0},
 		{"Brahmic word joiner U+2060", "\u0d2f\u2060\u0d2f", 1, 0},
+	}
+	for _, tc := range cases {
+		got, _ := Scan([]byte(tc.in))
+		if got.Total != tc.counted || got.LowShapes != tc.low {
+			t.Errorf("%s: Scan(%+q) = Total %d, LowShapes %d, want %d, %d", tc.name, tc.in, got.Total, got.LowShapes, tc.counted, tc.low)
+		}
+	}
+}
+
+func TestFrontMatterBOMAndBrahmicPair(t *testing.T) {
+	cases := []struct {
+		name         string
+		in           string
+		counted, low int
+	}{
+		{"BOM before front matter on line 2", "\n\uFEFF---\nname: x\n---\n# X\n", 1, 1},
+		{"BOM before front matter on line 2, CRLF", "\r\n\uFEFF---\r\nname: x\r\n---\r\n", 1, 1},
+		{"file BOM, then BOM before front matter", "\uFEFF\n\uFEFF---\nname: x\n---\n", 1, 1},
+		{"BOM fence on line 3", "\n\n\uFEFF---\nname: x\n---\n", 1, 0},
+		{"BOM fence after text on line 1", "x\n\uFEFF---\nname: x\n---\n", 1, 0},
+		{"BOM fence without closing fence", "\n\uFEFF---\nname: x\n", 1, 0},
+		{"BOM before a longer fence", "\n\uFEFF----\nname: x\n---\n", 1, 0},
+		{"BOM before text on line 2", "\n\uFEFFname: x\n---\n", 1, 0},
+		{"BOM pair before front matter", "\n\uFEFF\uFEFF---\nname: x\n---\n", 2, 0},
+		{"BOM after the fence", "\n---\uFEFF\nname: x\n---\n", 1, 0},
+		{"BOM mid-file", "\n\uFEFF---\nname: x\n---\nRun\uFEFF it.\n", 2, 1},
+		{"Khmer ZWSP pair", "\u179f\u17b6\u179a\u200b\u200b\u1785\u17d2\u1794", 2, 2},
+		{"Malayalam ZWSP pair before a vowel sign", "\u0d2a\u200b\u200b\u0d4b", 2, 2},
+		{"Thai ZWSP pair", "\u0e01\u0e32\u200b\u200b\u0e23", 2, 2},
+		{"Lao ZWSP pair", "\u0e81\u200b\u200b\u0e82", 2, 2},
+		{"ZWSP pair between Thai and Khmer", "\u0e27\u0e48\u0e32\u200b\u200b\u1787\u17b6", 2, 0},
+		{"ZWSP pair after Latin", "env\u200b\u200b\u1785", 2, 0},
+		{"ZWSP pair before Latin", "\u179a\u200b\u200benv", 2, 0},
+		{"ZWSP pair before a space", "\u179a\u200b\u200b \u1785", 2, 0},
+		{"ZWSP triple in Khmer", "\u179a\u200b\u200b\u200b\u1785", 3, 0},
+		{"ZWSP and ZWJ in Khmer", "\u179a\u200b\u200d\u1785", 2, 0},
+		{"ZWNJ pair in Khmer", "\u179a\u200c\u200c\u1785", 2, 0},
+		{"Khmer pair and a ZWJ run elsewhere", "\u179a\u200b\u200b\u1785 \u0d2f\u200d\u200d\u200d\u0d2f", 5, 2},
 	}
 	for _, tc := range cases {
 		got, _ := Scan([]byte(tc.in))

@@ -26,3 +26,5 @@ positivos:
   gemini-flat-auto-accept-string-upper: medium
   gemini-flat-auto-accept: medium
   gemini-tools-auto-accept: medium
+  codex-home-mirror-image-nested-low: low
+  codex-home-image-nested-non-dotfile: high

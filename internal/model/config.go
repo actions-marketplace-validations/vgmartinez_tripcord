@@ -104,8 +104,9 @@ type ConfigItem struct {
 	// HomeMirror is true when a repository item sits in a harness config
 	// directory under a top-level home/ whose direct children are all
 	// dot-entries, the layout a dotfiles repository keeps for files that
-	// are installed into the owner's home directory (see
-	// scriptcheck.HomeMirror). It is set after discovery. Every match on
+	// are installed into the owner's home directory, or under a nested
+	// home/ of that shape beside a Dockerfile or Containerfile, a
+	// container image user's home directory (see scriptcheck.HomeMirror). It is set after discovery. Every match on
 	// such an item is reported at low; its key and fingerprint do not
 	// change.
 	HomeMirror bool `json:"-"`
