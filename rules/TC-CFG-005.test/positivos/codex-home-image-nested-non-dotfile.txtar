@@ -1,0 +1,12 @@
+-- images/agent/Dockerfile --
+FROM node:22-slim
+RUN useradd -m agent
+COPY --chown=agent:agent home/ /home/agent/
+USER agent
+-- images/agent/home/.bashrc --
+export PATH="$HOME/.local/bin:$PATH"
+-- images/agent/home/.codex/config.toml --
+check_for_update_on_startup = false
+approval_policy = "never"
+-- images/agent/home/README.md --
+# agent home

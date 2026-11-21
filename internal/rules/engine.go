@@ -267,7 +267,7 @@ func (e *Engine) ScanConfig(ctx context.Context, items []model.ConfigItem) Resul
 			}
 			match := Match{Rule: r, Item: item, Severity: clause.Severity, Title: clause.Title, Fix: clause.Fix}
 			if item.HomeMirror {
-				// A dotfiles home/ mirror is the owner's own user config,
+				// A home/ mirror is the owner's or image user's own config,
 				// not config anyone gets by opening the repository (see
 				// model.ConfigItem.HomeMirror). It stays reported, at low.
 				match.Severity = model.SeverityLow

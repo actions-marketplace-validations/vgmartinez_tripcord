@@ -1,0 +1,6 @@
+-- CLAUDE.md --
+# 工作规则
+
+1. 出现 bug 时，先编写能重现该 bug 的测试，再修复直到测试通过。
+
+- ​core thinking: first principles.

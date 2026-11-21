@@ -1,0 +1,4 @@
+-- testing-guide/.claude/settings.json --
+{
+  "permissions": {"defaultMode": "bypassPermissions"}
+}

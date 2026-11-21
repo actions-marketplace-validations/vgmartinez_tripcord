@@ -490,6 +490,41 @@ func TestLineStartJoiner(t *testing.T) {
 	}
 }
 
+func TestCJKListSpaceAndCamelCaseBreak(t *testing.T) {
+	cases := []struct {
+		name         string
+		in           string
+		counted, low int
+	}{
+		{"ZWSP after a bullet before Han", "- \u200b核心思维", 1, 1},
+		{"ZWSP after an indented bullet before a bracket and Han", "    - \u200b[直接执行]", 1, 1},
+		{"ZWSP after a numbered item before Hiragana", "1. \u200bこれは", 1, 1},
+		{"ZWSP after a bullet before Hangul", "* \u200b핵심", 1, 1},
+		{"ZWSP after a bullet before a fullwidth bracket", "+ \u200b【注意】", 1, 1},
+		{"ZWSP pair after a bullet", "- \u200b\u200b核心", 2, 0},
+		{"ZWSP after a bullet before Latin", "- \u200bcore", 1, 0},
+		{"ZWSP after a bullet before a bracket and Latin", "- \u200b[core]", 1, 0},
+		{"ZWSP mid-line before Han", "文本 \u200b核心", 1, 0},
+		{"ZWSP after a bullet without a space", "-\u200b核心", 1, 0},
+		{"ZWSP bullet and a bidi control", "- \u200b核心\n\u202Etxt", 2, 1},
+		{"ZWSP at a camelCase hump in a code span", "`Unauthenticated\u200bSensitiveApis`", 1, 1},
+		{"ZWSP after a digit before uppercase in a code span", "`v2\u200bClient`", 1, 1},
+		{"ZWSP pair at a hump in a code span", "`Unauthenticated\u200b\u200bSensitive`", 2, 0},
+		{"ZWSP at a hump in prose", "Use Unauthenticated\u200bSensitive here.", 1, 0},
+		{"ZWSP between lowercase letters in a code span", "`ign\u200bore`", 1, 0},
+		{"ZWSP between uppercase and lowercase in a code span", "`URL\u200bParser`", 1, 0},
+		{"ZWSP at a hump without a closing backtick", "`Unauthenticated\u200bSensitive", 1, 0},
+		{"ZWSP between Latin words in prose", "Keep the core\u200bidea.", 1, 0},
+		{"ZWSP hump and a tag character", "`aB` `a\u200bB`\U000E0041", 2, 1},
+	}
+	for _, tc := range cases {
+		got, _ := Scan([]byte(tc.in))
+		if got.Total != tc.counted || got.LowShapes != tc.low {
+			t.Errorf("%s: Scan(%+q) = Total %d, LowShapes %d, want %d, %d", tc.name, tc.in, got.Total, got.LowShapes, tc.counted, tc.low)
+		}
+	}
+}
+
 func TestNarrowLowShapes(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -519,9 +554,48 @@ func TestNarrowLowShapes(t *testing.T) {
 		{"Latin then Malayalam", "env\u200b\u0d2f", 1, 0},
 		{"Malayalam word edge", "\u0d2f\u0d4b\u200b \u0d2f", 1, 0},
 		{"Malayalam before punctuation", "\u0d2f\u0d4b\u200b.", 1, 0},
-		{"Brahmic run", "\u0d2f\u200b\u200b\u0d2f", 2, 0},
+		{"Brahmic run", "\u0d2f\u200b\u200b\u200b\u0d2f", 3, 0},
+		{"Brahmic same-script ZWSP pair", "\u0d2f\u200b\u200b\u0d2f", 2, 2},
 		{"Persian ZWSP", "\u0645\u200b\u0646", 1, 0},
 		{"Brahmic word joiner U+2060", "\u0d2f\u2060\u0d2f", 1, 0},
+	}
+	for _, tc := range cases {
+		got, _ := Scan([]byte(tc.in))
+		if got.Total != tc.counted || got.LowShapes != tc.low {
+			t.Errorf("%s: Scan(%+q) = Total %d, LowShapes %d, want %d, %d", tc.name, tc.in, got.Total, got.LowShapes, tc.counted, tc.low)
+		}
+	}
+}
+
+func TestFrontMatterBOMAndBrahmicPair(t *testing.T) {
+	cases := []struct {
+		name         string
+		in           string
+		counted, low int
+	}{
+		{"BOM before front matter on line 2", "\n\uFEFF---\nname: x\n---\n# X\n", 1, 1},
+		{"BOM before front matter on line 2, CRLF", "\r\n\uFEFF---\r\nname: x\r\n---\r\n", 1, 1},
+		{"file BOM, then BOM before front matter", "\uFEFF\n\uFEFF---\nname: x\n---\n", 1, 1},
+		{"BOM fence on line 3", "\n\n\uFEFF---\nname: x\n---\n", 1, 0},
+		{"BOM fence after text on line 1", "x\n\uFEFF---\nname: x\n---\n", 1, 0},
+		{"BOM fence without closing fence", "\n\uFEFF---\nname: x\n", 1, 0},
+		{"BOM before a longer fence", "\n\uFEFF----\nname: x\n---\n", 1, 0},
+		{"BOM before text on line 2", "\n\uFEFFname: x\n---\n", 1, 0},
+		{"BOM pair before front matter", "\n\uFEFF\uFEFF---\nname: x\n---\n", 2, 0},
+		{"BOM after the fence", "\n---\uFEFF\nname: x\n---\n", 1, 0},
+		{"BOM mid-file", "\n\uFEFF---\nname: x\n---\nRun\uFEFF it.\n", 2, 1},
+		{"Khmer ZWSP pair", "\u179f\u17b6\u179a\u200b\u200b\u1785\u17d2\u1794", 2, 2},
+		{"Malayalam ZWSP pair before a vowel sign", "\u0d2a\u200b\u200b\u0d4b", 2, 2},
+		{"Thai ZWSP pair", "\u0e01\u0e32\u200b\u200b\u0e23", 2, 2},
+		{"Lao ZWSP pair", "\u0e81\u200b\u200b\u0e82", 2, 2},
+		{"ZWSP pair between Thai and Khmer", "\u0e27\u0e48\u0e32\u200b\u200b\u1787\u17b6", 2, 0},
+		{"ZWSP pair after Latin", "env\u200b\u200b\u1785", 2, 0},
+		{"ZWSP pair before Latin", "\u179a\u200b\u200benv", 2, 0},
+		{"ZWSP pair before a space", "\u179a\u200b\u200b \u1785", 2, 0},
+		{"ZWSP triple in Khmer", "\u179a\u200b\u200b\u200b\u1785", 3, 0},
+		{"ZWSP and ZWJ in Khmer", "\u179a\u200b\u200d\u1785", 2, 0},
+		{"ZWNJ pair in Khmer", "\u179a\u200c\u200c\u1785", 2, 0},
+		{"Khmer pair and a ZWJ run elsewhere", "\u179a\u200b\u200b\u1785 \u0d2f\u200d\u200d\u200d\u0d2f", 5, 2},
 	}
 	for _, tc := range cases {
 		got, _ := Scan([]byte(tc.in))
