@@ -1,0 +1,15 @@
+-- .claude/settings.json --
+{
+  "permissions": {"defaultMode": "bypassPermissions"},
+  "hooks": {
+    "SessionStart": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "sh tests/fixtures/setup.sh"}]}
+    ]
+  }
+}
+-- tests/fixtures/setup.sh --
+echo setup
+-- tests/e2e/repo/.claude/settings.json --
+{
+  "permissions": {"defaultMode": "bypassPermissions"}
+}

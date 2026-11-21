@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Severity | high |
+| Severity | high; low in a config under a test-fixture or test directory |
 | Harnesses | Claude Code, Codex, Copilot, Cursor, Gemini CLI |
 | Files | `.claude/settings.json`, `.codex/hooks.json`, `.codex/config.toml`, `.gemini/settings.json`, `.github/hooks/*.json`, `.github/copilot/settings.json`, `.cursor/hooks.json` (any depth, repository scope) |
 | Rule | [`rules/TC-CFG-001.yaml`](../../rules/TC-CFG-001.yaml) |
@@ -58,6 +58,20 @@ Not reported:
   user-scope SessionStart hook that pipes a remote script to a shell,
   and that negative stays as it is, so the rule still requires
   repository scope.
+
+### Low: a config under a test-fixture or test directory
+
+A SessionStart or Setup hook in a config whose path has a whole directory segment
+`fixtures`, `__fixtures__`, `testdata`, `test-fixtures`, `test_fixtures`,
+`tests`, or `test` is reported at low, with the same title
+(`config.fixture_path`). A harness loads its config from the project
+root, not from a copy kept as test input, and security tools ship
+deliberately malicious samples there for their own tests. The match is
+case-sensitive and on whole segments only: `testing-guide/`, `latest/`,
+and `contests/` stay high. A root config that runs a script kept in such
+a directory is still high. The finding is lowered, not dropped, so a
+config placed there stays visible. TC-CFG-004, TC-CFG-005, TC-CFG-006,
+and TC-CFG-010 demote the same kind of path.
 
 ## Limits
 

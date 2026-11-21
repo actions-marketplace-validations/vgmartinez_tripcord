@@ -65,13 +65,27 @@
 # - an isolated U+200B right after a "/" that follows an ASCII letter
 #   and right before an ASCII letter, inside an inline code span, as a
 #   page writes a line-break opportunity into a long code token;
+# - an isolated U+200B right after a list marker at the start of a line
+#   and right before CJK text (a Han, Hiragana, Katakana, or Hangul
+#   letter, or one opening bracket and then such a letter), as editors
+#   leave when a Chinese, Japanese, or Korean list is pasted;
+# - an isolated U+200B between an ASCII lowercase letter or digit and an
+#   ASCII uppercase letter inside an inline code span, a line-break
+#   opportunity in a long camelCase identifier;
 # - a U+FEFF that is the whole of its line, as concatenating files that
 #   each start with a byte order mark leaves behind;
 # - an isolated U+200B, U+200C, or U+200D between a letter of a Brahmic
 #   or Southeast Asian script (Devanagari, Bengali, Gurmukhi, Gujarati,
 #   Oriya, Tamil, Telugu, Kannada, Malayalam, Sinhala, Myanmar, Khmer,
 #   Tibetan, Thai, Lao) and a letter or mark of one of them, as machine
-#   translation leaves inside a word or between two of these scripts.
+#   translation leaves inside a word or between two of these scripts;
+# - a run of exactly two U+200B whose nearest letter before it and whose
+#   next code point, a letter or mark, are of the same one of those
+#   scripts (a doubled zero-width space inside Khmer text). A longer
+#   run, a mixed run, and a pair between two scripts are not this shape;
+# - a U+FEFF that starts line 2 after an empty line 1 and is followed by
+#   exactly "---" and a line end, with a closing "---" line later, as a
+#   byte order mark left in front of the front matter.
 # Any other hidden code point in the file, a U+2060 run (also at the
 # start of a line), a tag character or bidi control at the start of a
 # line, a U+2060 inside

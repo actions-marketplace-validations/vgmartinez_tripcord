@@ -1,0 +1,6 @@
+-- src/service/ask/CLAUDE.md --
+# Providers
+
+| Path | Purpose |
+| --- | --- |
+| `providers/{unauthenticated​sensitive}.java` | Lists APIs. |

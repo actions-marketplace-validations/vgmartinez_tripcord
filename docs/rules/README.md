@@ -24,7 +24,9 @@ replaces the per-match result ([Policy](../policy.md)).
 Any rule's match on an item in a dotfiles `home/` mirror (a top-level
 `home/` whose direct children are all dot-entries, holding a harness
 config directory such as `home/.claude/`) is reported at low, with the same
-title and fingerprint. See
+title and fingerprint. So is one in a container image's `home/`, a nested
+`home/` of the same shape whose parent directory holds a `Dockerfile` or
+`Containerfile`. See
 [TC-CFG-006](TC-CFG-006.md#low-a-dotfiles-home-mirror).
 
 On the wiki, the tables below are generated from `rules/*.yaml` and

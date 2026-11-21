@@ -25,13 +25,19 @@ type Fetcher interface {
 // GitFetcher shallow-fetches one commit from GitHub into a bare
 // repository and writes its regular files into the scan directory. No
 // work tree is checked out, so no hook, filter, submodule, or LFS
-// smudge runs, and symlinks and submodules are skipped. A blob the
+// smudge runs, and submodules are skipped. A symlink is resolved inside
+// the commit's tree and written as a regular copy of what it reaches;
+// one that is absolute, dangling, part of a loop, or resolves outside
+// the repository is skipped (see symlinks.go). A blob the
 // adapters would refuse (over adapters.MaxConfigFileBytes) is not
 // downloaded; it is written as a sparse file one byte over that cap,
 // so the scan still sees an oversize file at that path.
 type GitFetcher struct {
 	Git     string
 	BaseURL string
+	// OnLinkSkip, when set, is called for each symlink that is not
+	// followed, with the reason.
+	OnLinkSkip func(path, reason string)
 }
 
 const oversize = adapters.MaxConfigFileBytes + 1
@@ -86,7 +92,7 @@ func (g GitFetcher) Fetch(ctx context.Context, repo, sha, dir string) error {
 	if err != nil {
 		return err
 	}
-	var files []treeFile
+	var files, links []treeFile
 	for _, ent := range bytes.Split(list, []byte{0}) {
 		if len(ent) == 0 {
 			continue
@@ -97,6 +103,21 @@ func (g GitFetcher) Fetch(ctx context.Context, repo, sha, dir string) error {
 		}
 		if ok {
 			files = append(files, f)
+		} else if l, isLink := parseTreeLink(string(ent)); isLink {
+			links = append(links, l)
+		}
+	}
+	if len(links) > 0 {
+		targets, err := readLinkTargets(ctx, git, gitDir, links)
+		if err != nil {
+			return err
+		}
+		linked, skips := newTreeIndex(files, targets, nil).linkedFiles()
+		files = append(files, linked...)
+		if g.OnLinkSkip != nil {
+			for _, s := range skips {
+				g.OnLinkSkip(s.Path, s.Reason)
+			}
 		}
 	}
 	if len(files) == 0 {
@@ -115,7 +136,8 @@ type treeFile struct {
 }
 
 // parseTreeEntry reads one "mode type oid\tpath" line. ok is false for
-// a symlink, a submodule, or anything else that is not a regular blob.
+// a symlink, a submodule, or anything else that is not a regular blob;
+// symlinks are read separately by parseTreeLink.
 func parseTreeEntry(ent string) (treeFile, bool, error) {
 	meta, p, found := strings.Cut(ent, "\t")
 	fields := strings.Fields(meta)
@@ -129,6 +151,69 @@ func parseTreeEntry(ent string) (treeFile, bool, error) {
 		return treeFile{}, false, fmt.Errorf("ls-tree: unsafe path %q", p)
 	}
 	return treeFile{oid: fields[2], path: p}, true, nil
+}
+
+// parseTreeLink reads one ls-tree entry and reports whether it is a
+// symlink (mode 120000) at a safe path.
+func parseTreeLink(ent string) (treeFile, bool) {
+	meta, p, found := strings.Cut(ent, "\t")
+	fields := strings.Fields(meta)
+	if !found || len(fields) != 3 || fields[0] != "120000" || fields[1] != "blob" || !safeRel(p) {
+		return treeFile{}, false
+	}
+	return treeFile{oid: fields[2], path: p}, true
+}
+
+// readLinkTargets reads each symlink blob, which holds the link target.
+// A target that is missing or over maxLinkTarget bytes is recorded as
+// empty, so the link is skipped as unsafe.
+func readLinkTargets(ctx context.Context, git, gitDir string, links []treeFile) (map[string]string, error) {
+	var ids bytes.Buffer
+	for _, l := range links {
+		ids.WriteString(l.oid + "\n")
+	}
+	cmd := exec.CommandContext(ctx, git, "--git-dir", gitDir, "cat-file", "--batch")
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_NO_LAZY_FETCH=1")
+	cmd.Stdin = &ids
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git cat-file: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	r := bufio.NewReader(bytes.NewReader(out))
+	targets := make(map[string]string, len(links))
+	for _, l := range links {
+		head, err := r.ReadString('\n')
+		if err != nil {
+			return nil, fmt.Errorf("cat-file: %w", err)
+		}
+		fields := strings.Fields(head)
+		if len(fields) == 2 && fields[1] == "missing" {
+			targets[l.path] = ""
+			continue
+		}
+		if len(fields) != 3 || fields[0] != l.oid || fields[1] != "blob" {
+			return nil, fmt.Errorf("cat-file: unexpected header %q", strings.TrimSpace(head))
+		}
+		n, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("cat-file: bad size in %q", strings.TrimSpace(head))
+		}
+		buf := make([]byte, n)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return nil, fmt.Errorf("cat-file: %w", err)
+		}
+		if b, err := r.ReadByte(); err != nil || b != '\n' {
+			return nil, errors.New("cat-file: missing record terminator")
+		}
+		if n > maxLinkTarget {
+			targets[l.path] = ""
+		} else {
+			targets[l.path] = string(buf)
+		}
+	}
+	return targets, nil
 }
 
 func safeRel(p string) bool {
