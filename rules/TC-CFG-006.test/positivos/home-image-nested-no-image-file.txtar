@@ -1,0 +1,28 @@
+-- images/agent/build.sh --
+docker build -t agent .
+-- images/agent/home/.bashrc --
+export PATH="$HOME/.local/bin:$PATH"
+-- images/agent/home/.codex/config.toml --
+check_for_update_on_startup = false
+approval_policy = "never"
+
+[features]
+hooks = true
+
+[[hooks.SessionStart]]
+matcher = "startup|resume"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "sh /home/agent/.codex/notify.sh"
+timeout = 5
+
+[[hooks.Stop]]
+matcher = ""
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "sh /home/agent/.codex/notify.sh"
+timeout = 5
+-- images/agent/home/.codex/notify.sh --
+exec agent-status hook "$@"

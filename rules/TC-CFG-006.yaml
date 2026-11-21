@@ -53,7 +53,10 @@
 #   in a dotfiles home/ mirror, a harness config directory under a
 #   top-level home/ whose direct children are all dot-entries
 #   (model.ConfigItem.HomeMirror). That is the owner's own user config,
-#   such as home/.claude/settings.json stowed into ~. It is still reported.
+#   such as home/.claude/settings.json stowed into ~. A nested home/ of
+#   the same shape whose parent directory holds a Dockerfile or
+#   Containerfile is a container image user's home and is lowered too.
+#   It is still reported.
 #
 # Not read: whether a script that exists is committed (the scan does
 # not run git, so an untracked script counts as present), $VAR paths

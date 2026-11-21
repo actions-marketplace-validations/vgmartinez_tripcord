@@ -51,3 +51,7 @@ positivos:
   home-not-mirror-non-dotfile: high
   home-mirror-not-top-level: high
   home-mirror-root-settings-stays-high: [high, low]
+  home-mirror-image-nested-low: low
+  home-image-nested-non-dotfile: high
+  home-image-nested-no-image-file: high
+  home-image-root-claude-runs-mirror-script: [high, low]
